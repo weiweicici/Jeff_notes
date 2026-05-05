@@ -215,8 +215,8 @@ class RecordingProvider extends ChangeNotifier {
     final siliconKey = _apiKeys[AIProvider.siliconFlow];
     final groqKey = _apiKeys[AIProvider.groq];
 
-    // [Architect: Stability First]
-    // 只要有 Groq Key，全链路 (STT + 翻译 + 总结) 均切换至 Groq 专线
+    // [Architect: Load Balancing Strategy]
+    // 1. Groq 负责 STT (快轨)
     if (groqKey != null && groqKey.isNotEmpty) {
       _groqService = OpenAIService(
         apiKey: groqKey, 
@@ -225,9 +225,9 @@ class RecordingProvider extends ChangeNotifier {
         whisperModel: "whisper-large-v3"
       );
       _fastAiService = _groqService;
-      _aiService = _groqService; 
     }
 
+    // 2. SiliconFlow 负责 翻译与总结 (慢轨)
     if (siliconKey != null && siliconKey.isNotEmpty) {
       final siliconService = OpenAIService(
         apiKey: siliconKey, 
@@ -235,14 +235,18 @@ class RecordingProvider extends ChangeNotifier {
         defaultModel: "Qwen/Qwen2.5-72B-Instruct", 
         whisperModel: "FunAudioLLM/SenseVoiceSmall"
       );
-      _aiService ??= siliconService;
+      _aiService = siliconService;
+      // 如果没有 Groq，STT 也用 SiliconFlow
       _fastAiService ??= siliconService;
+    } else if (_groqService != null) {
+      // 如果没有 SiliconFlow，则全部使用 Groq (可能面临 Rate Limit)
+      _aiService = _groqService;
     }
     
     if (_aiService != null && _fastAiService != null) {
       _orchestrator = AIOrchestratorService(
         sttService: _fastAiService!,
-        translationService: _aiService!, // 统一使用主力 Service
+        translationService: _aiService!,
       );
       
       _fastSub = _orchestrator!.fastEnglishStream.listen((result) {
@@ -326,6 +330,18 @@ class RecordingProvider extends ChangeNotifier {
         _statusMessage = msg;
         notifyListeners();
       });
+    }
+
+    // [Architect: Summary Flush] 强制结算最后一段小结素材（不足 60 秒的部分）
+    final currentTranscripts = _allNotes.where((n) => !n.isSummary).toList();
+    if (currentTranscripts.length > _lastSummaryTotalCount) {
+      final remainingText = currentTranscripts
+          .skip(_lastSummaryTotalCount)
+          .map((e) => e.transcript)
+          .join(" ");
+      if (remainingText.trim().isNotEmpty) {
+        await _performBatchSummary(remainingText, "final_flush_${DateTime.now().millisecondsSinceEpoch}");
+      }
     }
     
     // [Architect: Final Sync] 等待所有后台翻译/总结任务彻底完成

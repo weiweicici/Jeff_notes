@@ -28,20 +28,7 @@ class OpenAIService {
     _client.close();
   }
 
-  Future<T> _retry<T>(Future<T> Function() action, {int maxAttempts = 3}) async {
-    int attempts = 0;
-    while (true) {
-      if (_isDisposed) throw Exception("Service Disposed");
-      attempts++;
-      try {
-        return await action();
-      } catch (e) {
-        if (_isDisposed || attempts >= maxAttempts) rethrow;
-        final waitSeconds = pow(2, attempts - 1).toInt();
-        await Future.delayed(Duration(seconds: waitSeconds));
-      }
-    }
-  }
+
 
   String _sanitizeResponse(String text) {
     String cleaned = text.trim();
@@ -66,7 +53,7 @@ class OpenAIService {
       if (len < 100) return ""; 
     } catch (e) { return null; }
 
-    return await _retry(() async {
+    return await (() async {
       final url = Uri.parse("$baseUrl/audio/transcriptions");
       final request = http.MultipartRequest("POST", url)
         ..headers['Authorization'] = 'Bearer ${apiKey.trim()}'
@@ -99,11 +86,11 @@ class OpenAIService {
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
         return "[API Error] ${response.statusCode}: ${response.body}"; 
       }
-    });
+    })();
   }
 
   Future<String> translate(String text, {String? modelOverride}) async {
-    return await _retry(() async {
+    return await (() async {
       final url = Uri.parse("$baseUrl/chat/completions");
       final response = await _client.post(
         url,
@@ -139,11 +126,11 @@ class OpenAIService {
         print("\x1B[31m$errorMsg\x1B[0m");
         throw Exception(errorMsg);
       }
-    });
+    })();
   }
 
   Future<String> summarize(String text, {PromptStrategy strategy = PromptStrategy.general, AIProvider provider = AIProvider.groq}) async {
-    return await _retry(() async {
+    return await (() async {
       final url = Uri.parse("$baseUrl/chat/completions");
       final response = await _client.post(
         url,
@@ -167,6 +154,6 @@ class OpenAIService {
       } else {
         throw Exception("Summarize error ${response.statusCode}: ${response.body}");
       }
-    });
+    })();
   }
 }

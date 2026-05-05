@@ -66,8 +66,15 @@ class ApiScheduler {
       } catch (e) {
         attempt++;
         final errorStr = e.toString().toLowerCase();
-        if (errorStr.contains("429") || errorStr.contains("too many requests") ||
-            errorStr.contains("500") || errorStr.contains("503")) {
+        if (errorStr.contains("429") || errorStr.contains("too many requests")) {
+          if (attempt >= maxAttempts) rethrow;
+          // [Architect: Aggressive Back-off] 对于 429 错误，大幅拉长等待时间
+          final waitTime = 10 * attempt; 
+          debugPrint("Rate limit hit, waiting ${waitTime}s before retry...");
+          await Future.delayed(Duration(seconds: waitTime));
+          continue;
+        }
+        if (errorStr.contains("500") || errorStr.contains("503")) {
           if (attempt >= maxAttempts) rethrow;
           await Future.delayed(Duration(seconds: 2 * attempt));
           continue;

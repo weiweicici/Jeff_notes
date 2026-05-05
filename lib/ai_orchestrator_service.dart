@@ -95,6 +95,7 @@ class AIOrchestratorService {
     }
   }
 
+
   Future<void> _processTranslationBatch({Function(String)? onStatus}) async {
     if (_translationBuffer.isEmpty || _isTranslating) return;
     _isTranslating = true;

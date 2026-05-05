@@ -57,18 +57,23 @@ class _NotesScreenState extends State<NotesScreen> {
   final ScrollController _scrollController = ScrollController();
   bool _isAtBottom = true;
 
-  void _checkIfAtBottom(ScrollMetrics metrics) {
-    // 如果离底部小于 50px，认为是在底部
-    final atBottom = metrics.extentAfter < 50;
+  void _onScroll() {
+    if (!_scrollController.hasClients) return;
+    final atBottom = _scrollController.position.pixels >= _scrollController.position.maxScrollExtent - 50;
     if (_isAtBottom != atBottom) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) setState(() => _isAtBottom = atBottom);
-      });
+      setState(() => _isAtBottom = atBottom);
     }
   }
 
   @override
+  void initState() {
+    super.initState();
+    _scrollController.addListener(_onScroll);
+  }
+
+  @override
   void dispose() {
+    _scrollController.removeListener(_onScroll);
     _scrollController.dispose();
     super.dispose();
   }
@@ -236,15 +241,7 @@ class _NotesScreenState extends State<NotesScreen> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<RecordingProvider>();
-    final notes = provider.notes;
-    final isGeneratingFinal = provider.isGeneratingFinalReview;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (_scrollController.hasClients && (notes.isNotEmpty || isGeneratingFinal)) {
-        _scrollController.animateTo(0, duration: const Duration(milliseconds: 300), curve: Curves.easeOut);
-      }
-    });
 
     return Scaffold(
       appBar: AppBar(
@@ -377,9 +374,8 @@ class _NotesScreenState extends State<NotesScreen> {
           Expanded(
             child: Consumer<RecordingProvider>(
               builder: (context, provider, _) {
-                // [Architect: Natural Order] 取消反转，按时间正序排列
                 final transcripts = provider.notes.reversed.where((n) => !n.isSummary).toList();
-                
+
                 if (transcripts.isEmpty && !provider.isRecording) {
                   return Center(
                     child: Column(
@@ -393,29 +389,7 @@ class _NotesScreenState extends State<NotesScreen> {
                   );
                 }
 
-                // [Auto-Scroll] 只有当用户处于列表底部时，才自动吸底
-                if (_isAtBottom && _scrollController.hasClients) {
-                  WidgetsBinding.instance.addPostFrameCallback((_) {
-                    if (_isAtBottom && _scrollController.hasClients) {
-                      _scrollController.animateTo(
-                        _scrollController.position.maxScrollExtent,
-                        duration: const Duration(milliseconds: 300),
-                        curve: Curves.easeOut,
-                      );
-                    }
-                  });
-                }
-
-                return NotificationListener<ScrollNotification>(
-                  onNotification: (notification) {
-                    if (notification is ScrollUpdateNotification) {
-                      _checkIfAtBottom(notification.metrics);
-                    }
-                    return false;
-                  },
-                  child: Stack(
-                    children: [
-                      ListView.builder(
+                return ListView.builder(
                   controller: _scrollController,
                   padding: const EdgeInsets.fromLTRB(24, 20, 24, 120),
                   itemCount: transcripts.length,
@@ -428,33 +402,22 @@ class _NotesScreenState extends State<NotesScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            // [Original Transcript] 大号英文字幕
                             Text(
                               note.transcript,
                               style: TextStyle(
                                 fontSize: 18,
                                 height: 1.5,
                                 fontWeight: FontWeight.w600,
-                                letterSpacing: -0.2,
                                 color: isDark ? Colors.white.withOpacity(0.9) : Colors.black87,
                               ),
                             ),
-                            // [Aggregated Translation] 小号中文聚合翻译
                             if (note.translatedContent != null && note.translatedContent!.isNotEmpty) ...[
                               const SizedBox(height: 10),
-                              Container(
-                                padding: const EdgeInsets.only(left: 12),
-                                decoration: BoxDecoration(
-                                  border: Border(left: BorderSide(color: Colors.blueAccent.withOpacity(0.3), width: 2)),
-                                ),
-                                child: Text(
-                                  note.translatedContent!,
-                                  style: TextStyle(
-                                    fontSize: 15,
-                                    height: 1.6,
-                                    color: isDark ? Colors.white60 : Colors.black54,
-                                    fontWeight: FontWeight.w400,
-                                  ),
+                              Text(
+                                note.translatedContent!,
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  color: isDark ? Colors.white60 : Colors.black54,
                                 ),
                               ),
                             ],
@@ -463,38 +426,16 @@ class _NotesScreenState extends State<NotesScreen> {
                       ),
                     );
                   },
-                  ),
-                  // [Architect: Jump to Bottom FAB] 当用户向上滑动阅读时，显示返回底部的快捷按钮
-                  if (!_isAtBottom && provider.isRecording)
-                    Positioned(
-                      bottom: 24,
-                      right: 16,
-                      child: FloatingActionButton.small(
-                        backgroundColor: isDark ? Colors.blueAccent : Colors.black87,
-                        onPressed: () {
-                          if (_scrollController.hasClients) {
-                            _scrollController.animateTo(
-                              _scrollController.position.maxScrollExtent,
-                              duration: const Duration(milliseconds: 300),
-                              curve: Curves.easeOut,
-                            );
-                          }
-                        },
-                        child: const Icon(Icons.arrow_downward, color: Colors.white),
-                      ),
-                    ),
-                ], // Stack children
-              ), // Stack
-            ); // NotificationListener
-          }, // Consumer builder
-        ), // Consumer widget
-
+                );
+              },
+            ),
           ),
         ],
       ),
     );
   }
 }
+
 
 MarkdownStyleSheet getAcademicMarkdownStyle(BuildContext context) {
   final isDark = Theme.of(context).brightness == Brightness.dark;
