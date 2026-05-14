@@ -17,6 +17,7 @@ class PipelineResult {
 class AIOrchestratorService {
   final OpenAIService sttService;
   final OpenAIService translationService;
+  final String sessionId;
 
   final _fastEnglishController = StreamController<PipelineResult>.broadcast();
   final _accurateChineseController = StreamController<PipelineResult>.broadcast();
@@ -34,6 +35,7 @@ class AIOrchestratorService {
   AIOrchestratorService({
     required this.sttService,
     required this.translationService,
+    required this.sessionId,
   });
 
   Future<void> processAudioSegment(
@@ -47,7 +49,8 @@ class AIOrchestratorService {
       // 1. STT 阶段（快车道）
       final rawEnglish = await ApiScheduler().enqueue(
         () => sttService.transcribe(filePath, previousText: context),
-        priority: 0
+        priority: 0,
+        sessionId: sessionId,
       );
 
       if (rawEnglish == null || rawEnglish.trim().isEmpty) {
@@ -131,7 +134,8 @@ class AIOrchestratorService {
       
       final translatedText = await ApiScheduler().enqueue(
         () => translationService.translate(textToTranslate),
-        priority: 1
+        priority: 1,
+        sessionId: sessionId,
       );
 
       // 还原术语
@@ -140,14 +144,40 @@ class AIOrchestratorService {
           : TerminologyInterceptor.decode(translatedText, lookupTable);
 
       onStatus?.call("Chinese ready");
-      _accurateChineseController.add(PipelineResult(targetNoteId, finalChinese));
+      
+      // [Architect: Batch Distribution] 将翻译后的完整段落按比例分割回填给 batch 内每个 noteId
+      final sentences = finalChinese
+          .split(RegExp(r'(?<=[。！？.!?])\s*'))
+          .where((s) => s.trim().isNotEmpty)
+          .toList();
+
+      if (sentences.isEmpty || ids.length == 1) {
+        _accurateChineseController.add(PipelineResult(ids.last, finalChinese));
+        // 对于其余的 id，补发一个空格，防止它们永远保持 null 导致 30 秒超时等待
+        for (int i = 0; i < ids.length - 1; i++) {
+          _accurateChineseController.add(PipelineResult(ids[i], " "));
+        }
+      } else {
+        // 将句子平均分配给每个 noteId
+        final int perNote = (sentences.length / ids.length).ceil();
+        for (int i = 0; i < ids.length; i++) {
+          final start = i * perNote;
+          final end = (start + perNote).clamp(0, sentences.length);
+          if (start < sentences.length) {
+            final chunk = sentences.sublist(start, end).join('');
+            _accurateChineseController.add(PipelineResult(ids[i], chunk));
+          } else {
+            _accurateChineseController.add(PipelineResult(ids[i], " "));
+          }
+        }
+      }
       
     } catch (e) {
       debugPrint("[Translation Batch Error] $e");
       onStatus?.call("Translation failed");
       // [Fix] 不再显示 [Translation Error]，而是把 batch 合并的英文原文作为降级显示
       // 这样中文字幕区至少不会出现红字 Error
-      _accurateChineseController.add(PipelineResult(targetNoteId, "[Translation unavailable]"));
+      _accurateChineseController.add(PipelineResult(ids.last, "[Translation unavailable]"));
     } finally {
       _isTranslating = false;
       

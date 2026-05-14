@@ -1,6 +1,12 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
 
+class _WaitingTask {
+  final Completer<void> completer;
+  final int priority;
+  _WaitingTask(this.completer, this.priority);
+}
+
 /// [Architect: Concurrency & Resilience]
 /// 高并发调度器：支持空闲状态感知
 class ApiScheduler {
@@ -10,24 +16,41 @@ class ApiScheduler {
 
   static const int maxConcurrentRequests = 4;
   int _activeRequests = 0;
-  final List<Completer<void>> _waitingQueue = [];
+  final List<_WaitingTask> _waitingQueue = [];
   
   // 用于追踪所有任务完成的 Completer
   Completer<void>? _idleCompleter;
 
-  Future<T> enqueue<T>(Future<T> Function() task, {int priority = 1}) async {
+  // [Architect: Session Isolation] 追踪每个会话的活动请求数
+  final Map<String, int> _activeCountBySession = {};
+  final Map<String, Completer<void>> _sessionIdleCompleters = {};
+
+  Future<T> enqueue<T>(Future<T> Function() task, {int priority = 1, String? sessionId}) async {
     if (_activeRequests >= maxConcurrentRequests) {
       final completer = Completer<void>();
-      _waitingQueue.add(completer);
+      // 按优先级插入（priority 越小越靠前）
+      final insertIndex = _waitingQueue.indexWhere((t) => t.priority > priority);
+      if (insertIndex == -1) {
+        _waitingQueue.add(_WaitingTask(completer, priority));
+      } else {
+        _waitingQueue.insert(insertIndex, _WaitingTask(completer, priority));
+      }
+
       await completer.future.timeout(
         const Duration(seconds: 90),
         onTimeout: () {
-          _waitingQueue.remove(completer);
+          _waitingQueue.removeWhere((t) => t.completer == completer);
         }
       );
     }
 
     _activeRequests++;
+    if (sessionId != null) {
+      _activeCountBySession[sessionId] = (_activeCountBySession[sessionId] ?? 0) + 1;
+      // 重置该 session 的 idle completer
+      _sessionIdleCompleters.remove(sessionId);
+    }
+
     // 如果当前正在等待空闲，且这是新任务，则需要重置 idleCompleter
     if (_idleCompleter != null && _idleCompleter!.isCompleted) {
       _idleCompleter = null;
@@ -40,17 +63,36 @@ class ApiScheduler {
       );
     } finally {
       _activeRequests--;
+      
+      if (sessionId != null) {
+        final count = (_activeCountBySession[sessionId] ?? 1) - 1;
+        if (count <= 0) {
+          _activeCountBySession.remove(sessionId);
+          _sessionIdleCompleters[sessionId]?.complete();
+        } else {
+          _activeCountBySession[sessionId] = count;
+        }
+      }
+
       if (_waitingQueue.isNotEmpty) {
-        _waitingQueue.removeAt(0).complete();
+        _waitingQueue.removeAt(0).completer.complete();
       } else if (_activeRequests == 0) {
-        // [Architect] 所有任务清空，触发空闲信号
+        // [Architect] 所有任务清空，触发全局空闲信号
         _idleCompleter?.complete();
       }
     }
   }
 
+  /// [Architect: Session-Aware Sync]
+  /// 只等待特定会话的任务完成
+  Future<void> untilSessionIdle(String sessionId) async {
+    if ((_activeCountBySession[sessionId] ?? 0) == 0) return;
+    _sessionIdleCompleters[sessionId] ??= Completer<void>();
+    return _sessionIdleCompleters[sessionId]!.future;
+  }
+
   /// [Architect: Critical for Export]
-  /// 等待所有任务完成
+  /// 等待所有任务完成（全局）
   Future<void> untilIdle() async {
     if (_activeRequests == 0 && _waitingQueue.isEmpty) return;
     _idleCompleter ??= Completer<void>();

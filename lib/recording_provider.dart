@@ -11,6 +11,7 @@ import 'openai_service.dart';
 import 'ai_orchestrator_service.dart';
 import 'api_scheduler.dart';
 import 'prompt_provider.dart';
+import 'models.dart';
 
 class InsightNote {
   final String id;
@@ -52,7 +53,6 @@ class InsightNote {
   );
 }
 
-enum AIProvider { groq, siliconFlow }
 
 class StitchData {
   final List<int> tail;
@@ -110,25 +110,60 @@ Uint8List _generateWavHeaderStatic(int pcmLength) {
   return header.buffer.asUint8List();
 }
 
+class LectureSession {
+  final String id;
+  final List<InsightNote> notes = [];
+  AIOrchestratorService? orchestrator;
+  StreamSubscription? fastSub;
+  StreamSubscription? accurateSub;
+  String? finalReviewContent;
+  String? statusMessage;
+  int lastSummaryTotalCount = 0;
+  bool isFinalizing = false;
+  String? lectureContext;
+  final AppMode mode;
+  final DateTime startTime;
+
+  LectureSession({required this.id, required this.mode, this.lectureContext}) : startTime = DateTime.now();
+
+  void dispose() {
+    fastSub?.cancel();
+    accurateSub?.cancel();
+    orchestrator?.dispose();
+  }
+
+  Map<String, dynamic> toJson() => {
+    'id': id,
+    'notes': notes.map((n) => n.toJson()).toList(),
+    'finalReviewContent': finalReviewContent,
+    'lectureContext': lectureContext,
+    'mode': mode.index,
+    'startTime': startTime.toIso8601String(),
+  };
+}
+
 class RecordingProvider extends ChangeNotifier {
   final AudioRecorder _audioRecorder = AudioRecorder();
   OpenAIService? _aiService;
   OpenAIService? _fastAiService;
   OpenAIService? _groqService;
-  AIOrchestratorService? _orchestrator;
+  OpenAIService? _summaryService;
   
-  StreamSubscription? _fastSub;
-  StreamSubscription? _accurateSub;
+  LectureSession? _activeSession;
+  final List<LectureSession> _finalizingSessions = [];
+  final _sessionReadyController = StreamController<String>.broadcast();
+  Stream<String> get sessionReadyStream => _sessionReadyController.stream;
   
   AIProvider _selectedProvider = AIProvider.groq;
+  AppMode _appMode = AppMode.lecture;
   int _sliceDuration = 5; 
   bool _useBluetooth = false;
   bool _isDarkMode = false;
   bool _enableFinalRecap = false;
   bool _enableLectureDiscovery = false;
   final Map<AIProvider, String> _apiKeys = {
-    AIProvider.siliconFlow: "",
-    AIProvider.groq: "",
+    AIProvider.siliconFlow: "sk-ovsutjuybcrndvdxfskcooqsfwpwgtxlqcnolnbssrzzaszi",
+    AIProvider.groq: "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",
   };
   
   String? _lastTranscript;
@@ -138,29 +173,42 @@ class RecordingProvider extends ChangeNotifier {
   bool _isPending = false;
   static const int kTailSize = 25600;
 
-  final List<InsightNote> _allNotes = [];
-  String? _statusMessage;
-  int _lastSummaryTotalCount = 0;
-  String? _finalReviewContent;
-  bool _isGeneratingFinalReview = false;
   String? _lastExportedPath;
-  String? _identifiedLectureContext;
   bool _hasRecoveredCache = false;
 
-  List<InsightNote> get notes => _allNotes.reversed.toList();
+  // UI Delegates
+  List<InsightNote> get notes {
+    if (_activeSession != null) return _activeSession!.notes.reversed.toList();
+    if (_finalizingSessions.isNotEmpty) return _finalizingSessions.first.notes.reversed.toList();
+    return [];
+  }
   bool get isRecording => _isRecording;
   bool get isPending => _isPending;
   AIProvider get selectedProvider => _selectedProvider;
+  AppMode get appMode => _appMode;
   int get sliceDuration => _sliceDuration;
   bool get useBluetooth => _useBluetooth;
   bool get isDarkMode => _isDarkMode;
   bool get enableFinalRecap => _enableFinalRecap;
   bool get enableLectureDiscovery => _enableLectureDiscovery;
-  String? get statusMessage => _statusMessage;
-  String? get finalReviewContent => _finalReviewContent;
-  bool get isGeneratingFinalReview => _isGeneratingFinalReview;
+  String? get statusMessage => _activeSession?.statusMessage;
+  AppMode get currentSessionMode => _activeSession?.mode ?? _appMode;
+  
+  // 返回当前正在生成的或最近完成的复盘
+  String? get finalReviewContent {
+    if (_activeSession?.finalReviewContent != null) return _activeSession!.finalReviewContent;
+    for (var s in _finalizingSessions) {
+      if (s.finalReviewContent != null) return s.finalReviewContent;
+    }
+    return null;
+  }
+
+  bool get isGeneratingFinalReview => 
+      (_activeSession?.isFinalizing ?? false) || 
+      _finalizingSessions.any((s) => s.isFinalizing);
+
   String? get lastExportedPath => _lastExportedPath;
-  String? get identifiedLectureContext => _identifiedLectureContext;
+  String? get identifiedLectureContext => _activeSession?.lectureContext ?? _finalizingSessions.firstOrNull?.lectureContext;
   bool get hasRecoveredCache => _hasRecoveredCache;
 
   RecordingProvider() { _init(); }
@@ -174,7 +222,7 @@ class RecordingProvider extends ChangeNotifier {
   String getApiKeyFor(AIProvider provider) => _apiKeys[provider] ?? "";
 
   Future<void> updateSettings({
-    AIProvider? provider, String? key, int? duration, bool? useBluetooth, bool? isDarkMode, bool? enableFinalRecap, bool? enableLectureDiscovery,
+    AIProvider? provider, AppMode? mode, String? key, int? duration, bool? useBluetooth, bool? isDarkMode, bool? enableFinalRecap, bool? enableLectureDiscovery,
   }) async {
     final prefs = await SharedPreferences.getInstance();
     if (duration != null) { await prefs.setInt('slice_duration', duration); _sliceDuration = duration; }
@@ -182,6 +230,7 @@ class RecordingProvider extends ChangeNotifier {
     if (isDarkMode != null) { await prefs.setBool('is_dark_mode', isDarkMode); _isDarkMode = isDarkMode; }
     if (enableFinalRecap != null) { await prefs.setBool('enableFinalRecap', enableFinalRecap); _enableFinalRecap = enableFinalRecap; }
     if (enableLectureDiscovery != null) { await prefs.setBool('enableLectureDiscovery', enableLectureDiscovery); _enableLectureDiscovery = enableLectureDiscovery; }
+    if (mode != null) { await prefs.setInt('app_mode', mode.index); _appMode = mode; }
     if (provider != null) {
       _selectedProvider = provider;
       await prefs.setInt('selected_provider', provider.index);
@@ -198,6 +247,7 @@ class RecordingProvider extends ChangeNotifier {
     _isDarkMode = prefs.getBool('is_dark_mode') ?? false;
     _enableFinalRecap = prefs.getBool('enableFinalRecap') ?? false;
     _enableLectureDiscovery = prefs.getBool('enableLectureDiscovery') ?? false;
+    _appMode = AppMode.values[prefs.getInt('app_mode') ?? 0];
     final pIndex = prefs.getInt('selected_provider') ?? 0;
     _selectedProvider = AIProvider.values[pIndex];
     for (var p in AIProvider.values) {
@@ -208,15 +258,9 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   void _updateService() {
-    _fastSub?.cancel();
-    _accurateSub?.cancel();
-    _orchestrator?.dispose();
-    
     final siliconKey = _apiKeys[AIProvider.siliconFlow];
     final groqKey = _apiKeys[AIProvider.groq];
 
-    // [Architect: Load Balancing Strategy]
-    // 1. Groq 负责 STT (快轨)
     if (groqKey != null && groqKey.isNotEmpty) {
       _groqService = OpenAIService(
         apiKey: groqKey, 
@@ -227,46 +271,51 @@ class RecordingProvider extends ChangeNotifier {
       _fastAiService = _groqService;
     }
 
-    // 2. SiliconFlow 负责 翻译与总结 (慢轨)
     if (siliconKey != null && siliconKey.isNotEmpty) {
-      final siliconService = OpenAIService(
+      _aiService = OpenAIService(
         apiKey: siliconKey, 
         baseUrl: "https://api.siliconflow.cn/v1", 
         defaultModel: "Qwen/Qwen2.5-72B-Instruct", 
         whisperModel: "FunAudioLLM/SenseVoiceSmall"
       );
-      _aiService = siliconService;
-      // 如果没有 Groq，STT 也用 SiliconFlow
-      _fastAiService ??= siliconService;
+      _summaryService = OpenAIService(
+        apiKey: siliconKey, 
+        baseUrl: "https://api.siliconflow.cn/v1", 
+        defaultModel: "deepseek-ai/DeepSeek-V3"
+      );
+      _fastAiService ??= _aiService;
     } else if (_groqService != null) {
-      // 如果没有 SiliconFlow，则全部使用 Groq (可能面临 Rate Limit)
       _aiService = _groqService;
     }
-    
+  }
+
+  void _setupSessionOrchestrator(LectureSession session) {
     if (_aiService != null && _fastAiService != null) {
-      _orchestrator = AIOrchestratorService(
+      session.orchestrator = AIOrchestratorService(
         sttService: _fastAiService!,
         translationService: _aiService!,
+        sessionId: session.id,
       );
       
-      _fastSub = _orchestrator!.fastEnglishStream.listen((result) {
-        final index = _allNotes.indexWhere((n) => n.id == result.noteId);
+      session.fastSub = session.orchestrator!.fastEnglishStream.listen((result) {
+        final index = session.notes.indexWhere((n) => n.id == result.noteId);
         if (index != -1) {
-          _allNotes[index].transcript = result.content;
-          // 仅在有有效内容时更新上下文
+          session.notes[index].transcript = result.content;
           if (result.content != "[Silence/Empty]" && !result.content.startsWith("[")) {
             _lastTranscript = result.content;
           }
-          notifyListeners();
+          if (_activeSession == session) notifyListeners();
         }
       });
       
-      _accurateSub = _orchestrator!.accurateChineseStream.listen((result) {
-        final index = _allNotes.indexWhere((n) => n.id == result.noteId);
+      session.accurateSub = session.orchestrator!.accurateChineseStream.listen((result) {
+        final index = session.notes.indexWhere((n) => n.id == result.noteId);
         if (index != -1) {
-          _allNotes[index].translatedContent = result.content;
-          _saveShadowCache();
-          notifyListeners();
+          session.notes[index].translatedContent = result.content;
+          if (_activeSession == session) {
+            _saveShadowCache();
+            notifyListeners();
+          }
         }
       });
     }
@@ -285,7 +334,11 @@ class RecordingProvider extends ChangeNotifier {
   Future<void> toggleRecording() async {
     if (_isPending) return;
     _isPending = true; notifyListeners();
-    if (_isRecording) await stopRecording(); else await startRecording();
+    if (_isRecording) {
+      await stopRecording();
+    } else {
+      await startRecording();
+    }
     _isPending = false; notifyListeners();
   }
 
@@ -294,10 +347,13 @@ class RecordingProvider extends ChangeNotifier {
       _updateService(); 
       _isRecording = true;
       _lastAudioTail = [];
-      _allNotes.clear();
       _lastTranscript = null;
-      _lastSummaryTotalCount = 0;
-      _finalReviewContent = null;
+      
+      // 创建新会话
+      final sessionId = "sess_${DateTime.now().millisecondsSinceEpoch}";
+      _activeSession = LectureSession(id: sessionId, mode: _appMode);
+      _setupSessionOrchestrator(_activeSession!);
+      
       notifyListeners();
       final path = await _getTempPath();
       await _audioRecorder.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: path);
@@ -325,35 +381,90 @@ class RecordingProvider extends ChangeNotifier {
     _sliceTimer?.cancel();
     final path = await _audioRecorder.stop();
     if (path != null) await _processAudio(path);
-    if (_orchestrator != null) {
-      await _orchestrator!.flush(onStatus: (msg) {
-        _statusMessage = msg;
+
+    final sessionToFinalize = _activeSession;
+    if (sessionToFinalize == null) return;
+
+    // 立即解绑 activeSession，允许用户开始新录音
+    _activeSession = null; 
+    _finalizingSessions.insert(0, sessionToFinalize);
+    notifyListeners();
+
+    // 后台静默处理
+    unawaited(_finalizeSession(sessionToFinalize));
+  }
+
+  Future<void> _finalizeSession(LectureSession session) async {
+    session.isFinalizing = true;
+    session.statusMessage = "Flushing buffer...";
+    notifyListeners();
+
+    if (session.orchestrator != null) {
+      await session.orchestrator!.flush(onStatus: (msg) {
+        session.statusMessage = msg;
         notifyListeners();
       });
     }
 
-    // [Architect: Summary Flush] 强制结算最后一段小结素材（不足 60 秒的部分）
-    final currentTranscripts = _allNotes.where((n) => !n.isSummary).toList();
-    if (currentTranscripts.length > _lastSummaryTotalCount) {
-      final remainingText = currentTranscripts
-          .skip(_lastSummaryTotalCount)
-          .map((e) => e.transcript)
-          .join(" ");
-      if (remainingText.trim().isNotEmpty) {
-        await _performBatchSummary(remainingText, "final_flush_${DateTime.now().millisecondsSinceEpoch}");
+    // 强制结算最后一段小结 (讨论模式不需要)
+    if (session.mode != AppMode.discussion) {
+      final currentTranscripts = session.notes.where((n) => !n.isSummary).toList();
+      if (currentTranscripts.length > session.lastSummaryTotalCount) {
+        final remainingText = currentTranscripts
+            .skip(session.lastSummaryTotalCount)
+            .map((e) => e.transcript)
+            .join(" ");
+        if (remainingText.trim().isNotEmpty) {
+          await _performBatchSummary(session, remainingText, "final_flush_${DateTime.now().millisecondsSinceEpoch}");
+        }
       }
     }
     
-    // [Architect: Final Sync] 等待所有后台翻译/总结任务彻底完成
-    _statusMessage = "Finalizing AI tasks...";
+    session.statusMessage = "Finalizing AI tasks...";
     notifyListeners();
-    await ApiScheduler().untilIdle();
+    
+    // [Fix: Reliable Wait] 主动轮询，等待所有 note 的 STT 和翻译结果全部落盘
+    // 确保导出时中英文脚本都是完整的
+    const maxWaitMs = 30000;
+    const pollIntervalMs = 500;
+    int waitedMs = 0;
+    while (waitedMs < maxWaitMs) {
+      final pendingSTT = session.notes.where((n) =>
+        !n.isSummary && (n.transcript == '...' || n.transcript.isEmpty)
+      ).length;
+      
+      // 检查翻译：如果 transcript 已经有了且不是标记位，但翻译还是空的，说明还在翻译中
+      final pendingTrans = session.notes.where((n) =>
+        !n.isSummary && 
+        n.transcript != '...' && 
+        n.transcript.isNotEmpty && 
+        !n.transcript.startsWith('[') && 
+        (n.translatedContent == null || n.translatedContent!.isEmpty)
+      ).length;
 
-    notifyListeners();
+      if (pendingSTT == 0 && pendingTrans == 0) break;
+      
+      debugPrint("[Finalize] Waiting: STT=$pendingSTT, Trans=$pendingTrans (${waitedMs}ms)");
+      await Future.delayed(const Duration(milliseconds: pollIntervalMs));
+      waitedMs += pollIntervalMs;
+    }
+    debugPrint("[Finalize] All tasks settled after ${waitedMs}ms.");
+    session.finalReviewContent = "*(Diagnostic: Buffer wait loop took ${waitedMs / 1000} seconds)*\n\n";
+
     if (_enableFinalRecap) {
-      await generateFinalAcademicReview();
+      await _generateFinalReviewForSession(session);
     } else {
-      await _exportToMarkdown();
+      await _exportSessionToMarkdown(session);
+    }
+
+    session.isFinalizing = false;
+    session.statusMessage = "Exported";
+    session.dispose(); 
+    notifyListeners();
+    
+    final content = session.finalReviewContent;
+    if (content != null && content.isNotEmpty) {
+      _sessionReadyController.add(content);
     }
   }
 
@@ -363,52 +474,75 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   Future<void> _processAudio(String path) async {
-    if (_orchestrator == null) return;
+    final session = _activeSession;
+    if (session == null || session.orchestrator == null) return;
+    String? processedPath;
     try {
       final stitchResult = await compute(_backgroundStitchTask, StitchData(_lastAudioTail, path, kTailSize));
-      final processedPath = stitchResult['path'] as String;
+      processedPath = stitchResult['path'] as String;
       _lastAudioTail = List<int>.from(stitchResult['newTail']);
 
       final currentNote = InsightNote(summary: '', transcript: '...', timestamp: DateTime.now(), isProcessing: true);
-      final noteId = currentNote.id; // 提前获取 ID
-      _allNotes.add(currentNote);
+      final noteId = currentNote.id;
+      session.notes.add(currentNote);
       notifyListeners();
 
-      // 传入 ID 和状态回调进行任务绑定
-      await _orchestrator!.processAudioSegment(
+      await session.orchestrator!.processAudioSegment(
         noteId, 
         processedPath, 
         context: _lastTranscript,
         onStatus: (msg) {
-          _statusMessage = msg;
+          session.statusMessage = msg;
           notifyListeners();
         },
       );
       
-      // 更新该 ID 对应的笔记状态
-      final index = _allNotes.indexWhere((n) => n.id == noteId);
+      final index = session.notes.indexWhere((n) => n.id == noteId);
       if (index != -1) {
-        _allNotes[index].isProcessing = false;
+        session.notes[index].isProcessing = false;
         notifyListeners();
       }
 
-      final totalCount = _allNotes.where((n) => !n.isSummary).length;
-      if (totalCount > 0 && totalCount % 12 == 0) {
-        final combinedText = _allNotes.where((n) => !n.isSummary).skip(_lastSummaryTotalCount).map((e) => e.transcript).join(" ");
-        _lastSummaryTotalCount = totalCount;
-        unawaited(_performBatchSummary(combinedText, "cluster_${DateTime.now().millisecondsSinceEpoch}"));
+      final totalCount = session.notes.where((n) => !n.isSummary).length;
+      // ✅ 只在非讨论模式下生成中间小结
+      if (session.mode != AppMode.discussion && totalCount > 0 && totalCount % 12 == 0) {
+        final combinedText = session.notes.where((n) => !n.isSummary).skip(session.lastSummaryTotalCount).map((e) => e.transcript).join(" ");
+        session.lastSummaryTotalCount = totalCount;
+        unawaited(_performBatchSummary(session, combinedText, "cluster_${DateTime.now().millisecondsSinceEpoch}"));
       }
     } catch (e) {
       debugPrint("Pipeline Error: $e");
+    } finally {
+      // [Architect: Storage Hygiene] 处理完成后清理原始和拼接后的临时文件
+      final filesToDelete = [path];
+      if (processedPath != null && processedPath != path) {
+        filesToDelete.add(processedPath);
+      }
+      _cleanupTempFiles(filesToDelete);
     }
   }
 
-  Future<void> _performBatchSummary(String text, String? clusterId) async {
+  void _cleanupTempFiles(List<String> paths) {
+    for (final p in paths) {
+      try {
+        final f = File(p);
+        if (f.existsSync()) {
+          f.deleteSync();
+          debugPrint("[Cleanup] Deleted temp file: $p");
+        }
+      } catch (e) {
+        debugPrint("[Cleanup] Failed to delete $p: $e");
+      }
+    }
+  }
+
+  Future<void> _performBatchSummary(LectureSession session, String text, String? clusterId) async {
     if (_aiService == null) return;
-    final summary = await _aiService!.summarize(text, provider: AIProvider.siliconFlow);
+    final strategy = session.mode == AppMode.discussion ? PromptStrategy.discussion : PromptStrategy.general;
+    final summary = await _aiService!.summarize(text, strategy: strategy, provider: AIProvider.siliconFlow, mode: session.mode);
     final summaryNote = InsightNote(summary: summary, transcript: '', timestamp: DateTime.now(), isSummary: true, clusterId: clusterId);
-    _allNotes.add(summaryNote);
-    _saveShadowCache();
+    session.notes.add(summaryNote);
+    if (_activeSession == session) _saveShadowCache();
     notifyListeners();
   }
 
@@ -424,8 +558,11 @@ class RecordingProvider extends ChangeNotifier {
     if (await file.exists()) {
       final content = await file.readAsString();
       final Map<String, dynamic> data = jsonDecode(content);
-      _allNotes.clear();
-      _allNotes.addAll((data['notes'] as List).map((i) => InsightNote.fromJson(i)).toList());
+      _activeSession = LectureSession(
+        id: "recovered_${DateTime.now().millisecondsSinceEpoch}",
+        mode: AppMode.values[data['mode'] ?? 0]
+      );
+      _activeSession!.notes.addAll((data['notes'] as List).map((i) => InsightNote.fromJson(i)).toList());
       _hasRecoveredCache = false;
       notifyListeners();
     }
@@ -440,100 +577,126 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   Future<void> _saveShadowCache() async {
+    if (_activeSession == null) return;
     final directory = await getTemporaryDirectory();
     final file = File('${directory.path}/shadow_draft.json');
-    final data = {'notes': _allNotes.map((n) => n.toJson()).toList()};
-    await file.writeAsString(jsonEncode(data));
+    await file.writeAsString(jsonEncode(_activeSession!.toJson()));
   }
 
-  Future<void> generateFinalAcademicReview() async {
+  Future<void> _generateFinalReviewForSession(LectureSession session) async {
     if (_aiService == null) return;
-    _isGeneratingFinalReview = true; notifyListeners();
-    final material = _allNotes.where((n) => n.isSummary).map((n) => n.summary).join("\n\n");
-    if (material.isEmpty) { _finalReviewContent = "Not enough material."; } else {
-      final recap = await _aiService!.summarize(material, strategy: PromptStrategy.recap, provider: AIProvider.siliconFlow);
-      _finalReviewContent = recap;
+    
+    String material;
+    if (session.mode == AppMode.discussion) {
+      // 讨论模式：提供中英文对照给 AI 以便生成更好的双语总结
+      material = session.notes.where((n) =>
+        !n.isSummary &&
+        n.transcript.isNotEmpty &&
+        n.transcript != '...' &&
+        !n.transcript.startsWith('[')
+      ).map((n) => "English: ${n.transcript}\nChinese: ${n.translatedContent ?? ''}").join("\n\n");
+    } else {
+      // 讲座模式有中间小结，基于小结生成
+      material = session.notes.where((n) => n.isSummary).map((n) => n.summary).join("\n\n");
     }
-    _isGeneratingFinalReview = false; 
+    
+    if (material.trim().isEmpty) { 
+      session.finalReviewContent = "Not enough material."; 
+    } else {
+      // ✅ 使用专门的总结服务 (DeepSeek-V3)
+      final service = _summaryService ?? _aiService!;
+      final stopwatch = Stopwatch()..start();
+      final recap = await service.summarize(material, strategy: PromptStrategy.recap, provider: AIProvider.siliconFlow, mode: session.mode);
+      stopwatch.stop();
+      session.finalReviewContent = (session.finalReviewContent ?? "") + recap + "\n\n*(Diagnostic: Summary API took \${stopwatch.elapsed.inSeconds} seconds)*";
+    }
     notifyListeners();
-    await _exportToMarkdown();
+    await _exportSessionToMarkdown(session);
   }
 
-  Future<void> _exportToMarkdown() async {
+  Future<void> _exportSessionToMarkdown(LectureSession session) async {
     try {
       final now = DateTime.now();
       final dateStr = DateFormat('yyyyMMdd_HHmm').format(now);
-      final filename = "Jeff_Notes_$dateStr.md";
+      final isDiscussion = session.mode == AppMode.discussion;
+      final filename = isDiscussion
+          ? "Jeff_Discussion_$dateStr.md"
+          : "Jeff_Notes_$dateStr.md";
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$filename');
 
       final StringBuffer sb = StringBuffer();
 
-      // ── 标题 ──────────────────────────────────────────────
-      sb.writeln("# Academic Lecture Session");
-      sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
-      sb.writeln("**Context:** ${_identifiedLectureContext ?? 'General Academic Lecture'}");
-      sb.writeln();
-
-      // ── 第一部分：AI 深度复盘 ─────────────────────────────
-      if (_finalReviewContent != null && _finalReviewContent!.isNotEmpty) {
-        sb.writeln("---");
+      // ✅ Bug Fix: 根据 session.mode 动态切换文件头，彻底消灭硬编码讲座标题
+      if (isDiscussion) {
+        sb.writeln("# Group Discussion Session");
+        sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(session.startTime)}");
         sb.writeln();
-        sb.writeln("## Part 1 · AI Academic Review");
-        sb.writeln();
-        sb.writeln(_finalReviewContent);
+      } else {
+        sb.writeln("# Academic Lecture Session");
+        sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(session.startTime)}");
+        sb.writeln("**Context:** ${session.lectureContext ?? 'General Academic Lecture'}");
         sb.writeln();
       }
 
-      // ── 第二部分：分段小结 ───────────────────────────────
-      final summaries = _allNotes.where((n) => n.isSummary).toList();
-      if (summaries.isNotEmpty) {
+      if (session.finalReviewContent != null && session.finalReviewContent!.isNotEmpty) {
         sb.writeln("---");
+        sb.writeln(isDiscussion
+            ? "\n## Pathways Group Discussion (Parts 1–2)\n"
+            : "\n## Pathways Academic Analysis (Parts 1–4)\n");
+        sb.writeln(session.finalReviewContent);
         sb.writeln();
-        sb.writeln("## Part 2 · 60s Block Summaries");
-        sb.writeln();
-        for (int i = 0; i < summaries.length; i++) {
-          sb.writeln("### Block ${i + 1}");
-          sb.writeln(summaries[i].summary);
-          sb.writeln();
-        }
       }
 
-      // ── 第三部分：完整中英对照脚本 ───────────────────────
-      final transcripts = _allNotes.where((n) => !n.isSummary).toList();
-      if (transcripts.isNotEmpty) {
-        sb.writeln("---");
-        sb.writeln();
-        sb.writeln("## Part 3 · Full Bilingual Script");
-        sb.writeln();
-        
-        List<String> pendingEng = [];
-        int blockCount = 1;
-
-        for (int i = 0; i < transcripts.length; i++) {
-          final note = transcripts[i];
-          // 跳过静音或空白片段
-          if (note.transcript.isEmpty ||
-              note.transcript == '...' ||
-              note.transcript.startsWith('[Silence') ||
-              note.transcript.startsWith('[Error')) continue;
-
-          pendingEng.add(note.transcript);
-
-          // 当遇到包含翻译的节点时，将积累的英文合并输出
-          if (note.translatedContent != null && note.translatedContent!.isNotEmpty) {
-            sb.writeln("**[$blockCount] ENG:** ${pendingEng.join(' ')}");
-            sb.writeln("**[$blockCount] CHN:** ${note.translatedContent}");
+      // ✅ Bug Fix: 讨论模式下，彻底跳过 "Part 2 · 60s Block Summaries" 输出
+      if (!isDiscussion) {
+        final summaries = session.notes.where((n) => n.isSummary).toList();
+        if (summaries.isNotEmpty) {
+          sb.writeln("---\n\n## Part 2 · 60s Block Summaries\n");
+          for (int i = 0; i < summaries.length; i++) {
+            sb.writeln("### Block ${i + 1}");
+            sb.writeln(summaries[i].summary);
             sb.writeln();
-            pendingEng.clear();
-            blockCount++;
           }
         }
+      }
 
-        // 处理最后可能残留的未翻译英文
-        if (pendingEng.isNotEmpty) {
-          sb.writeln("**[$blockCount] ENG:** ${pendingEng.join(' ')}");
-          sb.writeln("**[$blockCount] CHN:** (Processing / End of Audio)");
+      final transcripts = session.notes.where((n) => !n.isSummary).toList();
+      if (transcripts.isNotEmpty) {
+        if (isDiscussion) {
+          // 讨论模式：英文稿在前 (Part 3)，中文稿在后 (Part 4)
+          sb.writeln("---\n\n## Part 3: 英文全文原稿 (Full English Script)\n");
+          for (final note in transcripts) {
+            final transcript = note.transcript;
+            if (transcript.isNotEmpty && transcript != '...' && !transcript.startsWith('[')) {
+              sb.write("$transcript ");
+            }
+          }
+          sb.writeln("\n\n---\n");
+          sb.writeln("## Part 4: 中文全文翻译 (Full Chinese Translation)\n");
+          for (final note in transcripts) {
+            final content = note.translatedContent;
+            if (content != null && content.isNotEmpty && !content.startsWith('[') && content != '...') {
+              sb.write("$content ");
+            }
+          }
+          sb.writeln();
+        } else {
+          // 讲座模式：原有结构保持不变
+          sb.writeln("---\n\n## Part 3 · Full Chinese Transcript\n");
+          for (final note in transcripts) {
+            final content = note.translatedContent;
+            if (content != null && content.isNotEmpty && !content.startsWith('[') && content != '...') {
+              sb.write("$content ");
+            }
+          }
+          sb.writeln("\n\n## Part 4 · Full English Transcript\n");
+          for (final note in transcripts) {
+            final transcript = note.transcript;
+            if (transcript.isNotEmpty && transcript != '...' && !transcript.startsWith('[')) {
+              sb.write("$transcript ");
+            }
+          }
           sb.writeln();
         }
       }
@@ -549,10 +712,10 @@ class RecordingProvider extends ChangeNotifier {
 
   @override
   void dispose() {
-    _fastSub?.cancel();
-    _accurateSub?.cancel();
-    _orchestrator?.dispose();
+    _activeSession?.dispose();
+    for (var s in _finalizingSessions) { s.dispose(); }
     _sliceTimer?.cancel();
+    _sessionReadyController.close();
     _audioRecorder.dispose();
     super.dispose();
   }

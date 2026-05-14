@@ -3,9 +3,9 @@ import 'dart:io';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'dart:async';
-import 'dart:math';
 import 'prompt_provider.dart';
 import 'recording_provider.dart';
+import 'models.dart';
 
 class OpenAIService {
   final String apiKey;
@@ -53,7 +53,7 @@ class OpenAIService {
       if (len < 100) return ""; 
     } catch (e) { return null; }
 
-    return await (() async {
+    try {
       final url = Uri.parse("$baseUrl/audio/transcriptions");
       final request = http.MultipartRequest("POST", url)
         ..headers['Authorization'] = 'Bearer ${apiKey.trim()}'
@@ -84,13 +84,19 @@ class OpenAIService {
         print("[STT ERROR ${response.statusCode}] @ $url");
         print("[Response Body] ${response.body}");
         print("!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!");
-        return "[API Error] ${response.statusCode}: ${response.body}"; 
+        throw Exception("API Error ${response.statusCode}"); 
       }
-    })();
+    } on SocketException {
+      throw Exception("Network unavailable. Check connection.");
+    } on TimeoutException {
+      throw Exception("Connection timeout. Retrying...");
+    } catch (e) {
+      rethrow;
+    }
   }
 
   Future<String> translate(String text, {String? modelOverride}) async {
-    return await (() async {
+    try {
       final url = Uri.parse("$baseUrl/chat/completions");
       final response = await _client.post(
         url,
@@ -122,15 +128,21 @@ class OpenAIService {
         return _sanitizeResponse(data['choices'][0]['message']['content']);
       } else {
         // [Architect: Diagnostic UI] 翻译报错回显
-        final errorMsg = "[Translation Error ${response.statusCode}] ${response.body}";
+        final errorMsg = "[Translation Error ${response.statusCode}]";
         print("\x1B[31m$errorMsg\x1B[0m");
         throw Exception(errorMsg);
       }
-    })();
+    } on SocketException {
+      throw Exception("Network error during translation.");
+    } on TimeoutException {
+      throw Exception("Translation timeout.");
+    } catch (e) {
+      rethrow;
+    }
   }
 
-  Future<String> summarize(String text, {PromptStrategy strategy = PromptStrategy.general, AIProvider provider = AIProvider.groq}) async {
-    return await (() async {
+  Future<String> summarize(String text, {PromptStrategy strategy = PromptStrategy.general, AIProvider provider = AIProvider.groq, AppMode mode = AppMode.lecture}) async {
+    try {
       final url = Uri.parse("$baseUrl/chat/completions");
       final response = await _client.post(
         url,
@@ -141,7 +153,7 @@ class OpenAIService {
         body: jsonEncode({
           'model': defaultModel.trim(),
           'messages': [
-            {'role': 'system', 'content': PromptProvider.getSystemPrompt(strategy, provider)},
+            {'role': 'system', 'content': PromptProvider.getSystemPrompt(strategy, provider, mode: mode)},
             {'role': 'user', 'content': text},
           ],
           'temperature': 0.5,
@@ -152,8 +164,14 @@ class OpenAIService {
         final data = jsonDecode(response.body);
         return _sanitizeResponse(data['choices'][0]['message']['content']);
       } else {
-        throw Exception("Summarize error ${response.statusCode}: ${response.body}");
+        throw Exception("Summarize error ${response.statusCode}");
       }
-    })();
+    } on SocketException {
+      throw Exception("Network error during summary.");
+    } on TimeoutException {
+      throw Exception("Summary timeout.");
+    } catch (e) {
+      rethrow;
+    }
   }
 }

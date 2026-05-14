@@ -1,66 +1,66 @@
 # Jeff Notes: Full Technical Specification & Architecture
 
 ## 1. System Overview
-Jeff Notes is a production-grade academic assistant designed for high-concurrency audio transcription and professional academic translation. It operates on a **Reactive Pipeline Architecture**, decoupling low-latency audio capture from high-latency AI processing.
+Jeff Notes is a production-grade academic assistant designed for high-concurrency audio transcription and professional academic translation. It operates on a **Session Isolation Architecture**, decoupling the active recording lifecycle from background AI finalization.
 
-## 2. Core Data Flow (High-Level)
+## 2. Core Data Flow (Triple-Core Architecture)
 ```mermaid
 graph TD
     A[AudioRecorder] -->|5s-15s Slices| B[Tail Stitching Logic]
     B -->|WAV Header Correction| C[AIOrchestratorService]
     C -->|Priority 0| D[Groq Whisper STT]
-    D -->|English Stream| E[RecordingProvider / UI]
-    C -->|Batching x3| F[Priority 1: Groq Llama Translation]
+    D -->|English Stream| E[LectureSession / Provider]
+    C -->|Batching x3| F[Priority 1: Qwen-72B Translation]
     F -->|Chinese Subtitles| E
-    E -->|Background| G[Shadow Cache JSON]
-    E -->|On Stop| H[Final Academic Review + MD Export]
+    E -->|Background Isolate| G[Shadow Cache JSON]
+    E -->|On Stop| H[Finalizing Queue]
+    H -->|Active Polling Wait| I[DeepSeek-V3 Final Recap]
+    I -->|sessionReadyStream| J[UI Auto-Popup & MD Export]
 ```
 
-## 3. Audio Ingestion & Stitching Protocol
-To prevent "word-chopping" at the boundary of audio slices, the system implements a **Overlap-Stitch Algorithm**:
-- **Tail Buffer**: Every audio slice captures a trailing 25,600 byte PCM segment (`kTailSize`).
-- **Stitching Task**: The next slice is prepended with this tail in a background Isolate (`_backgroundStitchTask`).
-- **WAV Integrity**: Since slices are raw PCM, the system manually generates a valid 44-byte WAV header (`_generateWavHeaderStatic`) before sending to the API.
+## 3. Session Isolation & Concurrency
+To allow users to start a new recording immediately after stopping the previous one, the system uses a **Finalizing Queue**:
+- **LectureSession**: Every recording is encapsulated in a `LectureSession` object containing its own notes, orchestrator, and mode (Lecture/Discussion).
+- **Decoupling**: When `stop()` is called, the `_activeSession` is moved to `_finalizingSessions`. The UI is immediately cleared for the next recording.
+- **Background Finalization**: A non-blocking `_finalizeSession` task handles buffer flushing, STT/Translation settlement polling, final recap generation via DeepSeek-V3, and file exporting.
 
-## 4. AI Orchestration & Parallelism
-### 4.1 AIOrchestratorService
+## 4. AI Orchestration & Mode Handling
+### 4.1 Mode-Specific Pipelines
+The system adapts its prompt strategies and UI rendering based on the `AppMode`:
+- **Academic Lecture**: Focuses on `Thesis Statement` and `Logic Maps`. Exports structured 60s Block Summaries and sequentially outputs Chinese and English scripts. UI uses **Blue** accents and `school` icons.
+- **Group Discussion**: Focuses on strict `Concise Paraphrasing (Bilingual)` and `Discussion Starters`. Explicitly filters out 60s block summaries and outputs fully consolidated English and Chinese scripts. UI uses **Purple** accents and `forum` icons.
+
+### 4.2 AIOrchestratorService
 Acts as the central bus between raw text and intelligence.
-- **Fast Track**: Sends every single text slice to the `fastEnglishStream`.
-- **Slow Track**: Buffers 3 slices into a `_translationBuffer`. Once full (or on `flush`), it triggers the translation API.
-- **Mutual Exclusion**: Uses `_isTranslating` flag to prevent race conditions during batch processing.
+- **Fast Track**: Sends every single text slice to the `fastEnglishStream` via Groq.
+- **Slow Track (Translation)**: Buffers 3 slices into a `_translationBuffer`. Once full, triggers the translation API via Qwen-2.5-72B.
+- **Ghost-Fragment Handlers**: Includes dedicated null-state injection logic (`PipelineResult(id, " ")`) to prevent translation allocation starvation when Chinese sentence counts fall short of English chunks, ensuring finalization polling loops do not dead-wait.
+- **Batching Strategy**: Automatically adjusts based on whether the session is active or being flushed.
 
-### 4.2 ApiScheduler (The Traffic Cop)
-- **4 Parallel Slots**: Manages 4 concurrent network requests.
-- **Prioritization**:
-  - `Priority 0`: STT (Highest). If a summary is running, STT can still jump the queue.
-  - `Priority 1`: Translation/Summary (Background).
-- **untilIdle()**: A critical synchronization primitive that returns a `Future` only when all scheduled tasks are finished.
+### 4.3 ApiScheduler (The Traffic Cop)
+- **4 Parallel Slots**: Manages 4 concurrent network requests across all sessions.
+- **Prioritization**: `Priority 0` (STT) always preempts `Priority 1` (Summary/Translation).
+- **untilSessionIdle(id)**: (Deprecated in favor of active settlement polling to eliminate race conditions).
 
-## 5. Domain-Specific Translation (EAL Optimized)
-- **Philosophy**: Avoids tag-based masking (which confuses LLMs). Instead, it uses a **Simultaneous Interpreter Prompt**.
-- **Constraint**: Strict temperature (`0.1`) and negative constraints ("DO NOT add explanations") suppress AI hallucinations.
-- **Formatting**: Maintains academic tone and preserves proper nouns in original English.
+## 5. Event-Driven UI & Auto-Popup
+The UI does not poll for summary completion. Instead, it uses a **Reactive Notification Stream**:
+- **sessionReadyStream**: A broadcast stream in `RecordingProvider`.
+- **Trigger**: Emits the final recap content only when `_finalizeSession` is 100% complete.
+- **Consumption**: `NotesScreen` listens to this stream and automatically triggers the `FinalReviewModal` regardless of the user's current interaction.
 
-## 6. Smart UI & Scroll Logic
-- **State Source**: `RecordingProvider` (ChangeNotifier) is the single source of truth.
-- **Auto-Scroll Engine**:
-  - Monitors `UserScrollNotification`.
-  - If the user interacts with the list, `_userIsScrolling` becomes `true` and a 3-second `Timer` starts.
-  - While `_userIsScrolling` is `true`, `WidgetsBinding.instance.addPostFrameCallback` will NOT trigger `animateTo`.
-  - This ensures the user can read a specific line without the list "jumping" under them.
+## 6. Audio Ingestion & Stitching Protocol
+- **Overlap-Stitch Algorithm**: Captures a trailing 25,600 byte PCM segment (`kTailSize`) to prevent word-chopping at slice boundaries.
+- **WAV Integrity**: Manually generates a 44-byte WAV header for each slice in a background Isolate.
 
-## 7. Data Persistence Hierarchy
-1. **Shadow Cache (Ephemeral)**: `shadow_draft.json` is updated on every successful translation. Prevents data loss on crash.
-2. **MD Export (Permanent)**: Triggered on `stopRecording`.
-   - **Sequence**: `stop()` -> `flush()` -> `untilIdle()` -> `generateReview()` -> `exportToMarkdown()`.
-   - **Structure**: 
-     - `# Part 1`: AI Deep Recap (Synthesized from block summaries).
-     - `# Part 2`: 60s Block Summaries (High-level milestones).
-     - `# Part 3`: Full Bilingual Script (Numbered source + translation).
+## 7. Domain-Specific Translation (EAL Optimized)
+- **Philosophy**: Uses a **Simultaneous Interpreter Prompt** with strict temperature (`0.1`) to ensure academic tone and technical term preservation.
 
-## 8. Development Environment
-- **Models**: Primary: `llama-3.3-70b-versatile` (Groq), Secondary: `SenseVoiceSmall` (SiliconFlow).
-- **Native Dependencies**: 
-  - `record`: Audio capture.
-  - `path_provider`: File system access.
-  - `audio_session`: iOS Audio Category management (PlayAndRecord).
+## 8. Data Persistence Hierarchy
+1. **Shadow Cache (Ephemeral)**: `shadow_draft.json` updated on every translation for crash recovery.
+2. **MD Export (Permanent)**: Validated and exported upon session settlement. Format strictly adapts to AppMode to ensure maximum readability for the specific use case.
+
+## 9. Development Environment (Triple-Core Engine)
+- **STT (Fast)**: Groq API (`whisper-large-v3`).
+- **Translation (Real-Time)**: SiliconFlow API (`Qwen/Qwen2.5-72B-Instruct`).
+- **Final Summary (Intelligence)**: SiliconFlow API (`deepseek-ai/DeepSeek-V3`).
+- **Framework**: Flutter 3.24.0+ (iOS 15.5+).
