@@ -17,6 +17,7 @@ class PipelineResult {
 class AIOrchestratorService {
   final OpenAIService sttService;
   final OpenAIService translationService;
+  final OpenAIService? translationFallbackService;
   final String sessionId;
 
   final _fastEnglishController = StreamController<PipelineResult>.broadcast();
@@ -31,18 +32,31 @@ class AIOrchestratorService {
 
   // 防止同时触发多个 batch 翻译
   bool _isTranslating = false;
+  bool _isDisposed = false;
 
   AIOrchestratorService({
     required this.sttService,
     required this.translationService,
+    this.translationFallbackService,
     required this.sessionId,
   });
+
+  void _addFastEnglish(PipelineResult result) {
+    if (_isDisposed) return;
+    _fastEnglishController.add(result);
+  }
+
+  void _addAccurateChinese(PipelineResult result) {
+    if (_isDisposed) return;
+    _accurateChineseController.add(result);
+  }
 
   Future<void> processAudioSegment(
     String noteId, 
     String filePath, 
     {String? context, Function(String)? onStatus}
   ) async {
+    if (_isDisposed) return;
     try {
       onStatus?.call("STT requesting...");
       
@@ -53,9 +67,11 @@ class AIOrchestratorService {
         sessionId: sessionId,
       );
 
+      if (_isDisposed) return;
+
       if (rawEnglish == null || rawEnglish.trim().isEmpty) {
         onStatus?.call("Silence detected");
-        _fastEnglishController.add(PipelineResult(noteId, "[Silence]"));
+        _addFastEnglish(PipelineResult(noteId, "[Silence]"));
         return;
       }
       
@@ -72,12 +88,14 @@ class AIOrchestratorService {
 
       // 如果清洗后为空也当静音处理
       if (cleanEnglish.trim().isEmpty) {
-        _fastEnglishController.add(PipelineResult(noteId, "[Silence]"));
+        _addFastEnglish(PipelineResult(noteId, "[Silence]"));
         return;
       }
 
+      if (_isDisposed) return;
+
       onStatus?.call("Displaying English...");
-      _fastEnglishController.add(PipelineResult(noteId, cleanEnglish));
+      _addFastEnglish(PipelineResult(noteId, cleanEnglish));
 
       // 3. 进入翻译缓冲（慢车道）
       _translationBuffer.add(cleanEnglish);
@@ -94,13 +112,13 @@ class AIOrchestratorService {
     } catch (e, st) {
       debugPrint("[Orchestrator Error $noteId] $e\n$st");
       onStatus?.call("Pipeline Error");
-      _fastEnglishController.add(PipelineResult(noteId, "[Error:$e]"));
+      _addFastEnglish(PipelineResult(noteId, "[Error:$e]"));
     }
   }
 
 
   Future<void> _processTranslationBatch({Function(String)? onStatus}) async {
-    if (_translationBuffer.isEmpty || _isTranslating) return;
+    if (_translationBuffer.isEmpty || _isTranslating || _isDisposed) return;
     _isTranslating = true;
 
     // 立刻快照并清空缓冲区，防止并发写入
@@ -109,8 +127,6 @@ class AIOrchestratorService {
     _translationBuffer.clear();
     _bufferIds.clear();
 
-    // 翻译结果回填到 batch 中最后一条英文对应的 noteId
-    final targetNoteId = ids.last;
 
     try {
       // [Fix] 先做 TerminologyInterceptor，用安全的方式，任何异常都有降级
@@ -130,13 +146,32 @@ class AIOrchestratorService {
         lookupTable = {};
       }
 
+      if (_isDisposed) return;
       onStatus?.call("Calling translation API...");
       
-      final translatedText = await ApiScheduler().enqueue(
-        () => translationService.translate(textToTranslate),
-        priority: 1,
-        sessionId: sessionId,
-      );
+      String translatedText;
+      try {
+        translatedText = await ApiScheduler().enqueue(
+          () => translationService.translate(textToTranslate),
+          priority: 1,
+          sessionId: sessionId,
+        );
+      } catch (mainError) {
+        debugPrint("[Orchestrator] Main translation service failed: $mainError");
+        if (translationFallbackService != null) {
+          onStatus?.call("Main failed. Using fallback...");
+          debugPrint("[Orchestrator] Attempting translation fallback...");
+          translatedText = await ApiScheduler().enqueue(
+            () => translationFallbackService!.translate(textToTranslate),
+            priority: 1,
+            sessionId: sessionId,
+          );
+        } else {
+          rethrow;
+        }
+      }
+
+      if (_isDisposed) return;
 
       // 还原术语
       final finalChinese = lookupTable.isEmpty 
@@ -152,10 +187,10 @@ class AIOrchestratorService {
           .toList();
 
       if (sentences.isEmpty || ids.length == 1) {
-        _accurateChineseController.add(PipelineResult(ids.last, finalChinese));
+        _addAccurateChinese(PipelineResult(ids.last, finalChinese));
         // 对于其余的 id，补发一个空格，防止它们永远保持 null 导致 30 秒超时等待
         for (int i = 0; i < ids.length - 1; i++) {
-          _accurateChineseController.add(PipelineResult(ids[i], " "));
+          _addAccurateChinese(PipelineResult(ids[i], " "));
         }
       } else {
         // 将句子平均分配给每个 noteId
@@ -165,9 +200,9 @@ class AIOrchestratorService {
           final end = (start + perNote).clamp(0, sentences.length);
           if (start < sentences.length) {
             final chunk = sentences.sublist(start, end).join('');
-            _accurateChineseController.add(PipelineResult(ids[i], chunk));
+            _addAccurateChinese(PipelineResult(ids[i], chunk));
           } else {
-            _accurateChineseController.add(PipelineResult(ids[i], " "));
+            _addAccurateChinese(PipelineResult(ids[i], " "));
           }
         }
       }
@@ -177,7 +212,7 @@ class AIOrchestratorService {
       onStatus?.call("Translation failed");
       // [Fix] 不再显示 [Translation Error]，而是把 batch 合并的英文原文作为降级显示
       // 这样中文字幕区至少不会出现红字 Error
-      _accurateChineseController.add(PipelineResult(ids.last, "[Translation unavailable]"));
+      _addAccurateChinese(PipelineResult(ids.last, "[Translation unavailable]"));
     } finally {
       _isTranslating = false;
       
@@ -198,6 +233,7 @@ class AIOrchestratorService {
   }
 
   void dispose() {
+    _isDisposed = true;
     _fastEnglishController.close();
     _accurateChineseController.close();
   }

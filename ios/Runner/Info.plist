@@ -2,6 +2,8 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>CADisableMinimumFrameDurationOnPhone</key>
+	<true/>
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
@@ -24,6 +26,23 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>Jeff Notes 需要蓝牙权限以支持无线耳机或教学麦克风的音频采集。</string>
+	<key>NSBluetoothPeripheralUsageDescription</key>
+	<string>Jeff Notes 需要蓝牙权限以优化教学环境下的音频录制质量。</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Jeff Notes 需要使用麦克风来记录讲座内容，并为您生成实时的双语学术总结。</string>
+	<key>UIApplicationSupportsIndirectInputEvents</key>
+	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>audio</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -41,29 +60,5 @@
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
-	<key>CADisableMinimumFrameDurationOnPhone</key>
-	<true/>
-	<key>UIApplicationSupportsIndirectInputEvents</key>
-	<true/>
-    
-    <!-- [Architect: iOS Permission Hardening] -->
-    <key>NSMicrophoneUsageDescription</key>
-    <string>Jeff Notes 需要使用麦克风来记录讲座内容，并为您生成实时的双语学术总结。</string>
-    <key>NSBluetoothAlwaysUsageDescription</key>
-    <string>Jeff Notes 需要蓝牙权限以支持无线耳机或教学麦克风的音频采集。</string>
-    <key>NSBluetoothPeripheralUsageDescription</key>
-    <string>Jeff Notes 需要蓝牙权限以优化教学环境下的音频录制质量。</string>
-    
-    <!-- [Architect: Background Execution] -->
-    <key>UIBackgroundModes</key>
-    <array>
-        <string>audio</string>
-    </array>
-    
-    <key>NSAppTransportSecurity</key>
-    <dict>
-        <key>NSAllowsArbitraryLoads</key>
-        <true/>
-    </dict>
 </dict>
 </plist>

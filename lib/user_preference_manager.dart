@@ -1,4 +1,4 @@
-import 'prompt_provider.dart';
+import 'models.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:flutter/foundation.dart';
 

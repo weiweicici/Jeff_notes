@@ -1,10 +1,10 @@
 import 'dart:convert';
 import 'dart:io';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'dart:async';
 import 'prompt_provider.dart';
-import 'recording_provider.dart';
 import 'models.dart';
 
 class OpenAIService {
@@ -46,6 +46,7 @@ class OpenAIService {
   }
 
   Future<String?> transcribe(String filePath, {String? previousText}) async {
+    if (_isDisposed) return null;
     try {
       final file = File(filePath);
       if (!await file.exists()) return null;
@@ -56,11 +57,19 @@ class OpenAIService {
     try {
       final url = Uri.parse("$baseUrl/audio/transcriptions");
       final request = http.MultipartRequest("POST", url)
-        ..headers['Authorization'] = 'Bearer ${apiKey.trim()}'
         ..fields['model'] = whisperModel.trim()
         ..fields['response_format'] = 'json';
       
-      if (!baseUrl.contains("siliconflow")) {
+      // 硅基流动 API 特殊处理
+      if (baseUrl.contains("siliconflow")) {
+        debugPrint("硅基流动 STT 请求: URL=$url, API Key 前几位: ${apiKey.substring(0, 10)}...");
+        debugPrint("硅基流动 API Key 完整长度: ${apiKey.length}");
+        // 硅基流动使用 Authorization 头，格式为 Bearer
+        request.headers['Authorization'] = 'Bearer ${apiKey.trim()}';
+        debugPrint("硅基流动请求头: Authorization: Bearer ${apiKey.substring(0, 10)}...");
+        // 注意：硅基流动部署的 SenseVoiceSmall 模型不支持 language 和 prompt 参数，发送会导致 API Error 400
+      } else {
+        request.headers['Authorization'] = 'Bearer ${apiKey.trim()}';
         request.fields['language'] = 'en';
         if (previousText != null && previousText.isNotEmpty && previousText != "...") {
           request.fields['prompt'] = previousText;
@@ -73,8 +82,15 @@ class OpenAIService {
         contentType: MediaType('audio', 'wav'),
       ));
 
-      final streamedResponse = await _client.send(request).timeout(const Duration(seconds: 45));
+      final streamedResponse = await _client.send(request).timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamedResponse);
+
+      // 硅基流动 API 详细调试信息
+      if (baseUrl.contains("siliconflow")) {
+        debugPrint("硅基流动 STT 响应状态码: ${response.statusCode}");
+        debugPrint("硅基流动 STT 响应头: ${response.headers}");
+        debugPrint("硅基流动 STT 响应体: ${response.body}");
+      }
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -96,6 +112,7 @@ class OpenAIService {
   }
 
   Future<String> translate(String text, {String? modelOverride}) async {
+    if (_isDisposed) throw Exception("Service disposed");
     try {
       final url = Uri.parse("$baseUrl/chat/completions");
       final response = await _client.post(
@@ -121,7 +138,7 @@ class OpenAIService {
           ],
           'temperature': 0.1,
         }),
-      ).timeout(const Duration(seconds: 45));
+      ).timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -142,6 +159,7 @@ class OpenAIService {
   }
 
   Future<String> summarize(String text, {PromptStrategy strategy = PromptStrategy.general, AIProvider provider = AIProvider.groq, AppMode mode = AppMode.lecture}) async {
+    if (_isDisposed) throw Exception("Service disposed");
     try {
       final url = Uri.parse("$baseUrl/chat/completions");
       final response = await _client.post(
@@ -158,7 +176,7 @@ class OpenAIService {
           ],
           'temperature': 0.5,
         }),
-      ).timeout(const Duration(seconds: 60));
+      ).timeout(const Duration(seconds: 45));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

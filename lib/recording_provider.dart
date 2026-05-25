@@ -146,6 +146,7 @@ class RecordingProvider extends ChangeNotifier {
   OpenAIService? _fastAiService;
   OpenAIService? _groqService;
   OpenAIService? _summaryService;
+  OpenAIService? _fallbackTranslationService;
   AIOrchestratorService? _orchestrator;
   final StreamController<String> _sessionReadyController = StreamController<String>.broadcast();
   String _geminiBaseUrl = "";
@@ -243,9 +244,15 @@ class RecordingProvider extends ChangeNotifier {
       _selectedProvider = provider;
       await prefs.setInt('selected_provider', provider.index);
       if (key != null) { 
-        await prefs.setString('api_key_${provider.name}', key); 
-        _apiKeys[provider] = key;
-        debugPrint("保存 ${provider.name} API Key 成功，前几位: ${key.substring(0, 10)}...");
+        if (key.startsWith('sk-or-')) {
+          await prefs.setString('api_key_openrouter', key);
+          _openRouterKey = key;
+          debugPrint("识别并保存 OpenRouter API Key 成功，前几位: ${key.substring(0, 10)}...");
+        } else {
+          await prefs.setString('api_key_${provider.name}', key); 
+          _apiKeys[provider] = key;
+          debugPrint("保存 ${provider.name} API Key 成功，前几位: ${key.substring(0, 10)}...");
+        }
       }
     }
     if (geminiBaseUrl != null) {
@@ -403,11 +410,16 @@ class RecordingProvider extends ChangeNotifier {
     // 绑定 Semantic 滑动窗口摘要服务（首选 Qwen/硅基，无则使用主 AI 服务）
     _summaryService = summaryService ?? _aiService;
     debugPrint("摘要服务绑定为: ${_summaryService?.baseUrl.contains('siliconflow') == true ? '硅基流动 (Qwen-72B)' : '主服务'}");
+
+    // 绑定备用翻译服务（硅基流动 Qwen），以便在主通道超时/故障时平滑切换
+    _fallbackTranslationService = fallbackTranslationService;
+    debugPrint("备用翻译服务绑定为: ${_fallbackTranslationService != null ? '硅基流动 (Qwen-72B)' : '无'}");
     
     if (_aiService != null && _fastAiService != null) {
       _orchestrator = AIOrchestratorService(
         sttService: _fastAiService!,
         translationService: _aiService!,
+        translationFallbackService: _fallbackTranslationService,
         sessionId: DateTime.now().millisecondsSinceEpoch.toString(),
       );
       
@@ -690,8 +702,22 @@ class RecordingProvider extends ChangeNotifier {
     _isGeneratingFinalReview = true; notifyListeners();
     final material = _allNotes.where((n) => n.isSummary).map((n) => n.summary).join("\n\n");
     if (material.isEmpty) { _finalReviewContent = "Not enough material."; } else {
-      final recap = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode);
-      _finalReviewContent = recap;
+      try {
+        final recap = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode);
+        _finalReviewContent = recap;
+      } catch (mainError) {
+        debugPrint("[Final Academic Review] Main service failed, trying fallback: $mainError");
+        if (_fallbackTranslationService != null) {
+          try {
+            final recap = await _fallbackTranslationService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode);
+            _finalReviewContent = recap;
+          } catch (fallbackError) {
+            _finalReviewContent = "Recap failed both primary and fallback service.";
+          }
+        } else {
+          _finalReviewContent = "Recap failed and no fallback configured.";
+        }
+      }
     }
     _isGeneratingFinalReview = false;
     notifyListeners();

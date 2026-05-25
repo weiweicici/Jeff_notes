@@ -26,6 +26,7 @@ class ApiScheduler {
   final Map<String, Completer<void>> _sessionIdleCompleters = {};
 
   Future<T> enqueue<T>(Future<T> Function() task, {int priority = 1, String? sessionId}) async {
+    bool isExpired = false;
     if (_activeRequests >= maxConcurrentRequests) {
       final completer = Completer<void>();
       // 按优先级插入（priority 越小越靠前）
@@ -36,12 +37,16 @@ class ApiScheduler {
         _waitingQueue.insert(insertIndex, _WaitingTask(completer, priority));
       }
 
-      await completer.future.timeout(
-        const Duration(seconds: 90),
-        onTimeout: () {
-          _waitingQueue.removeWhere((t) => t.completer == completer);
-        }
-      );
+      try {
+        await completer.future.timeout(const Duration(seconds: 90));
+      } on TimeoutException {
+        _waitingQueue.removeWhere((t) => t.completer == completer);
+        isExpired = true;
+      }
+    }
+
+    if (isExpired) {
+      throw TimeoutException("Task expired in scheduler queue after 90s");
     }
 
     _activeRequests++;

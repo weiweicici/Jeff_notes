@@ -4,12 +4,12 @@ import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
-import '../recording_provider.dart';
 import 'history_screen.dart';
 import '../widgets/academic_markdown.dart';
 import '../widgets/fade_in_slide_up.dart';
 import '../widgets/recording_pulse_fab.dart';
-import '../models.dart';
+import '../models.dart'; // 包含 AIProvider 和 AppMode 枚举
+import '../recording_provider.dart'; // 放在其他导入之后，避免冲突
 
 class NotesScreen extends StatefulWidget {
   const NotesScreen({super.key});
@@ -20,6 +20,7 @@ class NotesScreen extends StatefulWidget {
 class _NotesScreenState extends State<NotesScreen> {
   final ScrollController _scrollController = ScrollController();
   StreamSubscription<String>? _sessionReadySub;
+  String? _pendingSummaryContent;
 
   /// 帧安全顺滑滚动 —— 在当前帧布局完成后再执行滚动，
   /// 彻底防止由于高度未更新导致的计算偏差或 jumpTo 引起的界面突变。
@@ -38,11 +39,13 @@ class _NotesScreenState extends State<NotesScreen> {
   @override
   void initState() {
     super.initState();
-    // ✅ 监听总结就绪事件
+    // ✅ 监听总结就绪事件，改为非侵入式通知
     final provider = context.read<RecordingProvider>();
     _sessionReadySub = provider.sessionReadyStream.listen((content) {
       if (!mounted) return;
-      _showFinalReviewModalWithContent(context, content);
+      setState(() {
+        _pendingSummaryContent = content;
+      });
     });
   }
 
@@ -54,85 +57,10 @@ class _NotesScreenState extends State<NotesScreen> {
   }
 
   void _showSettingsDialog(BuildContext context) {
-    final provider = context.read<RecordingProvider>();
-    AIProvider tempProvider = provider.selectedProvider;
-    AppMode tempMode = provider.appMode;
-    int tempDuration = provider.sliceDuration;
-    bool tempUseBluetooth = provider.useBluetooth;
-    bool tempIsDarkMode = provider.isDarkMode;
-    bool tempEnableFinalRecap = provider.enableFinalRecap;
-    bool tempEnableLectureDiscovery = provider.enableLectureDiscovery;
-    final TextEditingController controller = TextEditingController(text: provider.getApiKeyFor(tempProvider));
-
     showDialog(
       context: context,
-      builder: (context) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Settings'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<AIProvider>(
-                  value: tempProvider,
-                  decoration: const InputDecoration(labelText: 'AI Provider'),
-                  items: AIProvider.values.map((p) => DropdownMenuItem(value: p, child: Text(p.name.toUpperCase()))).toList(),
-                  onChanged: (val) {
-                    if (val != null) {
-                      setDialogState(() {
-                        tempProvider = val;
-                        controller.text = provider.getApiKeyFor(val);
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<int>(
-                  value: tempDuration,
-                  decoration: const InputDecoration(labelText: 'STT Frequency'),
-                  items: [5, 8, 10, 12, 15].map((d) => DropdownMenuItem(value: d, child: Text('$d seconds'))).toList(),
-                  onChanged: (val) { if (val != null) setDialogState(() => tempDuration = val); },
-                ),
-                const SizedBox(height: 16),
-                DropdownButtonFormField<AppMode>(
-                  value: tempMode,
-                  decoration: const InputDecoration(labelText: 'Recording Mode'),
-                  items: AppMode.values.map((m) => DropdownMenuItem(
-                    value: m, 
-                    child: Text(m == AppMode.lecture ? '🎓 Academic Lecture' : '👥 Group Discussion')
-                  )).toList(),
-                  onChanged: (val) { if (val != null) setDialogState(() => tempMode = val); },
-                ),
-                const SizedBox(height: 12),
-                SwitchListTile(title: const Text('Dark Mode'), value: tempIsDarkMode, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => tempIsDarkMode = val); }),
-                SwitchListTile(title: const Text('Use Bluetooth Mic'), value: tempUseBluetooth, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => tempUseBluetooth = val); }),
-                SwitchListTile(title: const Text('Final Academic Recap'), value: tempEnableFinalRecap, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => tempEnableFinalRecap = val); }),
-                SwitchListTile(title: const Text('Academic Radar (Discovery)'), value: tempEnableLectureDiscovery, contentPadding: EdgeInsets.zero, onChanged: (val) { setDialogState(() => tempEnableLectureDiscovery = val); }),
-                const SizedBox(height: 12),
-                TextField(controller: controller, decoration: InputDecoration(labelText: '${tempProvider.name.toUpperCase()} API Key')),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-            TextButton(
-              onPressed: () {
-                provider.updateSettings(
-                  provider: tempProvider,
-                  mode: tempMode,
-                  key: controller.text,
-                  duration: tempDuration,
-                  useBluetooth: tempUseBluetooth,
-                  isDarkMode: tempIsDarkMode,
-                  enableFinalRecap: tempEnableFinalRecap,
-                  enableLectureDiscovery: tempEnableLectureDiscovery,
-                );
-                Navigator.pop(context);
-              },
-              child: const Text('Save'),
-            ),
-          ],
-        ),
+      builder: (context) => _SettingsDialog(
+        provider: context.read<RecordingProvider>(),
       ),
     );
   }
@@ -285,6 +213,64 @@ class _NotesScreenState extends State<NotesScreen> {
       ),
       body: Column(
         children: [
+          if (_pendingSummaryContent != null)
+            GestureDetector(
+              onTap: () {
+                final content = _pendingSummaryContent!;
+                setState(() {
+                  _pendingSummaryContent = null;
+                });
+                _showFinalReviewModalWithContent(context, content);
+              },
+              child: Container(
+                width: double.infinity,
+                margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: provider.currentSessionMode == AppMode.lecture
+                        ? [Colors.blueAccent, Colors.blue]
+                        : [Colors.deepPurpleAccent, Colors.deepPurple],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: (provider.currentSessionMode == AppMode.lecture
+                              ? Colors.blueAccent
+                              : Colors.deepPurpleAccent)
+                          .withOpacity(0.3),
+                      offset: const Offset(0, 4),
+                      blurRadius: 10,
+                    ),
+                  ],
+                ),
+                child: Row(
+                  children: [
+                    Icon(
+                      provider.currentSessionMode == AppMode.lecture ? Icons.school : Icons.forum,
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 12),
+                    const Expanded(
+                      child: Text(
+                        '新总结已完成，点击查看',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontWeight: FontWeight.bold,
+                          fontSize: 14,
+                        ),
+                      ),
+                    ),
+                    const Icon(
+                      Icons.arrow_forward_ios,
+                      color: Colors.white70,
+                      size: 14,
+                    ),
+                  ],
+                ),
+              ),
+            ),
           Consumer<RecordingProvider>(
             builder: (context, provider, _) => provider.hasRecoveredCache
                 ? Container(
@@ -379,13 +365,10 @@ class _NotesScreenState extends State<NotesScreen> {
                 if (prev.isRecording != next.isRecording) return true;
                 // 翻译异步到达（切片数相同但内容有变化）：触发重绘 + 滚动
                 if (next.transcripts.isNotEmpty && prev.transcripts.isNotEmpty) {
-                  final hasNewTranslation = next.transcripts.any((note) {
-                    final prevNote = prev.transcripts.firstWhere(
-                      (n) => n.id == note.id,
-                      orElse: () => note,
-                    );
-                    return prevNote.translatedContent != note.translatedContent;
-                  });
+                  final prevMap = {for (final n in prev.transcripts) n.id: n.translatedContent};
+                  final hasNewTranslation = next.transcripts.any(
+                    (note) => prevMap[note.id] != note.translatedContent,
+                  );
                   if (hasNewTranslation) {
                     _scrollToBottom();
                     return true;
@@ -476,4 +459,155 @@ class _TranscriptData {
   final List<InsightNote> transcripts;
   final bool isRecording;
   _TranscriptData(this.transcripts, this.isRecording);
+}
+
+// ─── Settings Dialog ────────────────────────────────────────────────────────
+// 独立 StatefulWidget，让 TextEditingController 的生命周期
+// 绑定到 State 的 dispose()，彻底消除 "use-after-dispose" 黑屏 Bug。
+class _SettingsDialog extends StatefulWidget {
+  final RecordingProvider provider;
+  const _SettingsDialog({required this.provider});
+
+  @override
+  State<_SettingsDialog> createState() => _SettingsDialogState();
+}
+
+class _SettingsDialogState extends State<_SettingsDialog> {
+  late AIProvider _tempProvider;
+  late AppMode _tempMode;
+  late int _tempDuration;
+  late bool _tempUseBluetooth;
+  late bool _tempIsDarkMode;
+  late bool _tempEnableFinalRecap;
+  late bool _tempEnableLectureDiscovery;
+  late TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    final p = widget.provider;
+    _tempProvider = p.selectedProvider;
+    _tempMode = p.appMode;
+    _tempDuration = p.sliceDuration;
+    _tempUseBluetooth = p.useBluetooth;
+    _tempIsDarkMode = p.isDarkMode;
+    _tempEnableFinalRecap = p.enableFinalRecap;
+    _tempEnableLectureDiscovery = p.enableLectureDiscovery;
+    _controller = TextEditingController(text: p.getApiKeyFor(_tempProvider));
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose(); // 由 State.dispose() 统一调用，安全
+    super.dispose();
+  }
+
+  void _save() {
+    widget.provider.updateSettings(
+      provider: _tempProvider,
+      mode: _tempMode,
+      key: _controller.text,
+      duration: _tempDuration,
+      useBluetooth: _tempUseBluetooth,
+      isDarkMode: _tempIsDarkMode,
+      enableFinalRecap: _tempEnableFinalRecap,
+      enableLectureDiscovery: _tempEnableLectureDiscovery,
+      geminiBaseUrl: null,
+    );
+    if (mounted) Navigator.pop(context);
+  }
+
+  void _cancel() {
+    if (mounted) Navigator.pop(context);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Settings'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            DropdownButtonFormField<AIProvider>(
+              value: _tempProvider,
+              decoration: const InputDecoration(labelText: 'AI Provider'),
+              items: AIProvider.values
+                  .map((p) => DropdownMenuItem(value: p, child: Text(p.name.toUpperCase())))
+                  .toList(),
+              onChanged: (val) {
+                if (val != null) {
+                  setState(() {
+                    _tempProvider = val;
+                    _controller.text = widget.provider.getApiKeyFor(val);
+                  });
+                }
+              },
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<int>(
+              value: _tempDuration,
+              decoration: const InputDecoration(labelText: 'STT Frequency'),
+              items: [5, 8, 10, 12, 15]
+                  .map((d) => DropdownMenuItem(value: d, child: Text('$d seconds')))
+                  .toList(),
+              onChanged: (val) { if (val != null) setState(() => _tempDuration = val); },
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<AppMode>(
+              value: _tempMode,
+              decoration: const InputDecoration(labelText: 'Recording Mode'),
+              items: AppMode.values.map((m) => DropdownMenuItem(
+                value: m,
+                child: Text(
+                  m == AppMode.lecture
+                      ? '🎓 Academic Lecture'
+                      : m == AppMode.discussion
+                          ? '👥 Group Discussion'
+                          : 'Free Talk',
+                ),
+              )).toList(),
+              onChanged: (val) { if (val != null) setState(() => _tempMode = val); },
+            ),
+            const SizedBox(height: 12),
+            SwitchListTile(
+              title: const Text('Dark Mode'),
+              value: _tempIsDarkMode,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (val) => setState(() => _tempIsDarkMode = val),
+            ),
+            SwitchListTile(
+              title: const Text('Use Bluetooth Mic'),
+              value: _tempUseBluetooth,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (val) => setState(() => _tempUseBluetooth = val),
+            ),
+            SwitchListTile(
+              title: const Text('Final Academic Recap'),
+              value: _tempEnableFinalRecap,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (val) => setState(() => _tempEnableFinalRecap = val),
+            ),
+            SwitchListTile(
+              title: const Text('Academic Radar (Discovery)'),
+              value: _tempEnableLectureDiscovery,
+              contentPadding: EdgeInsets.zero,
+              onChanged: (val) => setState(() => _tempEnableLectureDiscovery = val),
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _controller,
+              decoration: InputDecoration(
+                labelText: '${_tempProvider.name.toUpperCase()} API Key',
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(onPressed: _cancel, child: const Text('Cancel')),
+        TextButton(onPressed: _save, child: const Text('Save')),
+      ],
+    );
+  }
 }
