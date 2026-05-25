@@ -438,7 +438,6 @@ class RecordingProvider extends ChangeNotifier {
         final index = _allNotes.indexWhere((n) => n.id == result.noteId);
         if (index != -1) {
           _allNotes[index].translatedContent = result.content;
-          _sessionReadyController.add(result.content); // Notify of new translation
           _saveShadowCache();
           notifyListeners();
         }

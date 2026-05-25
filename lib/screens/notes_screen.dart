@@ -43,11 +43,14 @@ class _NotesScreenState extends State<NotesScreen> {
     final provider = context.read<RecordingProvider>();
     _sessionReadySub = provider.sessionReadyStream.listen((content) {
       if (!mounted) return;
-      setState(() {
-        _pendingSummaryContent = content;
-      });
-      // ✅ 智能自动弹窗保护：直接自动触发显示，免除用户二次点击步骤，实现“零等待”无缝体验
-      _showFinalReviewModalWithContent(context, content);
+      
+      // ⚠️ 仅在学术学院模式才进行自动大弹窗展示
+      if (provider.currentSessionMode == AppMode.lecture) {
+        setState(() {
+          _pendingSummaryContent = content;
+        });
+        _showFinalReviewModalWithContent(context, content);
+      }
     });
   }
 
@@ -215,7 +218,7 @@ class _NotesScreenState extends State<NotesScreen> {
       ),
       body: Column(
         children: [
-          if (_pendingSummaryContent != null)
+          if (_pendingSummaryContent != null && provider.currentSessionMode == AppMode.lecture)
             GestureDetector(
               onTap: () {
                 final content = _pendingSummaryContent!;
