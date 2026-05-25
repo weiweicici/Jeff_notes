@@ -538,8 +538,9 @@ class RecordingProvider extends ChangeNotifier {
 
   /// 多平台翻译轮询（闲谈模式专用）
   Future<String> _translateFreeTalk(String englishText) async {
-    // 定义平台顺序
+    // 定义平台顺序：首选极速高可用的 Gemini-2.0-Flash
     final providers = [
+      () => _translateViaOpenRouter(englishText, model: 'google/gemini-2.0-flash'),
       () => _translateViaOpenRouter(englishText, model: 'glm-4-flash'),
       () => _translateViaOpenRouter(englishText, model: 'moonshot-v1-8k'),
       () => _translateViaSiliconFlow(englishText),
