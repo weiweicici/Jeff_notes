@@ -28,7 +28,7 @@ class AIOrchestratorService {
 
   final List<String> _translationBuffer = [];
   final List<String> _bufferIds = [];
-  static const int batchSize = 3;
+  static const int batchSize = 1;
 
   // 防止同时触发多个 batch 翻译
   bool _isTranslating = false;

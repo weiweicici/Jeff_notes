@@ -125,14 +125,15 @@ class OpenAIService {
           'model': (modelOverride ?? defaultModel).trim(),
           'messages': [
             {
-              'role': 'system', 
+              'role': 'system',
               'content': 'You are a professional academic simultaneous interpreter. '
-                         'Your task: translate English academic lecture notes into natural, fluent, scholarly Chinese. '
+                         'Your task: translate English academic lecture notes/utterances into natural, fluent, scholarly Chinese. '
+                         'Important: The input is a real-time 5-second slice. It might be an unfinished sentence. '
                          'Rules: '
-                         '1. Translate ONLY what is in the input. Do NOT add any context, background knowledge, or examples. '
-                         '2. Keep proper nouns (names of people, places, institutions, specific titles) in their original form. '
-                         '3. For domain-specific academic terms you are uncertain about, keep the English term with a Chinese translation in parentheses. '
-                         '4. Output ONLY the translated Chinese text. No notes, no explanations, no preamble, no postscript.'
+                         '1. Translate ONLY what is in the input. '
+                         '2. If the input ends without punctuation (like . ? !), it is an unfinished clause. Translate it in a natural "hanging/unfinished" tone to ensure it seamlessly connects to the next chunk. Do NOT append final periods. '
+                         '3. Keep proper nouns in their original form. For uncertain terms, keep the English with a Chinese translation in parentheses. '
+                         '4. Output ONLY the translated Chinese text. No notes, no explanations, no markup.'
             },
             {'role': 'user', 'content': text},
           ],
