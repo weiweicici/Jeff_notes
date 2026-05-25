@@ -51,8 +51,8 @@ Acts as the central bus between raw text and intelligence.
 ## 5. Event-Driven UI & Auto-Popup
 The UI does not poll for summary completion. Instead, it uses a **Reactive Notification Stream**:
 - **sessionReadyStream**: A broadcast stream in `RecordingProvider`.
-- **Trigger**: Emits the final recap content only when `_finalizeSession` is 100% complete.
-- **Consumption**: `NotesScreen` listens to this stream and automatically triggers the `FinalReviewModal` regardless of the user's current interaction.
+- **Trigger**: Emits the final recap content when `_finalizeSession` is complete, or aggregates live 60s Block summaries immediately upon stopping in Lecture Mode.
+- **Consumption**: `NotesScreen` listens to this stream and automatically triggers the `FinalReviewModal` strictly during Lecture Mode. Real-time translation streams are completely separated from this stream to guarantee no premature, empty, or annoying banner popups during live recording sessions.
 
 ## 6. Audio Ingestion & Stitching Protocol
 - **Overlap-Stitch Algorithm**: Captures a trailing 25,600 byte PCM segment (`kTailSize`) to prevent word-chopping at slice boundaries.
