@@ -808,35 +808,38 @@ class RecordingProvider extends ChangeNotifier {
       if (transcripts.isNotEmpty) {
         sb.writeln("---");
         sb.writeln();
-        sb.writeln("## Part 3 · Full Bilingual Script");
+        sb.writeln("## Part 3 · Full Script");
         sb.writeln();
         
-        List<String> pendingEng = [];
-        int blockCount = 1;
+        final List<String> chineseSegments = [];
+        final List<String> englishSegments = [];
 
         for (int i = 0; i < transcripts.length; i++) {
           final note = transcripts[i];
-          if (note.transcript.isEmpty ||
-              note.transcript == '...' ||
-              note.transcript.startsWith('[Silence') ||
-              note.transcript.startsWith('[Error')) continue;
+          final engText = note.transcript.trim();
+          if (engText.isEmpty ||
+              engText == '...' ||
+              engText.startsWith('[Silence') ||
+              engText.startsWith('[Error')) continue;
 
-          pendingEng.add(note.transcript);
+          englishSegments.add(engText);
 
-          if (note.translatedContent != null && note.translatedContent!.isNotEmpty) {
-            sb.writeln("**[$blockCount] ENG:** ${pendingEng.join(' ')}");
-            sb.writeln("**[$blockCount] CHN:** ${note.translatedContent}");
-            sb.writeln();
-            pendingEng.clear();
-            blockCount++;
+          final zhText = note.translatedContent?.trim();
+          if (zhText != null && zhText.isNotEmpty && !zhText.startsWith('[')) {
+            chineseSegments.add(zhText);
           }
         }
 
-        if (pendingEng.isNotEmpty) {
-          sb.writeln("**[$blockCount] ENG:** ${pendingEng.join(' ')}");
-          sb.writeln("**[$blockCount] CHN:** (Processing / End of Audio)");
-          sb.writeln();
-        }
+        sb.writeln("### 中文全文 (Chinese Transcript)");
+        sb.writeln();
+        sb.writeln(chineseSegments.join(" "));
+        sb.writeln();
+        sb.writeln();
+
+        sb.writeln("### 英文全文 (English Transcript)");
+        sb.writeln();
+        sb.writeln(englishSegments.join(" "));
+        sb.writeln();
       }
 
       await file.writeAsString(sb.toString());
