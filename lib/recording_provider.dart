@@ -517,6 +517,25 @@ class RecordingProvider extends ChangeNotifier {
       }
     }
     
+    // [New Feature] 学院模式即时汇总弹出：
+    // 点击停止后，无需等待耗时的 final AI recap，立即将缓存中所有的每分钟 block 总结整合成 MD 弹出
+    if (_currentMode == AppMode.lecture) {
+      final summaries = _allNotes.where((n) => n.isSummary).toList();
+      if (summaries.isNotEmpty) {
+        final buffer = StringBuffer();
+        buffer.writeln("# 📝 讲座实时小结汇总 (Live Session Summaries)");
+        buffer.writeln("> 此处为您点击停止后，立即从本地缓存还原的每分钟核心小结。系统正在后台为您生成深度的 AI 学术复盘报告，请稍候...");
+        buffer.writeln();
+        for (int i = 0; i < summaries.length; i++) {
+          buffer.writeln("### ⏰ 第 ${i + 1} 分钟小结");
+          buffer.writeln(summaries[i].summary);
+          buffer.writeln();
+        }
+        // 即刻激发 UI 模态弹出展示，消除用户等待焦虑
+        _sessionReadyController.add(buffer.toString());
+      }
+    }
+
     _statusMessage = "Finalizing AI tasks...";
     notifyListeners();
     await ApiScheduler().untilIdle();

@@ -21,6 +21,7 @@ class _NotesScreenState extends State<NotesScreen> {
   final ScrollController _scrollController = ScrollController();
   StreamSubscription<String>? _sessionReadySub;
   String? _pendingSummaryContent;
+  bool _isSummaryPanelExpanded = false;
 
   /// 帧安全顺滑滚动 —— 在当前帧布局完成后再执行滚动，
   /// 彻底防止由于高度未更新导致的计算偏差或 jumpTo 引起的界面突变。
@@ -295,9 +296,14 @@ class _NotesScreenState extends State<NotesScreen> {
             builder: (context, summaries, _) {
               if (summaries.isEmpty) return const SizedBox.shrink();
               final latestSummary = summaries.first; 
+              final isLecture = provider.currentSessionMode == AppMode.lecture;
+              final isExpanded = isLecture || _isSummaryPanelExpanded;
 
-              return Container(
-                constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.3),
+              return AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                constraints: BoxConstraints(
+                  maxHeight: isExpanded ? MediaQuery.of(context).size.height * 0.3 : 48.0,
+                ),
                 width: double.infinity,
                 decoration: BoxDecoration(
                   color: isDark ? Colors.grey[900]?.withOpacity(0.95) : Colors.grey[50]?.withOpacity(0.95),
@@ -306,45 +312,69 @@ class _NotesScreenState extends State<NotesScreen> {
                     BoxShadow(color: Colors.black.withOpacity(0.1), offset: const Offset(0, 4), blurRadius: 10),
                   ],
                 ),
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.all(18),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(
-                            provider.currentSessionMode == AppMode.lecture ? Icons.school : Icons.forum, 
-                            size: 14, 
-                            color: provider.currentSessionMode == AppMode.lecture ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200]
-                          ),
-                          const SizedBox(width: 8),
-                          Text(
-                            provider.currentSessionMode == AppMode.lecture ? 'LATEST ACADEMIC INSIGHT' : 'DISCUSSION SNAPSHOT', 
-                            style: TextStyle(
-                              fontSize: 10, 
-                              fontWeight: FontWeight.w900, 
-                              color: provider.currentSessionMode == AppMode.lecture ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200], 
-                              letterSpacing: 1.5
-                            )
-                          ),
-                        ],
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    InkWell(
+                      onTap: isLecture ? null : () {
+                        setState(() {
+                          _isSummaryPanelExpanded = !_isSummaryPanelExpanded;
+                        });
+                      },
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                        child: Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  isLecture ? Icons.school : Icons.forum, 
+                                  size: 14, 
+                                  color: isLecture ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200]
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  isLecture ? 'LATEST ACADEMIC INSIGHT' : 'DISCUSSION SNAPSHOT', 
+                                  style: TextStyle(
+                                    fontSize: 10, 
+                                    fontWeight: FontWeight.w900, 
+                                    color: isLecture ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200], 
+                                    letterSpacing: 1.5
+                                  )
+                                ),
+                              ],
+                            ),
+                            if (!isLecture)
+                              Icon(
+                                isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                                size: 16,
+                                color: Colors.grey,
+                              ),
+                          ],
+                        ),
                       ),
-                      const SizedBox(height: 12),
-                      MarkdownBody(
-                        data: latestSummary.summary,
-                        softLineBreak: true,
-                        styleSheet: getAcademicMarkdownStyle(context).copyWith(
-                          p: const TextStyle(fontSize: 14, height: 1.3),
-                          strong: TextStyle(
-                            color: provider.currentSessionMode == AppMode.lecture ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200],
-                            fontWeight: FontWeight.w900,
-                            fontSize: 14,
+                    ),
+                    if (isExpanded)
+                      Expanded(
+                        child: SingleChildScrollView(
+                          padding: const EdgeInsets.fromLTRB(18, 0, 18, 18),
+                          child: MarkdownBody(
+                            data: latestSummary.summary,
+                            softLineBreak: true,
+                            styleSheet: getAcademicMarkdownStyle(context).copyWith(
+                              p: const TextStyle(fontSize: 14, height: 1.3),
+                              strong: TextStyle(
+                                color: isLecture ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200],
+                                fontWeight: FontWeight.w900,
+                                fontSize: 14,
+                              ),
+                            ),
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                  ],
                 ),
               );
             },
