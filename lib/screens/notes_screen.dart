@@ -40,13 +40,14 @@ class _NotesScreenState extends State<NotesScreen> {
   @override
   void initState() {
     super.initState();
-    // ✅ 监听总结就绪事件，改为非侵入式通知
     final provider = context.read<RecordingProvider>();
     _sessionReadySub = provider.sessionReadyStream.listen((content) {
       if (!mounted) return;
       setState(() {
         _pendingSummaryContent = content;
       });
+      // ✅ 智能自动弹窗保护：直接自动触发显示，免除用户二次点击步骤，实现“零等待”无缝体验
+      _showFinalReviewModalWithContent(context, content);
     });
   }
 
