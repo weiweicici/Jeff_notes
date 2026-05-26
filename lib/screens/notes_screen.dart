@@ -507,40 +507,49 @@ class _SettingsDialog extends StatefulWidget {
 }
 
 class _SettingsDialogState extends State<_SettingsDialog> {
-  late AIProvider _tempProvider;
   late AppMode _tempMode;
   late int _tempDuration;
   late bool _tempUseBluetooth;
   late bool _tempIsDarkMode;
   late bool _tempEnableFinalRecap;
   late bool _tempEnableLectureDiscovery;
-  late TextEditingController _controller;
+  late TextEditingController _groqController;
+  late TextEditingController _openRouterController;
+  late TextEditingController _siliconFlowController;
+
+  bool _obscureGroq = true;
+  bool _obscureOpenRouter = true;
+  bool _obscureSiliconFlow = true;
 
   @override
   void initState() {
     super.initState();
     final p = widget.provider;
-    _tempProvider = p.selectedProvider;
     _tempMode = p.appMode;
     _tempDuration = p.sliceDuration;
     _tempUseBluetooth = p.useBluetooth;
     _tempIsDarkMode = p.isDarkMode;
     _tempEnableFinalRecap = p.enableFinalRecap;
     _tempEnableLectureDiscovery = p.enableLectureDiscovery;
-    _controller = TextEditingController(text: p.getApiKeyFor(_tempProvider));
+    _groqController = TextEditingController(text: p.groqKey);
+    _openRouterController = TextEditingController(text: p.openRouterKey);
+    _siliconFlowController = TextEditingController(text: p.siliconFlowKey);
   }
 
   @override
   void dispose() {
-    _controller.dispose(); // 由 State.dispose() 统一调用，安全
+    _groqController.dispose();
+    _openRouterController.dispose();
+    _siliconFlowController.dispose();
     super.dispose();
   }
 
   void _save() {
     widget.provider.updateSettings(
-      provider: _tempProvider,
+      groqKey: _groqController.text,
+      siliconFlowKey: _siliconFlowController.text,
+      openRouterKey: _openRouterController.text,
       mode: _tempMode,
-      key: _controller.text,
       duration: _tempDuration,
       useBluetooth: _tempUseBluetooth,
       isDarkMode: _tempIsDarkMode,
@@ -557,28 +566,14 @@ class _SettingsDialogState extends State<_SettingsDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return AlertDialog(
       title: const Text('Settings'),
       content: SingleChildScrollView(
         child: Column(
           mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            DropdownButtonFormField<AIProvider>(
-              value: _tempProvider,
-              decoration: const InputDecoration(labelText: 'AI Provider'),
-              items: AIProvider.values
-                  .map((p) => DropdownMenuItem(value: p, child: Text(p.name.toUpperCase())))
-                  .toList(),
-              onChanged: (val) {
-                if (val != null) {
-                  setState(() {
-                    _tempProvider = val;
-                    _controller.text = widget.provider.getApiKeyFor(val);
-                  });
-                }
-              },
-            ),
-            const SizedBox(height: 16),
             DropdownButtonFormField<int>(
               value: _tempDuration,
               decoration: const InputDecoration(labelText: 'STT Frequency'),
@@ -628,13 +623,61 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               contentPadding: EdgeInsets.zero,
               onChanged: (val) => setState(() => _tempEnableLectureDiscovery = val),
             ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _controller,
-              decoration: InputDecoration(
-                labelText: '${_tempProvider.name.toUpperCase()} API Key',
+            const SizedBox(height: 8),
+            const Divider(),
+            const SizedBox(height: 8),
+            Text(
+              'API KEYS CONFIGURATION',
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white60 : Colors.black54,
+                letterSpacing: 1.2,
               ),
             ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _groqController,
+              obscureText: _obscureGroq,
+              decoration: InputDecoration(
+                labelText: 'Groq API Key',
+                helperText: 'Required: for Whisper speech-to-text (STT)',
+                helperStyle: TextStyle(fontSize: 10, color: isDark ? Colors.white38 : Colors.black38),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureGroq ? Icons.visibility_off : Icons.visibility, size: 20),
+                  onPressed: () => setState(() => _obscureGroq = !_obscureGroq),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _openRouterController,
+              obscureText: _obscureOpenRouter,
+              decoration: InputDecoration(
+                labelText: 'OpenRouter API Key',
+                helperText: 'Required: for Gemini translation & recap',
+                helperStyle: TextStyle(fontSize: 10, color: isDark ? Colors.white38 : Colors.black38),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureOpenRouter ? Icons.visibility_off : Icons.visibility, size: 20),
+                  onPressed: () => setState(() => _obscureOpenRouter = !_obscureOpenRouter),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _siliconFlowController,
+              obscureText: _obscureSiliconFlow,
+              decoration: InputDecoration(
+                labelText: 'SiliconFlow API Key',
+                helperText: 'Optional: for Qwen summaries & backup translation',
+                helperStyle: TextStyle(fontSize: 10, color: isDark ? Colors.white38 : Colors.black38),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureSiliconFlow ? Icons.visibility_off : Icons.visibility, size: 20),
+                  onPressed: () => setState(() => _obscureSiliconFlow = !_obscureSiliconFlow),
+                ),
+              ),
+            ),
+            const SizedBox(height: 8),
           ],
         ),
       ),

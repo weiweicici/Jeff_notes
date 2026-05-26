@@ -11,7 +11,6 @@ import 'package:http/http.dart' as http;
 import 'openai_service.dart';
 import 'ai_orchestrator_service.dart';
 import 'api_scheduler.dart';
-import 'prompt_provider.dart';
 import 'models.dart';  // 包含 AppMode 枚举
 
 class InsightNote {
@@ -220,11 +219,14 @@ class RecordingProvider extends ChangeNotifier {
     await _checkRecoveryCache();
   }
 
-  String getApiKeyFor(AIProvider provider) => _apiKeys[provider] ?? "";
+  String get groqKey => _apiKeys[AIProvider.groq] ?? "";
+  String get siliconFlowKey => _apiKeys[AIProvider.siliconFlow] ?? "";
+  String get openRouterKey => _openRouterKey;
 
   Future<void> updateSettings({
-    AIProvider? provider,
-    String? key,
+    String? groqKey,
+    String? siliconFlowKey,
+    String? openRouterKey,
     int? duration,
     bool? useBluetooth,
     bool? isDarkMode,
@@ -240,21 +242,26 @@ class RecordingProvider extends ChangeNotifier {
     if (enableFinalRecap != null) { await prefs.setBool('enableFinalRecap', enableFinalRecap); _enableFinalRecap = enableFinalRecap; }
     if (enableLectureDiscovery != null) { await prefs.setBool('enableLectureDiscovery', enableLectureDiscovery); _enableLectureDiscovery = enableLectureDiscovery; }
     if (mode != null) { await prefs.setInt('app_mode', mode.index); _currentMode = mode; }
-    if (provider != null) {
-      _selectedProvider = provider;
-      await prefs.setInt('selected_provider', provider.index);
-      if (key != null) { 
-        if (key.startsWith('sk-or-')) {
-          await prefs.setString('api_key_openrouter', key);
-          _openRouterKey = key;
-          debugPrint("识别并保存 OpenRouter API Key 成功，前几位: ${key.substring(0, 10)}...");
-        } else {
-          await prefs.setString('api_key_${provider.name}', key); 
-          _apiKeys[provider] = key;
-          debugPrint("保存 ${provider.name} API Key 成功，前几位: ${key.substring(0, 10)}...");
-        }
-      }
+    
+    if (groqKey != null) {
+      final trimmedKey = groqKey.trim();
+      await prefs.setString('api_key_${AIProvider.groq.name}', trimmedKey);
+      _apiKeys[AIProvider.groq] = trimmedKey;
+      debugPrint("保存 Groq API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
     }
+    if (siliconFlowKey != null) {
+      final trimmedKey = siliconFlowKey.trim();
+      await prefs.setString('api_key_${AIProvider.siliconFlow.name}', trimmedKey);
+      _apiKeys[AIProvider.siliconFlow] = trimmedKey;
+      debugPrint("保存 SiliconFlow API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
+    }
+    if (openRouterKey != null) {
+      final trimmedKey = openRouterKey.trim();
+      await prefs.setString('api_key_openrouter', trimmedKey);
+      _openRouterKey = trimmedKey;
+      debugPrint("保存 OpenRouter API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
+    }
+
     if (geminiBaseUrl != null) {
       _geminiBaseUrl = geminiBaseUrl;
       await prefs.setString('gemini_base_url', geminiBaseUrl);
@@ -275,16 +282,12 @@ class RecordingProvider extends ChangeNotifier {
     final pIndex = prefs.getInt('selected_provider') ?? 0;
     _selectedProvider = AIProvider.values[pIndex];
     _geminiBaseUrl = prefs.getString('gemini_base_url') ?? "https://generativelanguage.googleapis.com/v1beta/openai";
-    // 默认 fallback Key（首次安装或 SharedPreferences 未存过时使用）
-    const Map<String, String> _defaultKeys = {
-      'groq': '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',
-      'siliconFlow': 'sk-locbdesikzjxmpkserdenuqjvvuzcfccjxbubexcxyucyyvv',
-    };
-    for (var p in AIProvider.values) {
-      _apiKeys[p] = prefs.getString('api_key_${p.name}') ?? _defaultKeys[p.name] ?? '';
-    }
-    _openRouterKey = prefs.getString('api_key_openrouter')
-        ?? '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';
+    
+    // 从 SharedPreferences 中加载密钥，没有则默认为空字符串，绝不硬编码
+    _apiKeys[AIProvider.groq] = prefs.getString('api_key_${AIProvider.groq.name}') ?? '';
+    _apiKeys[AIProvider.siliconFlow] = prefs.getString('api_key_${AIProvider.siliconFlow.name}') ?? '';
+    _openRouterKey = prefs.getString('api_key_openrouter') ?? '';
+    
     _updateService();
   }
 
@@ -465,12 +468,18 @@ class RecordingProvider extends ChangeNotifier {
   Future<void> startRecording() async {
     if (await _audioRecorder.hasPermission()) {
       _updateService();
+      if (_orchestrator == null) {
+        _statusMessage = "Please configure your API Keys in Settings first";
+        notifyListeners();
+        return;
+      }
       _isRecording = true;
       _lastAudioTail = [];
       _allNotes.clear();
       _lastTranscript = null;
       _lastSummaryTotalCount = 0;
       _finalReviewContent = null;
+      _statusMessage = null;
       notifyListeners();
       final path = await _getTempPath();
       await _audioRecorder.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: path);
