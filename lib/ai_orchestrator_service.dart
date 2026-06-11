@@ -51,12 +51,15 @@ class AIOrchestratorService {
     _accurateChineseController.add(result);
   }
 
+  List<Map<String, String>>? _latestHistory;
+
   Future<void> processAudioSegment(
     String noteId, 
     String filePath, 
-    {String? context, Function(String)? onStatus}
+    {String? context, List<Map<String, String>>? translationHistory, Function(String)? onStatus}
   ) async {
     if (_isDisposed) return;
+    _latestHistory = translationHistory;
     try {
       onStatus?.call("STT requesting...");
       
@@ -152,7 +155,7 @@ class AIOrchestratorService {
       String translatedText;
       try {
         translatedText = await ApiScheduler().enqueue(
-          () => translationService.translate(textToTranslate),
+          () => translationService.translate(textToTranslate, history: _latestHistory),
           priority: 1,
           sessionId: sessionId,
         );
@@ -162,7 +165,7 @@ class AIOrchestratorService {
           onStatus?.call("Main failed. Using fallback...");
           debugPrint("[Orchestrator] Attempting translation fallback...");
           translatedText = await ApiScheduler().enqueue(
-            () => translationFallbackService!.translate(textToTranslate),
+            () => translationFallbackService!.translate(textToTranslate, history: _latestHistory),
             priority: 1,
             sessionId: sessionId,
           );

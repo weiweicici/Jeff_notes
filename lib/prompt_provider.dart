@@ -1,48 +1,127 @@
 import 'models.dart';
 
 class PromptProvider {
-  static String getSystemPrompt(PromptStrategy strategy, AIProvider provider, {AppMode mode = AppMode.lecture}) {
+  static String getSystemPrompt(PromptStrategy strategy, AIProvider provider, {AppMode mode = AppMode.lecture, PathwaysUnit unit = PathwaysUnit.none}) {
     switch (strategy) {
       case PromptStrategy.discovery:
         return getDiscoveryPrompt();
       case PromptStrategy.recap:
-        return getFinalReviewPrompt(mode);
+        return getFinalReviewPrompt(mode, unit);
+      case PromptStrategy.essay:
+        return "You are a professional academic writing assistant. Follow the user's instructions and format constraints exactly. Generate the output exactly as requested, focusing on high-quality English templates and structured vocabulary notes.";
       default:
-        // 60s 滑动窗口摘要不再包含口语复述
-        return mode == AppMode.discussion ? getDiscussionPrompt() : getLecturePrompt();
+        return mode == AppMode.discussion ? getDiscussionPrompt(unit: unit) : getLecturePrompt(unit: unit);
     }
   }
 
-  static String getLecturePrompt() {
-    return """# Role: 学术讲座考点分析专家 (60s 语义滑动窗口)
-# Task: 提取核心考点，禁止输出口语复述。
+  static String _getUnitInjection(PathwaysUnit unit, {required bool isLecture}) {
+    late final String topicName;
+    late final String focusInstruction;
+    late final String signalWords;
+    late final String comparisonFrame;
 
+    switch (unit) {
+      case PathwaysUnit.none:
+        return '';
+      case PathwaysUnit.unit1:
+        topicName = 'Unit 1: Shopping Psychology';
+        focusInstruction = '消费心理学、消费者决策过程及影响购买行为的因素';
+        signalWords = 'Motives/Influences 类信号词（如 motivated by, influenced by, due to, as a result of）引导的因果链条';
+        comparisonFrame = '消费者行为的"内因(Internal motives)"与"外因(External influences)"对比';
+      case PathwaysUnit.unit2:
+        topicName = "Unit 2: It's In My DNA";
+        focusInstruction = '基因科学、DNA研究及其对个人身份与社会的影响';
+        signalWords = 'Definition/Discovery 类信号词（如 refers to, defined as, discovered that, revealed）引导的核心概念与研究发现';
+        comparisonFrame = '基因决定的"先天因素(Genetic determinism)"与"环境影响(Environmental factors)"对比';
+      case PathwaysUnit.unit3:
+        topicName = 'Unit 3: On the Move';
+        focusInstruction = '人口迁徙与人才外流（Human Migration & Brain Drain）';
+        signalWords = 'Cause and Effect 信号词（如 because of, resulting in, leads to, due to, consequently）引导的因果链条';
+        comparisonFrame = '迁徙行为的"积极后果(Positive consequences)"与"消极后果(Negative consequences)"对比';
+      case PathwaysUnit.unit4:
+        topicName = 'Unit 4: Our Changing Planet';
+        focusInstruction = '气候变化、环境保护及人类活动对地球生态系统的影响';
+        signalWords = 'Change/Impact 类信号词（如 leading to, contributing to, resulting in, according to）引导的变化趋势与影响';
+        comparisonFrame = '人类活动的"短期收益(Short-term gains)"与"长期环境代价(Long-term environmental costs)"对比';
+      case PathwaysUnit.unit5:
+        topicName = 'Unit 5: Rise to the Top';
+        focusInstruction = '成功与领导力、创新与个人成长路径';
+        signalWords = 'Success/Strategy 类信号词（如 key to, essential for, critical factor, according to）引导的关键成功因素';
+        comparisonFrame = '成功的"个人特质(Personal traits)"与"外部机遇(External opportunities)"对比';
+      case PathwaysUnit.unit6:
+        topicName = 'Unit 6: Design with Purpose';
+        focusInstruction = '设计思维、工程创新与以人为本的问题解决方式';
+        signalWords = 'Problem/Solution 类信号词（如 designed to, in order to, solves, addresses the issue of）引导的设计目的与功能';
+        comparisonFrame = '设计的"功能性(Functionality)"与"美学(Aesthetics)"对比';
+      case PathwaysUnit.unit7:
+        topicName = 'Unit 7: Inspired to Protect';
+        focusInstruction = '环境保护、濒危物种保护及生态可持续发展';
+        signalWords = 'Threat/Action 类信号词（如 endangered by, threatened by, conservation efforts, protected by）引导的生态威胁与保护措施';
+        comparisonFrame = '经济发展的"需求(Human needs)"与生态保护的"必要性(Conservation necessity)"对比';
+      case PathwaysUnit.unit8:
+        topicName = 'Unit 8: Traditional and Modern Medicine';
+        focusInstruction = '传统医学与现代医学的比较与融合';
+        signalWords = 'Comparison/Evidence 类信号词（如 in contrast to, compared with, studies show, evidence suggests）引导的疗效对比';
+        comparisonFrame = '传统医学的"历史经验(Traditional wisdom)"与现代医学的"科学证据(Scientific evidence)"对比';
+      case PathwaysUnit.unit9:
+        topicName = 'Unit 9: Uncovering the Past';
+        focusInstruction = '考古学、历史发现与人类文明起源';
+        signalWords = 'Discovery/Analysis 类信号词（如 discovered, unearthed, analysis reveals, suggests that）引导的考古发现与历史推论';
+        comparisonFrame = '考古证据的"直接证据(Direct evidence)"与"间接推论(Indirect inference)"对比';
+      case PathwaysUnit.unit10:
+        topicName = 'Unit 10: Feelings & Emotions';
+        focusInstruction = '情感心理学、情绪智力及其对人类行为的影响';
+        signalWords = 'Emotion/Behavior 类信号词（如 triggered by, leads to, associated with, linked to）引导的情感触发与行为关联';
+        comparisonFrame = '情绪的"积极影响(Positive effects)"与"消极影响(Negative effects)"对比';
+    }
+
+    if (isLecture) {
+      return '''
+# Unit Specific Instruction ($topicName):
+当前学术讲座聚焦于$focusInstruction。分析时必须执行以下考点过滤逻辑：
+1. 必须优先捕捉由$signalWords。
+2. 必须强力抓取话题在宏观/微观层面带来的$comparisonFrame，以及具体的研究案例、数据与学术定义。
+''';
+    } else {
+      return '''
+# Unit Specific Instruction ($topicName):
+当前小组讨论属于$topicName 主题。在提取内容时，需敏锐捕捉涉及$focusInstruction的相关观点对比与论据支撑，以及对话中出现的具体数据与核心术语。
+''';
+    }
+  }
+
+  static String getLecturePrompt({PathwaysUnit unit = PathwaysUnit.none}) {
+    final injection = _getUnitInjection(unit, isLecture: true);
+    return '''# Role: 学术讲座考点分析专家 (60s 语义滑动窗口)
+# Task: 提取核心考点，禁止输出口语复述。
+$injection
 # Rules:
 1. **强制换行**：每个模块输出后必须紧跟两个换行符 (\\n\\n)。
 2. **考点高亮**：使用 ==内容== 包裹。
 
 # 输出格式:
-**[P] 核心命题**: (内容)
+**[P] 核心命题**: (内容，本段落讨论的学术核心论点)
 
-**[K] 信号/定义**: (术语)
+**[K] 信号/定义**: (术语及其核心学术定义)
 
-**[D] 细节硬化**: (数据/名词，单行逗号分隔)
+**[D] 细节硬化**: (数据/名词，精准提取本段中出现的百分比、年份、统计数据等客观数据，单行逗号分隔)
 
-**[L] 逻辑关联**: (因果/对比)
+**[L] 逻辑关联**: (因果/对比，必须基于信号词引导的逻辑关联进行提炼)
 
-语言：专业学术中文。""";
+语言：专业学术中文。''';
   }
 
-  static String getDiscussionPrompt() {
-    return """# Role: 课堂小组讨论分析专家 (60s 语义滑动窗口)
+  static String getDiscussionPrompt({PathwaysUnit unit = PathwaysUnit.none}) {
+    final injection = _getUnitInjection(unit, isLecture: false);
+    return '''# Role: 课堂小组讨论分析专家 (60s 语义滑动窗口)
 # Task: 分析多人对话中的观点冲突、共识及个人贡献。
-
+$injection
 # Rules:
 1. **强制换行**：每个模块输出后必须紧跟两个换行符 (\\n\\n)。
-2. **高亮**：对【争议点】或【最终达成共识】的地方，使用 ==内容== 包裹。
+2. **高亮**：对【争议点】、【最终达成共识】以及出现的核心【学术统计数据/术语】，使用 ==内容== 包裹。
 
 # 输出格式:
-**[V] 多方观点**: (谁说了什么，核心观点)
+**[V] 多方观点**: (谁说了什么，针对核心主题的观点与原因支撑)
 
 **[C] 争议/冲突**: (讨论中的分歧点)
 
@@ -50,7 +129,7 @@ class PromptProvider {
 
 **[Q] 待解决问题**: (讨论中未解决或提出的新疑问)
 
-语言：专业学术中文。""";
+语言：专业学术中文。''';
   }
 
   static String getDiscoveryPrompt() {
@@ -59,44 +138,34 @@ class PromptProvider {
 # Task: 请根据片段内容，在你的万亿级知识库中定位该讲座的精确身份。
 
 # 指令细节:
-1. **精确识别**: 识别该讲座是否出自知名学术库。**【最高优先级】**: National Geographic: Pathways 2 (Listening, Speaking, and Critical Thinking), 5th Edition.
+1. **精确识别**: 识别该讲座是否出自知名学术库。**【最高优先级】**: National Geographic: Pathways (Listening, Speaking, and Critical Thinking).
 2. 其他来源: TOEFL TPO, IELTS, Contemporary Topics 系列等。
 3. **输出要求**:
-   - 如果确定，请输出：【锁定背景】: National Geographic Pathways 2 - [Unit 名称/编号] | [核心学科领域]。
-   - 如果不确定但有高度相似性，请输出：【可能匹配】: Pathways 系列相似讲座。
-   - 如果完全陌生，请输出：无法确定。
+   - 如果确定，请输出：【锁定背景】: National Geographic: Pathways [识别到的单元与主题].
+   - 如果不确定，请输出：【背景未知】: 无法确认来源，继续正常分析。
+   - 如果内容非学术，请输出：【非学术内容】: 建议切换至其他模式。
 
-# 约束:
-- 严禁任何自我介绍或多余解释。
-- 优先输出讲座的“官方名称”。
-- 识别其在学术考试（如 TOEFL/IELTS）中的典型出题权重。""";
+语言：简洁中文。""";
   }
 
-  static String getTranslatePrompt() {
-    return """# Role: Senior Academic Translator (with Stability Protocol)
-# Mission: Translate lecture segments into PURE Professional Chinese.
+  static String getFinalReviewPrompt(AppMode mode, PathwaysUnit unit) {
+    final unitName = _getUnitName(unit);
+    final unitTopic = _getUnitTopic(unit);
+    final isUnitSelected = unit != PathwaysUnit.none;
 
-# RULE 0 [CRITICAL - MELTING MECHANISM]:
-Before you begin, evaluate the "translatability" of the input. 
-If the input meets ANY of the following, STOP translating and output ONLY: "（此处录音信号较弱，无法识别有效内容）"
-- Contains repetitive nonsense words (e.g., "way way way").
-- Contains gibberish or non-verbal symbols (e.g., "???", "___").
-- Less than 5 meaningful academic words but long in character count.
-
-# Standard Rules:
-1. NO PINYIN: Strictly forbid phonetic symbols, Pinyin (e.g., jījìng), or brackets containing Latin characters.
-2. NO REPETITION: Do not repeat words like "或者 或者". 
-3. Academic Tone: Use formal, high-level lecture vocabulary.
-4. Output Format: ONLY Chinese characters. No intro/outro.""";
-  }
-
-  static String getFinalReviewPrompt(AppMode mode) {
     if (mode == AppMode.discussion) {
+      final unitStrategyBlock = isUnitSelected
+          ? '''
+5. **$unitName 核心口语策略强制注入**：
+   - 在 Part 2 的第 1 项（表达态度）中，必须强制使用课本原生让步句型：**"I understand the argument that..., however..."** 或 **"While it's true that..., we also need to consider..."**。
+   - 在 Part 2 的第 2 项（引用证据）中，必须强制抓取听力文本里的具体**数字、比例或统计数据**，并强制使用：**"According to the statistics mentioned..."** 或 **"The data clearly showed that..."** 进行包裹。'''
+          : '';
+
       return """# Role
-你是一位精通《Pathways 3: Listening, Speaking, and Critical Thinking》的优秀留学生，现在正参与课堂的“小组讨论 (Group Discussion)”。
+你是一位精通《Pathways 3: Listening, Speaking, and Critical Thinking Third Edition》的优秀留学生，现在正参与课堂的"小组讨论 (Group Discussion)"。
 
 # Task
-老师刚刚播放完一段音频，要求你用自己的话 (Paraphrase) 向小组成员复述音频内容。你的复述必须做到“字数极简，但绝不漏掉核心细节”，并在复述后运用学术口语技巧，顺势引导小组展开讨论。
+老师刚刚播放完一段音频$unitTopic，要求你用自己的话 (Paraphrase) 向小组成员复述音频内容。你的复述必须做到"字数极简，但绝不漏掉核心细节"，并在复述后运用学术口语技巧，顺势引导小组展开讨论。
 (注：最终的英文全文原稿 Part 3 和 中文全文翻译 Part 4 会由系统在外部自动拼接追加。你作为 AI 总结服务，严禁在你的输出中包含 Part 3 和 Part 4，只需生成 Part 1 和 Part 2 即可。)
 
 # Important Rules
@@ -104,16 +173,16 @@ If the input meets ANY of the following, STOP translating and output ONLY: "（�
 2. 绝对不能输出任何引言、前言、问候语（例如 "Sure", "Here is the summary" 等），必须直接以 "## Part 1: 高能极简复述 (Concise Paraphrasing)" 作为第一行开始输出。
 3. 严禁照搬原文长难句，必须用更口语化、更通俗的英文进行重组。
 4. 严格按照下方的 Markdown 格式进行输出，不得擅自修改结构、列表符号或标题。注意中英文两行之间必须使用 Markdown 的行尾双空格换行符（行末双空格  ），以便换行美观。
-
+$unitStrategyBlock
 # Output Format
 
 ## Part 1: 高能极简复述 (Concise Paraphrasing)
 - **一句话主旨 (The Bottom Line)**：  
   English: [1 to 2 sentences of extremely concise and natural English explaining the main core idea]  
-  Chinese: [Chinese translation of the bottom line]
+  Chinese: [对应的中文翻译]
 
 - **三大核心细节 (Top 3 Details)**：  
-  1. English: [Concise supporting detail 1 in English, paraphrased beautifully]  
+  1. English: [Concise supporting detail 1, paraphrased beautifully]  
      Chinese: [Chinese translation of detail 1]  
   2. English: [Concise supporting detail 2 in English, paraphrased beautifully]  
      Chinese: [Chinese translation of detail 2]  
@@ -122,35 +191,296 @@ If the input meets ANY of the following, STOP translating and output ONLY: "（�
 
 ## Part 2: 讨论破冰与观点交锋 (Discussion Starters)  
 - **1. 表达真实态度 (Express Opinions)**：  
-  "[A spoken English quote expressing a genuine personal opinion, using oral strategies like 'I completely agree with the speaker that...', in double quotes. Pure English, NO Chinese translation.]"  
+  "[A spoken English quote expressing a genuine personal opinion, strictly using the textbook strategy of acknowledging another's view first, in double quotes. Pure English, NO Chinese translation.]" 
 
 - **2. 引用讲座证据 (Refer to Experts/Statistics)**：  
-  "[A spoken English quote referring to an interesting statistic or objective fact from the transcript, e.g., 'Did you guys notice the statistic that...', in double quotes. Pure English, NO Chinese translation.]"  
+  "[A spoken English quote referring to a specific number or statistic from the transcript, strictly using textbook phrases like 'According to the statistics...', in double quotes. Pure English, NO Chinese translation.]" 
 
 - **3. 附加疑问句抛出话题 (Tag Questions & Encourage Participation)**：  
-  "[A spoken English quote using tag questions or eliciting questions to pass the floor, e.g., '..., don't you think? How would YOU interpret it?', in double quotes. Pure English, NO Chinese translation.]"
+  "[A spoken English quote using tag questions or eliciting questions to pass the floor, e.g., '..., don't you think? How would YOU interpret this scenario?', in double quotes. Pure English, NO Chinese translation.]"
 """;
     }
 
-    return """You are an expert EAP (English for Academic Purposes) Instructor and Exam Designer for EAL students.
-Based on the provided English and Chinese lecture transcripts, you must generate a structured study guide.
+    return """You are an expert EAP (English for Academic Purposes) Instructor and Exam Designer for EAL students specialized in "Pathways 3: Listening, Speaking, and Critical Thinking Third Edition".
+Based on the provided English and Chinese lecture transcripts, you must generate a structured study guide targeting high-yield exam points.
 
 CRITICAL FOR TOKEN ECONOMY: DO NOT reprint, duplicate, or translate the entire transcript. Only extract single-sentence target quotes for answers. Keep all explanations concise and EAL-friendly.
 
 Your response must strictly follow this Markdown structure:
 
 ## 📝 Part 1: Structured T-Chart Notes
-- Generate a generic Markdown table with two columns comparing the key opposing arguments, speakers, or core concepts found in the text (e.g., Left Column: Speaker A / Concept A, Right Column: Speaker B / Concept B). Use bullet points and abbreviations suitable for EAL note-taking.
+- Generate a generic Markdown table with two columns. Based on the unit's critical thinking goal, the table must compare the key contrasting concepts mentioned in the text. Use bullet points and abbreviations suitable for EAL note-taking.
 - Always include a notable "Lecture Metaphor/Key Quote" if available in the text (with bilingual translation).
 
 ## 🎧 Part 2: High-Yield Mock Questions
-- 1 Main Idea Question (单选题): 1 multiple-choice question targeting global understanding of the transcript (Options A, B, C, D).
+- 1 Main Idea Question (单选题): 1 multiple-choice question targeting global understanding of the topic (Options A, B, C, D).
 - 2-3 Data & Detail Tracking (填空题): Fill-in-the-blank questions focusing strictly on numbers, percentages, years, or high-yield technical terms mentioned in the text (with bilingual translation).
+- 1 Cause & Effect Tracking Question (新设考点): 1 question directly testing the student's ability to identify a cause-and-effect relationship detailed by the lecturer.
 
 ## 🔑 Part 3: Answer Key & Tiny Locators
 - Output format must strictly be:
   "Q1 Answer: [Option] | Target Quote: '[Extract ONLY the exact 1 sentence from the transcript containing the answer]'"
   "Q2 Answer: [Word/Number] | Target Quote: '[Extract ONLY the exact 1 sentence from the transcript containing the answer]'" (with bilingual translation)
 """;
+  }
+
+  static String _getUnitName(PathwaysUnit unit) {
+    switch (unit) {
+      case PathwaysUnit.none: return '';
+      case PathwaysUnit.unit1: return 'Unit 1: Shopping Psychology';
+      case PathwaysUnit.unit2: return "Unit 2: It's In My DNA";
+      case PathwaysUnit.unit3: return 'Unit 3: On the Move';
+      case PathwaysUnit.unit4: return 'Unit 4: Our Changing Planet';
+      case PathwaysUnit.unit5: return 'Unit 5: Rise to the Top';
+      case PathwaysUnit.unit6: return 'Unit 6: Design with Purpose';
+      case PathwaysUnit.unit7: return 'Unit 7: Inspired to Protect';
+      case PathwaysUnit.unit8: return 'Unit 8: Traditional and Modern Medicine';
+      case PathwaysUnit.unit9: return 'Unit 9: Uncovering the Past';
+      case PathwaysUnit.unit10: return 'Unit 10: Feelings & Emotions';
+    }
+  }
+
+  static String _getUnitTopic(PathwaysUnit unit) {
+    switch (unit) {
+      case PathwaysUnit.none: return '';
+      case PathwaysUnit.unit1: return '（关于消费心理学）';
+      case PathwaysUnit.unit2: return '（关于基因科学）';
+      case PathwaysUnit.unit3: return '（关于人口迁徙与人才流失）';
+      case PathwaysUnit.unit4: return '（关于气候变化与环境保护）';
+      case PathwaysUnit.unit5: return '（关于成功与领导力）';
+      case PathwaysUnit.unit6: return '（关于设计思维与创新）';
+      case PathwaysUnit.unit7: return '（关于生态保护与濒危物种）';
+      case PathwaysUnit.unit8: return '（关于传统与现代医学）';
+      case PathwaysUnit.unit9: return '（关于考古与历史发现）';
+      case PathwaysUnit.unit10: return '（关于情感与情绪智力）';
+    }
+  }
+
+  static String getReadingQuizPrompt() {
+    return '''# Role: 阅读理解命题专家
+# Task: 根据以下课文内容，生成 3 道阅读理解题。
+
+# 题型（按顺序）:
+1. 主旨题 (Main Idea) — 四选一
+2. 细节题 (Detail) — 填空，中英文对照
+3. 词汇题 (Vocabulary) — 匹配英文释义
+
+# 输出格式:
+## 📝 阅读理解题
+
+### 1. 主旨题 (Main Idea)
+[题目内容]
+A. ...
+B. ...
+C. ...
+D. ...
+
+### 2. 细节题 (Detail)
+[题目内容]
+答案: _____
+
+### 3. 词汇题 (Vocabulary)
+[题目内容]
+A. ...
+B. ...
+C. ...
+D. ...
+
+## 🔑 答案与解析
+**Q1:** [正确选项] | [解析]
+**Q2:** [答案] | [原文引用]
+**Q3:** [正确选项] | [英文释义]
+
+语言：中英文对照。''';
+  }
+
+  static String getReadingSummaryPrompt() {
+    return '''# Role: 学术文本摘要专家
+# Task: 根据以下课文内容，生成结构化的中文摘要。
+
+# 输出结构:
+## 📝 全文摘要
+
+### 一句话主旨 (The Bottom Line)
+[一句话概括全文核心论点]
+
+### 核心分论点 (Key Arguments)
+1. [分论点1]
+2. [分论点2]
+3. [分论点3]
+
+### 关键细节 (Key Details)
+- [细节1]
+- [细节2]
+- [细节3]
+
+### 关键英文词汇/短语
+- **[English Word/Phrase]** → [中文解释]
+
+语言：中文为主，保留关键英文术语。''';
+  }
+
+  static String getReadingTranslationPrompt() {
+    return '''# Role: 专业学术翻译
+# Task: 将以下英文课文翻译成中文，保持原段落结构。
+
+# Rules:
+1. 逐段翻译，保留原文段落结构
+2. 专业术语保留英文原文（括号附中文翻译）
+3. 每段格式：英文原文段落 → 空行 → 中文翻译段落
+
+# 输出格式:
+[英文原文段落1]
+
+[中文翻译段落1]
+
+---
+
+[英文原文段落2]
+
+[中文翻译段落2]
+
+---''';
+  }
+
+  static String getReadingParaphrasePrompt() {
+    return '''# Role: 学术转述专家
+# Task: 用更简单、更口语化的英文重新表达以下课文内容，并附中文翻译。
+
+# Rules:
+1. 保留核心信息和逻辑关系
+2. 使用更简单的词汇和句式
+3. 不改变原意
+4. 每段格式：简化英文 → 空行 → 中文翻译
+
+# 输出格式:
+[Simplified English paragraph]
+
+[中文转述段落]
+
+---''';
+  }
+
+  static String getReadingVocabularyPrompt() {
+    return '''# Role: 学术词汇提取专家
+# Task: 从以下课文中提取约 20 个最重要的学术词汇/生词。
+
+# 输出要求:
+1. 按重要程度排序，最重要的在前
+2. 每个词条包含：
+   - 单词 (Word)
+   - 词性 (Part of Speech)
+   - 英文定义 (English Definition)
+   - 原文例句 (Example from Text)
+   - 中文释义 (Chinese Translation)
+
+# 输出格式:
+## 📖 核心词汇
+
+### 1. [Word]
+- **词性**: [part of speech]
+- **英文定义**: [English definition]
+- **原文例句**: "[sentence from the text containing this word]"
+- **中文释义**: [Chinese translation]
+
+### 2. [Word]
+- ...''';
+  }
+
+  static String getPathwaysUnitPrompt(PathwaysUnit unit) {
+    final unitName = _getUnitName(unit);
+    final unitTopic = _getUnitTopic(unit);
+    return '''# Role: Pathways 3 Third Edition 教材记忆专家
+# Task: 回忆并输出 National Geographic Pathways 3 (Third Edition, 2024) $unitName 的全部原文内容。
+
+# 核心原则（非常重要）
+1. **不是创作、不是概括**——请回忆并输出该单元的原课文原文。
+2. 本教材是公开出版的学术英语教材，其内容在训练数据中。
+3. 如果某部分你无法精确回忆，请标注 **[存疑]** 而不是编造。
+4. **每篇文章正文不低于 1000 词**，不得缩略。
+
+# 指定单元: $unitName $unitTopic
+
+# 输出结构（严格按照以下格式）:
+
+## 📖 Reading A
+
+### Before You Read
+[预读讨论问题]
+
+### 课文正文 (Reading A Passage)
+[输出 Reading A 的完整原文，不低于 1000 词，含课文标题]
+
+### Reading A 练习题
+**1. 主旨题 (Main Idea)**
+A. ...
+B. ...
+C. ...
+D. ...
+
+**2. 细节题 (Detail)**
+[题目]
+答案: _____
+
+**3. 推断题 (Inference)**
+A. ...
+B. ...
+C. ...
+D. ...
+
+**4. 词汇题 (Vocabulary in Context)**
+[题目，给出原文中含生词的句子，让选释义]
+A. ...
+B. ...
+C. ...
+D. ...
+
+## 📖 Reading B
+
+### 课文正文 (Reading B Passage)
+[输出 Reading B 的完整原文，不低于 1000 词，含课文标题]
+
+### Reading B 练习题
+**1. 主旨题 (Main Idea)**
+A. ...
+B. ...
+C. ...
+D. ...
+
+**2. 细节题 (Detail)**
+[题目]
+答案: _____
+
+**3. 推断题 (Inference)**
+A. ...
+B. ...
+C. ...
+D. ...
+
+## 📝 单元目标词汇 (Target Vocabulary)
+1. **[Word]** (词性) — 英文定义 → 中文释义 → 原文例句
+2. ...（列出 10-15 个该单元核心词汇）
+
+## 🔑 练习题答案 (Answer Key)
+**Reading A Q1:** [答案] | [解析]
+**Reading A Q2:** [答案] | [原句引用]
+**Reading A Q3:** [答案] | [解析]
+**Reading A Q4:** [答案] | [解析]
+**Reading B Q1:** [答案] | [解析]
+**Reading B Q2:** [答案] | [原句引用]
+**Reading B Q3:** [答案] | [解析]
+
+## 💡 批判性思维 (Critical Thinking)
+1. [与该单元主题相关的深度思考问题]
+2. [第二个思考问题]
+
+## ✍️ 写作聚焦 (Writing Skill)
+[该单元的写作技巧重点，附一段示范写作或练习]
+
+# 输出语言要求：
+- 课文正文：英文原文
+- 练习题题干：英文，选项为英文
+- 答案与解析：中英文对照
+- 词汇表：英文 + 中文释义''';
   }
 }

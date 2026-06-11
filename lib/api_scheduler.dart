@@ -101,7 +101,7 @@ class ApiScheduler {
   Future<void> untilIdle() async {
     if (_activeRequests == 0 && _waitingQueue.isEmpty) return;
     _idleCompleter ??= Completer<void>();
-    return _idleCompleter!.future;
+    return _idleCompleter!.future.timeout(const Duration(seconds: 120), onTimeout: () {});
   }
 
   Future<T> _executeWithRetry<T>(Future<T> Function() task) async {

@@ -4,8 +4,8 @@ import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import 'dart:async';
-import 'prompt_provider.dart';
 import 'models.dart';
+import 'prompt_provider.dart';
 
 class OpenAIService {
   final String apiKey;
@@ -111,10 +111,38 @@ class OpenAIService {
     }
   }
 
-  Future<String> translate(String text, {String? modelOverride}) async {
+  Future<String> translate(String text, {String? modelOverride, List<Map<String, String>>? history}) async {
     if (_isDisposed) throw Exception("Service disposed");
     try {
       final url = Uri.parse("$baseUrl/chat/completions");
+      
+      final messages = <Map<String, dynamic>>[
+        {
+          'role': 'system',
+          'content': 'You are a professional academic simultaneous interpreter. '
+                     'Your task: translate English academic lecture notes/utterances into natural, fluent, scholarly Chinese. '
+                     'Important: The input is a real-time 5-second slice. It might be an unfinished sentence. '
+                     'Rules: '
+                     '1. Translate ONLY what is in the input. '
+                     '2. If the input ends without punctuation (like . ? !), it is an unfinished clause. Translate it in a natural "hanging/unfinished" tone to ensure it seamlessly connects to the next chunk. Do NOT append final periods. '
+                     '3. Keep proper nouns in their original form. For uncertain terms, keep the English with a Chinese translation in parentheses. '
+                     '4. Output ONLY the translated Chinese text. No notes, no explanations, no markup.'
+        }
+      ];
+
+      if (history != null) {
+        for (final item in history) {
+          final en = item['english'] ?? '';
+          final zh = item['chinese'] ?? '';
+          if (en.isNotEmpty && zh.isNotEmpty) {
+            messages.add({'role': 'user', 'content': '[Previous Context] English: $en'});
+            messages.add({'role': 'assistant', 'content': '[Previous Context] Translation: $zh'});
+          }
+        }
+      }
+
+      messages.add({'role': 'user', 'content': text});
+
       final response = await _client.post(
         url,
         headers: {
@@ -123,20 +151,7 @@ class OpenAIService {
         },
         body: jsonEncode({
           'model': (modelOverride ?? defaultModel).trim(),
-          'messages': [
-            {
-              'role': 'system',
-              'content': 'You are a professional academic simultaneous interpreter. '
-                         'Your task: translate English academic lecture notes/utterances into natural, fluent, scholarly Chinese. '
-                         'Important: The input is a real-time 5-second slice. It might be an unfinished sentence. '
-                         'Rules: '
-                         '1. Translate ONLY what is in the input. '
-                         '2. If the input ends without punctuation (like . ? !), it is an unfinished clause. Translate it in a natural "hanging/unfinished" tone to ensure it seamlessly connects to the next chunk. Do NOT append final periods. '
-                         '3. Keep proper nouns in their original form. For uncertain terms, keep the English with a Chinese translation in parentheses. '
-                         '4. Output ONLY the translated Chinese text. No notes, no explanations, no markup.'
-            },
-            {'role': 'user', 'content': text},
-          ],
+          'messages': messages,
           'temperature': 0.1,
         }),
       ).timeout(const Duration(seconds: 30));
@@ -159,7 +174,7 @@ class OpenAIService {
     }
   }
 
-  Future<String> summarize(String text, {PromptStrategy strategy = PromptStrategy.general, AIProvider provider = AIProvider.groq, AppMode mode = AppMode.lecture}) async {
+  Future<String> summarize(String text, {PromptStrategy strategy = PromptStrategy.general, AIProvider provider = AIProvider.groq, AppMode mode = AppMode.lecture, PathwaysUnit unit = PathwaysUnit.none}) async {
     if (_isDisposed) throw Exception("Service disposed");
     try {
       final url = Uri.parse("$baseUrl/chat/completions");
@@ -172,12 +187,12 @@ class OpenAIService {
         body: jsonEncode({
           'model': defaultModel.trim(),
           'messages': [
-            {'role': 'system', 'content': PromptProvider.getSystemPrompt(strategy, provider, mode: mode)},
+            {'role': 'system', 'content': PromptProvider.getSystemPrompt(strategy, provider, mode: mode, unit: unit)},
             {'role': 'user', 'content': text},
           ],
           'temperature': 0.5,
         }),
-      ).timeout(const Duration(seconds: 45));
+      ).timeout(const Duration(seconds: 120)); // 作文生成 prompt 长，Qwen-72B 需要更多时间
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

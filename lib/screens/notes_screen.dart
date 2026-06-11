@@ -51,7 +51,14 @@ class _NotesScreenState extends State<NotesScreen> {
         });
         _showFinalReviewModalWithContent(context, content);
       }
-    });
+    },
+      onError: (error) {
+        debugPrint("sessionReadyStream error: $error");
+      },
+      onDone: () {
+        debugPrint("sessionReadyStream done");
+      },
+    );
   }
 
   @override
@@ -177,8 +184,12 @@ class _NotesScreenState extends State<NotesScreen> {
                 if (provider.isRecording)
                   Row(
                     children: [
-                      Text('TRACKING', style: TextStyle(fontSize: 8, color: Colors.blueAccent[200], fontWeight: FontWeight.w900, letterSpacing: 1.5)),
-                      if (provider.statusMessage != null) ...[
+                      // 录音状态标签：暂停中显示橙色 PAUSED，录音中显示蓝色 TRACKING
+                      if (provider.isPaused)
+                        const Text('PAUSED', style: TextStyle(fontSize: 8, color: Colors.orange, fontWeight: FontWeight.w900, letterSpacing: 1.5))
+                      else
+                        Text('TRACKING', style: TextStyle(fontSize: 8, color: Colors.blueAccent[200], fontWeight: FontWeight.w900, letterSpacing: 1.5)),
+                      if (!provider.isPaused && provider.statusMessage != null) ...[
                         const SizedBox(width: 8),
                         Text('• ${provider.statusMessage}', style: const TextStyle(fontSize: 8, color: Colors.white54, letterSpacing: 0.5)),
                       ],
@@ -189,6 +200,25 @@ class _NotesScreenState extends State<NotesScreen> {
           ],
         ),
         actions: [
+          // 暂停/继续按鈕：仅在录音中显示
+          if (provider.isRecording)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: IconButton.filled(
+                onPressed: () async {
+                  HapticFeedback.lightImpact();
+                  await provider.togglePause();
+                },
+                icon: Icon(
+                  provider.isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                  color: Colors.white,
+                ),
+                style: IconButton.styleFrom(
+                  backgroundColor: provider.isPaused ? Colors.green : Colors.orange,
+                ),
+                tooltip: provider.isPaused ? '继续录音' : '暂停录音',
+              ),
+            ),
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton.filled(
@@ -301,7 +331,7 @@ class _NotesScreenState extends State<NotesScreen> {
               if (summaries.isEmpty) return const SizedBox.shrink();
               final latestSummary = summaries.first; 
               final isLecture = provider.currentSessionMode == AppMode.lecture;
-              final isExpanded = isLecture || _isSummaryPanelExpanded;
+              final isExpanded = _isSummaryPanelExpanded;
 
               return AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
@@ -321,7 +351,7 @@ class _NotesScreenState extends State<NotesScreen> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
                     InkWell(
-                      onTap: isLecture ? null : () {
+                      onTap: () {
                         setState(() {
                           _isSummaryPanelExpanded = !_isSummaryPanelExpanded;
                         });
@@ -350,12 +380,11 @@ class _NotesScreenState extends State<NotesScreen> {
                                 ),
                               ],
                             ),
-                            if (!isLecture)
-                              Icon(
-                                isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
-                                size: 16,
-                                color: Colors.grey,
-                              ),
+                            Icon(
+                              isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                              size: 16,
+                              color: Colors.grey,
+                            ),
                           ],
                         ),
                       ),
@@ -421,6 +450,17 @@ class _NotesScreenState extends State<NotesScreen> {
                         Icon(Icons.mic_none, size: 48, color: isDark ? Colors.white10 : Colors.black12),
                         const SizedBox(height: 16),
                         Text('Ready for Lecture', style: TextStyle(color: isDark ? Colors.white24 : Colors.black12, fontWeight: FontWeight.bold)),
+                        const SizedBox(height: 24),
+                        TextButton.icon(
+                          icon: Icon(Icons.history_edu, size: 18, color: isDark ? Colors.white54 : Colors.black45),
+                          label: Text('查看历史记录', style: TextStyle(color: isDark ? Colors.white54 : Colors.black45)),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(builder: (context) => const HistoryScreen()),
+                            );
+                          },
+                        ),
                       ],
                     ),
                   );
@@ -479,6 +519,7 @@ class _NotesScreenState extends State<NotesScreen> {
       ),
       floatingActionButton: RecordingPulseFAB(
         isRecording: provider.isRecording,
+        isPaused: provider.isPaused,
         onPressed: () async {
           HapticFeedback.mediumImpact();
           await provider.toggleRecording();
@@ -508,6 +549,7 @@ class _SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<_SettingsDialog> {
   late AppMode _tempMode;
+  late PathwaysUnit _tempUnit;
   late int _tempDuration;
   late bool _tempUseBluetooth;
   late bool _tempIsDarkMode;
@@ -526,7 +568,8 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     super.initState();
     final p = widget.provider;
     _tempMode = p.appMode;
-    _tempDuration = p.sliceDuration;
+    _tempUnit = p.currentUnit;
+    _tempDuration = p.sliceDuration.clamp(5, 8);
     _tempUseBluetooth = p.useBluetooth;
     _tempIsDarkMode = p.isDarkMode;
     _tempEnableFinalRecap = p.enableFinalRecap;
@@ -550,18 +593,34 @@ class _SettingsDialogState extends State<_SettingsDialog> {
       siliconFlowKey: _siliconFlowController.text,
       openRouterKey: _openRouterController.text,
       mode: _tempMode,
+      unit: _tempUnit,
       duration: _tempDuration,
       useBluetooth: _tempUseBluetooth,
       isDarkMode: _tempIsDarkMode,
       enableFinalRecap: _tempEnableFinalRecap,
       enableLectureDiscovery: _tempEnableLectureDiscovery,
-      geminiBaseUrl: null,
     );
     if (mounted) Navigator.pop(context);
   }
 
   void _cancel() {
     if (mounted) Navigator.pop(context);
+  }
+
+  String _unitLabel(PathwaysUnit u) {
+    switch (u) {
+      case PathwaysUnit.none: return '通用模式（无课本绑定）';
+      case PathwaysUnit.unit1: return 'Unit 1: 消费心理学';
+      case PathwaysUnit.unit2: return 'Unit 2: 基因科学';
+      case PathwaysUnit.unit3: return 'Unit 3: 人口迁徙';
+      case PathwaysUnit.unit4: return 'Unit 4: 气候变化';
+      case PathwaysUnit.unit5: return 'Unit 5: 成功与领导力';
+      case PathwaysUnit.unit6: return 'Unit 6: 设计思维';
+      case PathwaysUnit.unit7: return 'Unit 7: 生态保护';
+      case PathwaysUnit.unit8: return 'Unit 8: 传统与现代医学';
+      case PathwaysUnit.unit9: return 'Unit 9: 考古与历史';
+      case PathwaysUnit.unit10: return 'Unit 10: 情感与情绪';
+    }
   }
 
   @override
@@ -577,7 +636,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             DropdownButtonFormField<int>(
               value: _tempDuration,
               decoration: const InputDecoration(labelText: 'STT Frequency'),
-              items: [5, 8, 10, 12, 15]
+              items: [5, 6, 7, 8]
                   .map((d) => DropdownMenuItem(value: d, child: Text('$d seconds')))
                   .toList(),
               onChanged: (val) { if (val != null) setState(() => _tempDuration = val); },
@@ -597,6 +656,16 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                 ),
               )).toList(),
               onChanged: (val) { if (val != null) setState(() => _tempMode = val); },
+            ),
+            const SizedBox(height: 16),
+            DropdownButtonFormField<PathwaysUnit>(
+              value: _tempUnit,
+              decoration: const InputDecoration(labelText: 'Pathways Unit'),
+              items: PathwaysUnit.values.map((u) => DropdownMenuItem(
+                value: u,
+                child: Text(_unitLabel(u)),
+              )).toList(),
+              onChanged: (val) { if (val != null) setState(() => _tempUnit = val); },
             ),
             const SizedBox(height: 12),
             SwitchListTile(

@@ -2,7 +2,9 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
+import 'package:markdown/markdown.dart' as md;
 import '../utils/pdf_service.dart';
+import '../services/reading_quiz_service.dart';
 import '../widgets/academic_markdown.dart';
 
 class NoteDetailScreen extends StatefulWidget {
@@ -14,6 +16,15 @@ class NoteDetailScreen extends StatefulWidget {
 
 class _NoteDetailScreenState extends State<NoteDetailScreen> {
   bool _isExporting = false;
+  final GlobalKey _pdfButtonKey = GlobalKey();
+  final _textController = TextEditingController();
+  bool _contentLoaded = false;
+
+  @override
+  void dispose() {
+    _textController.dispose();
+    super.dispose();
+  }
 
   Future<void> _exportPdf() async {
     if (_isExporting) return;
@@ -22,12 +33,21 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     try {
       final content = await widget.file.readAsString();
       final title = widget.file.path.split('/').last;
-      await PdfService.exportToPdf(title, content);
-      // Printing.layoutPdf 会调起系统打印/分享面板，执行到这里说明面板已弹出
+
+      // 获取按钮屏幕坐标，用于 iPad 上分享 Popover 的锚定位置
+      Rect? bounds;
+      final renderBox =
+          _pdfButtonKey.currentContext?.findRenderObject() as RenderBox?;
+      if (renderBox != null) {
+        final offset = renderBox.localToGlobal(Offset.zero);
+        bounds = offset & renderBox.size;
+      }
+
+      await PdfService.exportToPdf(title, content, bounds: bounds);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text('📄 PDF 预览已打开，请在系统面板中保存或分享'),
+            content: Text('📄 PDF 已生成，请在分享面板中选择保存或分享'),
             duration: Duration(seconds: 3),
           ),
         );
@@ -48,19 +68,103 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     }
   }
 
+  void _handleTranslateSelection(String text) async {
+    final result = await ReadingQuizService.getTranslation(text);
+    if (!mounted) return;
+    if (!context.mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.translate, size: 20),
+            const SizedBox(width: 8),
+            const Text('中文翻译'),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              onPressed: () => Navigator.pop(ctx),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: MarkdownBody(
+            data: result,
+            softLineBreak: true,
+            selectable: true,
+            styleSheet: getAcademicMarkdownStyle(context),
+            extensionSet: md.ExtensionSet(
+              [const md.FencedCodeBlockSyntax()],
+              [md.EmojiSyntax(), HighlightSyntax()],
+            ),
+            builders: {'highlight': HighlightBuilder(context)},
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _handleParaphraseSelection(String text) async {
+    final result = await ReadingQuizService.getParaphrase(text);
+    if (!mounted) return;
+    if (!context.mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Icon(Icons.replay, size: 20),
+            const SizedBox(width: 8),
+            const Text('转述'),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              onPressed: () => Navigator.pop(ctx),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: MarkdownBody(
+            data: result,
+            softLineBreak: true,
+            selectable: true,
+            styleSheet: getAcademicMarkdownStyle(context),
+            extensionSet: md.ExtensionSet(
+              [const md.FencedCodeBlockSyntax()],
+              [md.EmojiSyntax(), HighlightSyntax()],
+            ),
+            builders: {'highlight': HighlightBuilder(context)},
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: Text(widget.file.path.split('/').last),
         actions: [
-          // PDF 导出按钮（加载中显示 spinner）
           _isExporting
               ? const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16),
                   child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
                 )
               : IconButton(
+                  key: _pdfButtonKey,
                   icon: const Icon(Icons.picture_as_pdf),
                   tooltip: '导出 PDF',
                   onPressed: _exportPdf,
@@ -89,16 +193,54 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
         builder: (context, snapshot) {
           if (snapshot.hasError) return Center(child: Text("Error loading file: ${snapshot.error}"));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          return ListView(
+
+          if (!_contentLoaded) {
+            _textController.text = snapshot.data!;
+            _contentLoaded = true;
+          }
+
+          return SingleChildScrollView(
             padding: const EdgeInsets.fromLTRB(24, 24, 24, 48),
-            children: [
-              MarkdownBody(
-                data: snapshot.data!,
-                selectable: true,
-                softLineBreak: true,
-                styleSheet: getAcademicMarkdownStyle(context),
+            child: TextField(
+              controller: _textController,
+              readOnly: true,
+              maxLines: null,
+              style: const TextStyle(fontFamily: 'Menlo', fontSize: 15, height: 1.6),
+              decoration: const InputDecoration(
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: EdgeInsets.zero,
               ),
-            ],
+              contextMenuBuilder: (context, editableTextState) {
+                final text = editableTextState.textEditingValue.text;
+                final sel = editableTextState.textEditingValue.selection;
+                final selectedText = sel.isValid && sel.start != sel.end
+                    ? text.substring(sel.start, sel.end)
+                    : '';
+                return AdaptiveTextSelectionToolbar.buttonItems(
+                  anchors: editableTextState.contextMenuAnchors,
+                  buttonItems: [
+                    if (selectedText.isNotEmpty) ...[
+                      ContextMenuButtonItem(
+                        label: '翻译',
+                        onPressed: () {
+                          editableTextState.hideToolbar();
+                          _handleTranslateSelection(selectedText);
+                        },
+                      ),
+                      ContextMenuButtonItem(
+                        label: '转述',
+                        onPressed: () {
+                          editableTextState.hideToolbar();
+                          _handleParaphraseSelection(selectedText);
+                        },
+                      ),
+                    ],
+                    ...editableTextState.contextMenuButtonItems,
+                  ],
+                );
+              },
+            ),
           );
         },
       ),

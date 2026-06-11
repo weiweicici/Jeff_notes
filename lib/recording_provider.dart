@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'services/supabase_config.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:audio_session/audio_session.dart';
@@ -55,7 +57,7 @@ class InsightNote {
 
 
 class StitchData {
-  final List<int> tail;
+  final Uint8List tail;
   final String path;
   final int tailSize;
   StitchData(this.tail, this.path, this.tailSize);
@@ -102,7 +104,7 @@ Future<Map<String, dynamic>> _backgroundStitchTask(StitchData data) async {
     final stitchedBytes = Uint8List.fromList([...header, ...combinedPcm]);
     final stitchedPath = "${data.path}_stitched.wav";
     await File(stitchedPath).writeAsBytes(stitchedBytes);
-    List<int> nextTail = [];
+    Uint8List nextTail = Uint8List(0);
     if (currentBytes.length > data.tailSize + dataOffset) {
       nextTail = currentBytes.sublist(currentBytes.length - data.tailSize);
     }
@@ -148,7 +150,7 @@ class RecordingProvider extends ChangeNotifier {
   OpenAIService? _fallbackTranslationService;
   AIOrchestratorService? _orchestrator;
   final StreamController<String> _sessionReadyController = StreamController<String>.broadcast();
-  String _geminiBaseUrl = "";
+
   
   StreamSubscription? _fastSub;
   StreamSubscription? _accurateSub;
@@ -160,17 +162,19 @@ class RecordingProvider extends ChangeNotifier {
   bool _enableFinalRecap = false;
   bool _enableLectureDiscovery = false;
   AppMode _currentMode = AppMode.lecture;  // 新增模式
+  PathwaysUnit _currentUnit = PathwaysUnit.none;
   
   final Map<AIProvider, String> _apiKeys = {
     AIProvider.siliconFlow: "",
     AIProvider.groq: "",
   };
-  String _openRouterKey = "";
+
   
   String? _lastTranscript;
-  List<int> _lastAudioTail = [];
+  Uint8List _lastAudioTail = Uint8List(0);
   Timer? _sliceTimer;
   bool _isRecording = false;
+  bool _isPaused = false;   // 暂停录音标志（仅在 _isRecording=true 时有意义）
   bool _isPending = false;
   static const int kTailSize = 25600;
 
@@ -182,9 +186,11 @@ class RecordingProvider extends ChangeNotifier {
   String? _lastExportedPath;
   String? _identifiedLectureContext;
   bool _hasRecoveredCache = false;
+  String _openRouterKey = '';
 
   List<InsightNote> get notes => _allNotes.reversed.toList();
   bool get isRecording => _isRecording;
+  bool get isPaused => _isPaused;
   bool get isPending => _isPending;
   AIProvider get selectedProvider => _selectedProvider;
   int get sliceDuration => _sliceDuration;
@@ -193,6 +199,7 @@ class RecordingProvider extends ChangeNotifier {
   bool get enableFinalRecap => _enableFinalRecap;
   bool get enableLectureDiscovery => _enableLectureDiscovery;
   AppMode get currentMode => _currentMode;
+  PathwaysUnit get currentUnit => _currentUnit;
   String? get statusMessage => _statusMessage;
   String? get finalReviewContent => _finalReviewContent;
   bool get isGeneratingFinalReview => _isGeneratingFinalReview;
@@ -204,12 +211,12 @@ class RecordingProvider extends ChangeNotifier {
   Stream<String> get sessionReadyStream => _sessionReadyController.stream;
   AppMode get appMode => currentMode;
   AppMode get currentSessionMode => currentMode;
-  String get geminiBaseUrl => _geminiBaseUrl;
+
 
   // Track previously initialized keys to avoid redundant recreation
   String _prevSiliconKey = "";
   String _prevGroqKey = "";
-  String _prevOpenRouterKey = "";
+
 
   RecordingProvider() { _init(); }
 
@@ -227,21 +234,31 @@ class RecordingProvider extends ChangeNotifier {
     String? groqKey,
     String? siliconFlowKey,
     String? openRouterKey,
+
     int? duration,
     bool? useBluetooth,
     bool? isDarkMode,
     bool? enableFinalRecap,
     bool? enableLectureDiscovery,
     AppMode? mode,
-    String? geminiBaseUrl,
+    PathwaysUnit? unit,
+
   }) async {
     final prefs = await SharedPreferences.getInstance();
-    if (duration != null) { await prefs.setInt('slice_duration', duration); _sliceDuration = duration; }
+    if (duration != null) {
+      final clamped = duration.clamp(5, 8);
+      await prefs.setInt('slice_duration', clamped);
+      _sliceDuration = clamped;
+    }
     if (useBluetooth != null) { await prefs.setBool('use_bluetooth', useBluetooth); _useBluetooth = useBluetooth; }
     if (isDarkMode != null) { await prefs.setBool('is_dark_mode', isDarkMode); _isDarkMode = isDarkMode; }
     if (enableFinalRecap != null) { await prefs.setBool('enableFinalRecap', enableFinalRecap); _enableFinalRecap = enableFinalRecap; }
     if (enableLectureDiscovery != null) { await prefs.setBool('enableLectureDiscovery', enableLectureDiscovery); _enableLectureDiscovery = enableLectureDiscovery; }
     if (mode != null) { await prefs.setInt('app_mode', mode.index); _currentMode = mode; }
+    if (unit != null) {
+      await prefs.setInt('current_unit', unit.index);
+      _currentUnit = unit;
+    }
     
     if (groqKey != null) {
       final trimmedKey = groqKey.trim();
@@ -261,33 +278,33 @@ class RecordingProvider extends ChangeNotifier {
       _openRouterKey = trimmedKey;
       debugPrint("保存 OpenRouter API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
     }
-
-    if (geminiBaseUrl != null) {
-      _geminiBaseUrl = geminiBaseUrl;
-      await prefs.setString('gemini_base_url', geminiBaseUrl);
+    if (siliconFlowKey != null) {
+      final trimmedKey = siliconFlowKey.trim();
+      await prefs.setString('api_key_${AIProvider.siliconFlow.name}', trimmedKey);
+      _apiKeys[AIProvider.siliconFlow] = trimmedKey;
+      debugPrint("保存 SiliconFlow API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
     }
+
     _updateService();
     notifyListeners();
   }
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    _sliceDuration = prefs.getInt('slice_duration') ?? 5;
+    _sliceDuration = (prefs.getInt('slice_duration') ?? 5).clamp(5, 8);
     _useBluetooth = prefs.getBool('use_bluetooth') ?? false;
     _isDarkMode = prefs.getBool('is_dark_mode') ?? false;
     _enableFinalRecap = prefs.getBool('enableFinalRecap') ?? false;
     _enableLectureDiscovery = prefs.getBool('enableLectureDiscovery') ?? false;
     final modeIndex = prefs.getInt('app_mode') ?? 0;
     _currentMode = AppMode.values[modeIndex];
+    _currentUnit = PathwaysUnit.values[prefs.getInt('current_unit') ?? 0];
     final pIndex = prefs.getInt('selected_provider') ?? 0;
     _selectedProvider = AIProvider.values[pIndex];
-    _geminiBaseUrl = prefs.getString('gemini_base_url') ?? "https://generativelanguage.googleapis.com/v1beta/openai";
-    
-    // 从 SharedPreferences 中加载密钥，没有则默认为空字符串，绝不硬编码
-    _apiKeys[AIProvider.groq] = prefs.getString('api_key_${AIProvider.groq.name}') ?? '';
-    _apiKeys[AIProvider.siliconFlow] = prefs.getString('api_key_${AIProvider.siliconFlow.name}') ?? '';
     _openRouterKey = prefs.getString('api_key_openrouter') ?? '';
-    
+    for (var p in AIProvider.values) {
+      _apiKeys[p] = prefs.getString('api_key_${p.name}') ?? '';
+    }
     _updateService();
   }
 
@@ -311,19 +328,11 @@ class RecordingProvider extends ChangeNotifier {
       debugPrint("Groq API Key 为空或未找到");
     }
 
-    // 调试日志：打印 OpenRouter API Key 的前6位字符
-    if (_openRouterKey.isNotEmpty) {
-      final prefix = _openRouterKey.length >= 6 ? _openRouterKey.substring(0, 6) : _openRouterKey;
-      debugPrint("OpenRouter API Key 读取成功，前6位: $prefix...");
-    } else {
-      debugPrint("OpenRouter API Key 为空或未找到");
-    }
 
     // 只在 key 变化时重新创建服务，避免重复初始化导致红屏
     final bool siliconChanged = siliconKey != _prevSiliconKey;
     final bool groqChanged = groqKey != _prevGroqKey;
-    final bool openRouterChanged = _openRouterKey != _prevOpenRouterKey;
-    if (!siliconChanged && !groqChanged && !openRouterChanged && _orchestrator != null) {
+    if (!siliconChanged && !groqChanged && _orchestrator != null) {
       // Keys 未变化且服务已初始化，直接返回，保持现有服务实例
       return;
     }
@@ -336,7 +345,7 @@ class RecordingProvider extends ChangeNotifier {
     // 更新记录的上一次键值
     _prevSiliconKey = siliconKey;
     _prevGroqKey = groqKey;
-    _prevOpenRouterKey = _openRouterKey;
+
     
     // 1. 初始化 Groq 服务
     if (groqKey.isNotEmpty) {
@@ -354,45 +363,42 @@ class RecordingProvider extends ChangeNotifier {
 
     // 2. 根据最速最省 Token 的多分配架构：
     // - STT (快车轨) 必须用 Groq (llama-3.3-70b-versatile/whisper) 以追求极致英文字幕速度
-    // - 翻译/复盘 (主服务) 首选 OpenRouter 的 google/gemini-2.0-flash，如果不可用则向下兼容硅基 Qwen
+    // - 翻译/复盘 (主服务) 使用硅基流动 Qwen，备用硅基 Qwen-72B
     // - 滑动窗口摘要 (辅助AI服务) 使用硅基流动 Qwen-72B 以保障极佳的指令执行力，避免抢占主通道并发
     
     OpenAIService? mainTranslationService;
     OpenAIService? fallbackTranslationService;
     OpenAIService? summaryService;
 
-    // 初始化 OpenRouter Gemini 服务作为首选翻译/复盘
-    if (_openRouterKey.isNotEmpty) {
-      debugPrint("正在创建 OpenRouter Gemini 服务");
+    // 使用硅基流动的 Qwen 2.5 32B 作为主翻译/复盘服务 (极速且性价比高)
+    if (siliconKey.isNotEmpty) {
+      debugPrint("正在创建硅基流动 Qwen-2.5-32B 主翻译/复盘服务");
       mainTranslationService = OpenAIService(
-        apiKey: _openRouterKey,
-        baseUrl: "https://openrouter.ai/api/v1",
-        defaultModel: "google/gemini-2.0-flash",
-        whisperModel: "whisper-large-v3",
+        apiKey: siliconKey,
+        baseUrl: "https://api.siliconflow.cn/v1",
+        defaultModel: "Qwen/Qwen2.5-32B-Instruct",
+        whisperModel: "FunAudioLLM/SenseVoiceSmall",
       );
     }
 
-    // 初始化硅基流动服务
-    OpenAIService? siliconService;
+    // 初始化硅基流动 72B 辅助服务（用于 60s 摘要和备用翻译/降级）
+    OpenAIService? silicon72BService;
     if (siliconKey.isNotEmpty) {
-      debugPrint("正在创建硅基流动服务");
-      siliconService = OpenAIService(
+      debugPrint("正在创建硅基流动 Qwen-2.5-72B 辅助总结/兜底服务");
+      silicon72BService = OpenAIService(
         apiKey: siliconKey,
         baseUrl: "https://api.siliconflow.cn/v1",
         defaultModel: "Qwen/Qwen2.5-72B-Instruct",
         whisperModel: "FunAudioLLM/SenseVoiceSmall",
       );
-      fallbackTranslationService = siliconService;
-      summaryService = siliconService;
+      fallbackTranslationService = silicon72BService;
+      summaryService = silicon72BService;
     }
 
     // 确定最终绑定的服务对象
     if (mainTranslationService != null) {
       _aiService = mainTranslationService;
-      debugPrint("主翻译/复盘服务绑定为: OpenRouter (Gemini-2.0-Flash)");
-    } else if (siliconService != null) {
-      _aiService = siliconService;
-      debugPrint("无 OpenRouter Key，主服务 Fallback 绑定为: 硅基流动 (Qwen-72B)");
+      debugPrint("主翻译/复盘服务绑定为: 硅基流动 (Qwen-32B)");
     } else if (_groqService != null) {
       _aiService = _groqService;
       debugPrint("主服务兜底绑定为: Groq");
@@ -449,13 +455,18 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   Future<void> _initializeAudioSession() async {
-    final session = await AudioSession.instance;
-    await session.configure(const AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-      avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker,
-      avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-    ));
-    await session.setActive(true);
+    try {
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker,
+        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+      ));
+      // setActive may fail if another app holds the session; safe to ignore at init
+      await session.setActive(true);
+    } catch (e) {
+      debugPrint('[AudioSession] init setActive failed (will retry on record): $e');
+    }
   }
 
   Future<void> toggleRecording() async {
@@ -474,7 +485,8 @@ class RecordingProvider extends ChangeNotifier {
         return;
       }
       _isRecording = true;
-      _lastAudioTail = [];
+      _isPaused = false;   // 新录音时重置暂停状态
+      _lastAudioTail = Uint8List(0);
       _allNotes.clear();
       _lastTranscript = null;
       _lastSummaryTotalCount = 0;
@@ -490,14 +502,18 @@ class RecordingProvider extends ChangeNotifier {
   void _startSmartSliceTimer() {
     _sliceTimer?.cancel();
     _sliceTimer = Timer.periodic(Duration(seconds: _sliceDuration), (timer) async {
-      if (!_isRecording) { timer.cancel(); return; }
-      final path = await _audioRecorder.stop();
-      if (path != null) unawaited(_processAudio(path));
-      
-      await Future.delayed(const Duration(milliseconds: 100));
-      if (_isRecording) {
-        final nextPath = await _getTempPath();
-        await _audioRecorder.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: nextPath);
+      try {
+        if (!_isRecording || _isPaused) { timer.cancel(); return; }
+        final path = await _audioRecorder.stop();
+        if (path != null) unawaited(_processAudio(path));
+
+        await Future.delayed(const Duration(milliseconds: 100));
+        if (_isRecording && !_isPaused) {
+          final nextPath = await _getTempPath();
+          await _audioRecorder.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: nextPath);
+        }
+      } catch (e) {
+        debugPrint("Slice timer error: $e");
       }
     });
   }
@@ -525,17 +541,22 @@ class RecordingProvider extends ChangeNotifier {
       }
     }
     
-    // [New Feature] 学院模式即时汇总弹出：
-    // 点击停止后，无需等待耗时的 final AI recap，立即将缓存中所有的每分钟 block 总结整合成 MD 弹出
-    if (_currentMode == AppMode.lecture) {
+    // 即时汇总弹出：停止后立即将缓存中所有的每分钟 block 总结整合成 MD 弹出
+    // 讲座模式与小组讨论模式均支持，闲谈模式无摘要故跳过
+    if (_currentMode != AppMode.freeTalk) {
       final summaries = _allNotes.where((n) => n.isSummary).toList();
       if (summaries.isNotEmpty) {
         final buffer = StringBuffer();
-        buffer.writeln("# 📝 讲座实时小结汇总 (Live Session Summaries)");
-        buffer.writeln("> 此处为您点击停止后，立即从本地缓存还原的每分钟核心小结。系统正在后台为您生成深度的 AI 学术复盘报告，请稍候...");
+        if (_currentMode == AppMode.lecture) {
+          buffer.writeln("# 📝 讲座实时小结汇总 (Live Session Summaries)");
+          buffer.writeln("> 此处为您点击停止后，立即从本地缓存还原的每分钟核心小结。系统正在后台为您生成深度的 AI 学术复盘报告，请稍候...");
+        } else {
+          buffer.writeln("# 💬 讨论实时要点汇总 (Live Discussion Summaries)");
+          buffer.writeln("> 此处为您点击停止后，立即从本地缓存还原的讨论要点。系统正在后台为您生成深度讨论复盘，请稍候...");
+        }
         buffer.writeln();
         for (int i = 0; i < summaries.length; i++) {
-          buffer.writeln("### ⏰ 第 ${i + 1} 分钟小结");
+          buffer.writeln("### ⏰ 第 ${i + 1} 分钟要点");
           buffer.writeln(summaries[i].summary);
           buffer.writeln();
         }
@@ -561,6 +582,41 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
+  /// 暂停录音：停止当前切片计时器和录音器，保留所有已有笔记，不做任何导出。
+  Future<void> pauseRecording() async {
+    if (!_isRecording || _isPaused || _isPending) return;
+    _isPaused = true;
+    _sliceTimer?.cancel();
+    // 处理暂停前的最后一段音频切片
+    final path = await _audioRecorder.stop();
+    if (path != null) unawaited(_processAudio(path));
+    _statusMessage = "⏸ Paused";
+    notifyListeners();
+  }
+
+  /// 继续录音：重启录音器和切片计时器，无缝衔接上次内容。
+  Future<void> resumeRecording() async {
+    if (!_isRecording || !_isPaused || _isPending) return;
+    _isPaused = false;
+    _statusMessage = null;
+    final nextPath = await _getTempPath();
+    await _audioRecorder.start(
+      const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1),
+      path: nextPath,
+    );
+    _startSmartSliceTimer();
+    notifyListeners();
+  }
+
+  /// 切换暂停/继续。
+  Future<void> togglePause() async {
+    if (_isPaused) {
+      await resumeRecording();
+    } else {
+      await pauseRecording();
+    }
+  }
+
   Future<String> _getTempPath() async {
     final directory = await getApplicationDocumentsDirectory();
     return '${directory.path}/rec_${DateTime.now().millisecondsSinceEpoch}.wav';
@@ -575,54 +631,16 @@ class RecordingProvider extends ChangeNotifier {
     return true;
   }
 
-  /// 多平台翻译轮询（闲谈模式专用）
+  /// FreeTalk 翻译（使用硅基流动 Qwen）
   Future<String> _translateFreeTalk(String englishText) async {
-    // 定义平台顺序：首选极速高可用的 Gemini-2.0-Flash
-    final providers = [
-      () => _translateViaOpenRouter(englishText, model: 'google/gemini-2.0-flash'),
-      () => _translateViaOpenRouter(englishText, model: 'glm-4-flash'),
-      () => _translateViaOpenRouter(englishText, model: 'moonshot-v1-8k'),
-      () => _translateViaSiliconFlow(englishText),
-    ];
-    for (var provider in providers) {
-      try {
-        final result = await provider().timeout(const Duration(seconds: 8));
-        if (result.isNotEmpty && !result.startsWith('[')) {
-          return result;
-        }
-      } catch (e) {
-        debugPrint("Translation provider failed: $e");
-        continue;
-      }
+    try {
+      final result = await _translateViaSiliconFlow(englishText)
+          .timeout(const Duration(seconds: 10));
+      if (result.isNotEmpty && !result.startsWith('[')) return result;
+    } catch (e) {
+      debugPrint("FreeTalk translation failed: $e");
     }
     return '[Translation failed]';
-  }
-
-  /// OpenRouter 调用 (智谱/月之暗面)
-  Future<String> _translateViaOpenRouter(String text, {required String model}) async {
-    final apiKey = _openRouterKey;
-    final url = Uri.parse('https://openrouter.ai/api/v1/chat/completions');
-    final response = await http.post(
-      url,
-      headers: {
-        'Authorization': 'Bearer $apiKey',
-        'Content-Type': 'application/json',
-      },
-      body: jsonEncode({
-        'model': model,
-        'messages': [
-          {'role': 'user', 'content': 'Translate the following English text to Simplified Chinese, output only the translation: $text'}
-        ],
-        'temperature': 0.2,
-      }),
-    );
-    if (response.statusCode == 200) {
-      final data = jsonDecode(response.body);
-      final translated = data['choices'][0]['message']['content'].trim();
-      return translated;
-    } else {
-      throw Exception('OpenRouter error: ${response.statusCode}');
-    }
   }
 
   /// 硅基流动 Qwen（复用现有翻译能力）
@@ -638,20 +656,47 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> _processAudio(String path) async {
     if (_orchestrator == null) return;
+    if (path.isEmpty) return;
     try {
       final stitchResult = await compute(_backgroundStitchTask, StitchData(_lastAudioTail, path, kTailSize));
       final processedPath = stitchResult['path'] as String;
-      _lastAudioTail = List<int>.from(stitchResult['newTail']);
+      _lastAudioTail = Uint8List.fromList(stitchResult['newTail'] as List<int>);
 
       final currentNote = InsightNote(summary: '', transcript: '...', timestamp: DateTime.now(), isProcessing: true);
       final noteId = currentNote.id;
       _allNotes.add(currentNote);
       notifyListeners();
 
+      // 提取最近两次的翻译历史作为上下文
+      final List<Map<String, String>> historyList = [];
+      final List<InsightNote> nonSummaryNotes = _allNotes
+          .where((n) => !n.isSummary && 
+                        n.transcript.isNotEmpty && 
+                        n.transcript != '...' && 
+                        n.translatedContent != null && 
+                        n.translatedContent!.isNotEmpty &&
+                        !n.translatedContent!.startsWith('['))
+          .toList();
+      
+      if (nonSummaryNotes.length >= 2) {
+        for (var i = nonSummaryNotes.length - 2; i < nonSummaryNotes.length; i++) {
+          historyList.add({
+            'english': nonSummaryNotes[i].transcript,
+            'chinese': nonSummaryNotes[i].translatedContent!,
+          });
+        }
+      } else if (nonSummaryNotes.isNotEmpty) {
+        historyList.add({
+          'english': nonSummaryNotes.first.transcript,
+          'chinese': nonSummaryNotes.first.translatedContent!,
+        });
+      }
+
       await _orchestrator!.processAudioSegment(
         noteId,
         processedPath,
         context: _lastTranscript,
+        translationHistory: historyList,
         onStatus: (msg) {
           _statusMessage = msg;
           notifyListeners();
@@ -683,11 +728,15 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> _performBatchSummary(String text, String? clusterId) async {
     if (_summaryService == null) return;
-    final summary = await _summaryService!.summarize(text, mode: _currentMode);
-    final summaryNote = InsightNote(summary: summary, transcript: '', timestamp: DateTime.now(), isSummary: true, clusterId: clusterId);
-    _allNotes.add(summaryNote);
-    _saveShadowCache();
-    notifyListeners();
+    try {
+      final summary = await _summaryService!.summarize(text, mode: _currentMode, unit: _currentUnit);
+      final summaryNote = InsightNote(summary: summary, transcript: '', timestamp: DateTime.now(), isSummary: true, clusterId: clusterId);
+      _allNotes.add(summaryNote);
+      _saveShadowCache();
+      notifyListeners();
+    } catch (e) {
+      debugPrint("Batch summary error: $e");
+    }
   }
 
   Future<void> _checkRecoveryCache() async {
@@ -725,30 +774,43 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   Future<void> generateFinalAcademicReview() async {
-    if (_aiService == null) return;
+    // ⚠️ Bug fix: 即使 _aiService 为 null 或 AI 调用失败，也必须保证 _exportToMarkdown()
+    // 被执行（用 try/finally），否则 Discussion/Lecture 模式在开启 Final Recap 时将
+    // 因服务未就绪而导致 MD 文件永远无法生成。
     _isGeneratingFinalReview = true; notifyListeners();
-    final material = _allNotes.where((n) => n.isSummary).map((n) => n.summary).join("\n\n");
-    if (material.isEmpty) { _finalReviewContent = "Not enough material."; } else {
-      try {
-        final recap = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode);
-        _finalReviewContent = recap;
-      } catch (mainError) {
-        debugPrint("[Final Academic Review] Main service failed, trying fallback: $mainError");
-        if (_fallbackTranslationService != null) {
-          try {
-            final recap = await _fallbackTranslationService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode);
-            _finalReviewContent = recap;
-          } catch (fallbackError) {
-            _finalReviewContent = "Recap failed both primary and fallback service.";
-          }
+    try {
+      if (_aiService == null) {
+        _finalReviewContent = "[AI service not ready — recap skipped]";
+        debugPrint("[Final Academic Review] _aiService is null, skipping recap.");
+      } else {
+        final material = _allNotes.where((n) => n.isSummary).map((n) => n.summary).join("\n\n");
+        if (material.isEmpty) {
+          _finalReviewContent = "Not enough material.";
         } else {
-          _finalReviewContent = "Recap failed and no fallback configured.";
+          try {
+            final recap = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
+            _finalReviewContent = recap;
+          } catch (mainError) {
+            debugPrint("[Final Academic Review] Main service failed, trying fallback: $mainError");
+            if (_fallbackTranslationService != null) {
+              try {
+                final recap = await _fallbackTranslationService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
+                _finalReviewContent = recap;
+              } catch (fallbackError) {
+                _finalReviewContent = "Recap failed both primary and fallback service.";
+              }
+            } else {
+              _finalReviewContent = "Recap failed and no fallback configured.";
+            }
+          }
         }
       }
+    } finally {
+      // 无论 AI 是否成功，始终执行导出，确保 MD 文件一定被写入磁盘。
+      _isGeneratingFinalReview = false;
+      notifyListeners();
+      await _exportToMarkdown();
     }
-    _isGeneratingFinalReview = false;
-    notifyListeners();
-    await _exportToMarkdown();
   }
 
   /// 闲谈模式专用导出：无任何标题/日期/分隔线，先中文后英文
@@ -787,6 +849,7 @@ class RecordingProvider extends ChangeNotifier {
 
       await file.writeAsString(buffer.toString());
       debugPrint("\x1B[32m[FreeTalk Export OK] ${file.absolute.path}\x1B[0m");
+      _uploadToSupabase(file, 'freetalk');
       _lastExportedPath = file.absolute.path;
       notifyListeners();
     } catch (e) {
@@ -794,25 +857,59 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
+  String _highlightText(String text) {
+    if (text.contains('==')) return text;
+    String result = text;
+    result = result.replaceAllMapped(
+      RegExp(r'(\d+(?:\.\d+)?\s*(?:%|percent|million|billion|thousand|trillion))', caseSensitive: false),
+      (m) => '==${m[1]}==',
+    );
+    const signalWords = [
+      'however', 'therefore', 'because of', 'as a result', 'consequently',
+      'in contrast', 'on the other hand', 'for example', 'for instance',
+      'in addition', 'moreover', 'furthermore', 'nevertheless',
+      'notably', 'importantly', 'specifically', 'in particular',
+    ];
+    for (final word in signalWords) {
+      result = result.replaceAllMapped(
+        RegExp('\\b$word\\b', caseSensitive: false),
+        (m) => '==${m[0]}==',
+      );
+    }
+    return result;
+  }
+
   Future<void> _exportToMarkdown() async {
     try {
       final now = DateTime.now();
       final dateStr = DateFormat('yyyyMMdd_HHmm').format(now);
-      final filename = "Jeff_Notes_$dateStr.md";
+      final isDiscussion = _currentMode == AppMode.discussion;
+      final prefix = isDiscussion ? "Jeff_Discussion" : "Jeff_Notes";
+      final filename = "${prefix}_$dateStr.md";
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$filename');
 
       final StringBuffer sb = StringBuffer();
 
-      sb.writeln("# Academic Lecture Session");
-      sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
-      sb.writeln("**Context:** ${_identifiedLectureContext ?? 'General Academic Lecture'}");
+      if (isDiscussion) {
+        sb.writeln("# Group Discussion Session");
+        sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
+        sb.writeln("**Context:** ${_identifiedLectureContext ?? 'Group Discussion'}");
+      } else {
+        sb.writeln("# Academic Lecture Session");
+        sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
+        sb.writeln("**Context:** ${_identifiedLectureContext ?? 'General Academic Lecture'}");
+      }
       sb.writeln();
 
       if (_finalReviewContent != null && _finalReviewContent!.isNotEmpty) {
         sb.writeln("---");
         sb.writeln();
-        sb.writeln("## Part 1 · AI Academic Review");
+        if (isDiscussion) {
+          sb.writeln("## Part 1 · AI Discussion Recap");
+        } else {
+          sb.writeln("## Part 1 · AI Academic Review");
+        }
         sb.writeln();
         sb.writeln(_finalReviewContent);
         sb.writeln();
@@ -822,7 +919,11 @@ class RecordingProvider extends ChangeNotifier {
       if (summaries.isNotEmpty) {
         sb.writeln("---");
         sb.writeln();
-        sb.writeln("## Part 2 · 60s Block Summaries");
+        if (isDiscussion) {
+          sb.writeln("## Part 2 · Discussion Block Summaries");
+        } else {
+          sb.writeln("## Part 2 · 60s Block Summaries");
+        }
         sb.writeln();
         for (int i = 0; i < summaries.length; i++) {
           sb.writeln("### Block ${i + 1}");
@@ -865,17 +966,137 @@ class RecordingProvider extends ChangeNotifier {
 
         sb.writeln("### 英文全文 (English Transcript)");
         sb.writeln();
-        sb.writeln(englishSegments.join(" "));
+        sb.writeln(_highlightText(englishSegments.join(" ")));
         sb.writeln();
       }
 
       await file.writeAsString(sb.toString());
       debugPrint("\x1B[32m[Export OK] ${file.absolute.path}\x1B[0m");
+      final module = isDiscussion ? 'discussion' : 'listening';
+      _uploadToSupabase(file, module);
       _lastExportedPath = file.absolute.path;
       notifyListeners();
     } catch (e) {
       debugPrint("[Export Error] $e");
     }
+  }
+
+  Future<void> _uploadToSupabase(File file, String module) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final hash = md5.convert(bytes).toString();
+      final title = file.path.split('/').last;
+      await SupabaseConfig.client.from('archives').insert({
+        'file_hash': hash,
+        'module': module,
+        'title': title,
+        'content_md': utf8.decode(bytes),
+        'file_size': bytes.length,
+      });
+      debugPrint('[Supabase Upload OK] $title ($module)');
+    } catch (e) {
+      debugPrint('[Supabase Upload Error] $e');
+    }
+  }
+
+  Future<String> generateEssayMatrix(String topicA, String topicB, String level, {String? model}) async {
+    OpenAIService? service;
+    if (model == 'llama70b') {
+      service = _groqService;
+    } else if (model == 'qwen32b') {
+      service = _aiService;
+    } else if (model == 'qwen72b') {
+      service = _summaryService;
+    }
+    
+    // 兜底逻辑：如果选定的服务未初始化，按照 70B -> 32B -> 72B 顺序选择可用服务
+    service ??= _groqService ?? _aiService ?? _summaryService;
+    
+    if (service == null) {
+      throw Exception("AI service not ready. Please configure API Keys in settings.");
+    }
+    
+    final prompt = """# Role: Jeff Notes 钢铁模板学术写作架构师 (Strict EAL Essay Architect)
+
+# Inputs:
+Subject A: "$topicA"
+Subject B: "$topicB"
+Complexity Level: "$level"
+
+# Task:
+根据输入的两个主体对象（Subject A 和 Subject B），严格按照下方给出的【钢铁模板】结构，同时产出两篇完全独立的学术对比范文（一篇纯相同点，一篇纯不同点），并提取对应的双级词组笔记。
+
+# Critical Constraints (最高死命令):
+1. **结构绝对锁死**：必须一字不差地使用【钢铁模板】中的 Introduction, Body 1, Body 2, Body 3, 和 Conclusion 的通用骨架句式。你的任务是根据具体的主体（如 "$topicA" 与 "$topicB"）去替换括号中的主体名，并构思 3 个核心对比维度来填满细节，严禁修改任何模板万能连接词！
+2. **语域限制 (EAL-Friendly)**：生成的细节扩充部分（Meat）严禁使用极度偏门、晦涩的大词。必须分为“朴素版词组（想得起、用着顺）”和“高级版词组（拿 A+、惊艳教授）”两层，且高级词组必须自然融入到范文的细节描写中。
+3. **彻底单向单篇**：篇章 1 必须 100% 纯写相同点；篇章 2 必须 100% 纯写不同点。绝不允许在同一篇章内混写！
+4. **语言要求 (中英对照与纯英范文)**：
+   - 范文（Introduction, Body 1/2/3, Conclusion）的段落内容必须**完全为英文**。
+   - 只有在模板中明确标注有“中文”的括号里（例如：[相同点1中文]、[不同点1中文]），才使用中文进行归纳。
+   - 专属词组笔记中，中文意思部分使用中文，词组使用英文。
+   - 严禁将范文的英文模板翻译成中文！范文必须是可直接提交的高质量英文学术写作。
+
+---
+
+# 📐 核心参考与输出钢骨模板 (The Bible Templates):
+
+你必须严格按照以下格式回传数据：
+
+# 📊 TRACK 1: THE SIMILARITIES ESSAY
+### 🧱 篇章 1：纯 3 个相同点（Similarity）全套范文
+**Introduction**
+In the modern world, $topicA and $topicB are two very important concepts that many people talk about. Although they look quite different at first, they actually share a lot of common ground. In my opinion, they have three major similarities, including [相同点1核心词], [相同点2核心词], and [相同点3核心词].
+
+**Body 1 (相同点 1：[相同点1中文])**
+First, $topicA and $topicB are very similar in terms of [相同点1核心词]. Specifically, $topicA focuses heavily on [针对Subject A的细节展开]. Similarly, $topicB also cares a lot about [针对Subject B的细节展开]. Therefore, this first similarity shows that they are closer than we think in this area.
+
+**Body 2 (相同点 2：[相同点2中文])**
+Second, there is a strong common ground between $topicA and $topicB when it comes to [相同点2核心词]. This means they face the exact same situation. For instance, $topicA is deeply driven by [针对Subject A的细节展开], and $topicB is also influenced by [针对Subject B的细节展开]. As a result, we can see that their developments in this field are highly matched.
+
+**Body 3 (相同点 3：[相同点3中文])**
+Third, $topicA and $topicB are also identical because of [相同点3核心词]. On one hand, the growth of $topicA relies on [针对Subject A of the details]. On the other hand, the success of $topicB also comes from [针对Subject B of the details]. Consequently, this final point clearly demonstrates that these two subjects share the same path.
+
+**Conclusion**
+In conclusion, although $topicA and $topicB have their own characteristics, their similarities are very obvious. As mentioned above, they both focus on [相同点1核心词], share a common ground in [相同点2核心词], and are driven by [相同点3核心词]. Therefore, it is clear that these two subjects share the same path in many ways.
+
+---
+
+# 📊 TRACK 2: THE DIFFERENCES ESSAY
+### 🧱 篇章 2：纯 3 个不同点（Differences）全套范文
+**Introduction**
+In the modern world, $topicA and $topicB are two very important concepts that many people talk about. Although they share some common goals at first, they actually have many huge differences. In my opinion, they have three major differences, including [不同点1核心词], [不同点2核心词], and [不同点3核心词].
+
+**Body 1 (不同点 1：[不同点1中文])**
+First, $topicA and $topicB have a major difference in terms of [不同点1核心词]. Specifically, $topicA focuses heavily on [针对Subject A的差异展开]. In contrast, $topicB cares more about [针对Subject B的差异展开]. Therefore, this first difference shows that they are very distinct in this area.
+
+**Body 2 (不同点 2：[不同点2中文])**
+Second, there is a huge gap between $topicA and $topicB when it comes to [不同点2核心词]. This means they face entirely different situations. For instance, $topicA is known for [针对Subject A的差异展开], while $topicB is driven by [针对Subject B的差异展开]. As a result, we can see that their developments in this field are not the same.
+
+**Body 3 (不同点 3：[不同点3中文])**
+Third, $topicA and $topicB are very different because of [不同点3核心词]. On one hand, the growth of $topicA relies on [针对Subject A的差异展开]. On the other hand, the success of $topicB comes from [针对Subject B的差异展开]. Consequently, this final point clearly demonstrates that these two subjects have different paths.
+
+**Conclusion**
+In conclusion, although $topicA and $topicB have some connections, their differences are very obvious. As mentioned above, they have different focus on [不同点1核心词], have a huge gap in [不同点2核心词], and are driven by different choices in [不同点3核心词]. Therefore, it is clear that these two subjects have different paths in many ways.
+
+---
+
+# 📂 EXCLUSIVE LEXICAL NOTES
+### 📂 专属词组笔记【生成的场景标签】
+提取你在上述两篇文章的 Body 段细节描述中所使用的核心词组。
+
+💡 **朴素版词组（想得起、用着顺）**
+- 中文意思 1：[英文朴素词组 1]
+- 中文意思 2：[英文朴素词组 2]
+- 中文意思 3：[英文朴素词组 3]
+
+💎 **高级版词组（拿 A+、惊艳教授）**
+(高级学术替代词组必须在范文里实际使用过，并且必须使用 ==双等号== 将其包裹起来，例如 ==adhere to==，以便进行前端高亮显示)
+- 中文意思 1：[对应的高级学术替代词组 1]
+- 中文意思 2：[对应的高级学术替代词组 2]
+- 中文意思 3：[对应的高级学术替代词组 3]
+""";
+ 
+    return await service.summarize(prompt, strategy: PromptStrategy.essay, mode: _currentMode, unit: _currentUnit);
   }
 
   @override

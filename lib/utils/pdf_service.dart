@@ -256,8 +256,16 @@ class PdfService {
   /// 主入口：两级容错
   /// 第1级：尝试用 NotoSansSC + 中英双语内容
   /// 第2级：如果 save() 仍然抛错，降级为 Helvetica + ASCII-only 重试
-  static Future<void> exportToPdf(String title, String content) async {
+  /// [bounds] 为触发按钮的屏幕坐标矩形，用于 iPad 上分享 Popover 的锚定位置。
+  static Future<void> exportToPdf(
+    String title,
+    String content, {
+    Rect? bounds,
+  }) async {
     final pdfName = title.replaceAll('.md', '.pdf');
+    // iPad 分享 Popover 锚点：若调用方未提供则默认屏幕右上角位置
+    final shareBounds =
+        bounds ?? const Rect.fromLTWH(0, 0, 100, 50);
 
     // ── 步骤 1：加载字体 ──────────────────────────────
     pw.Font baseFont;
@@ -286,16 +294,17 @@ class PdfService {
       }
     }
 
-    // ── 步骤 2：尝试完整渲染（含中文）───────────────────
+    // ── 步骤 2：尝试完整渲染（含中文），使用 sharePdf 弹出 iOS 分享面板 ─────
     if (useNoto) {
       try {
         final bytes = await _buildPdfBytes(content, baseFont, boldFont,
             asciiOnly: false);
-        await Printing.layoutPdf(
-          onLayout: (_) async => bytes,
-          name: pdfName,
+        await Printing.sharePdf(
+          bytes: bytes,
+          filename: pdfName,
+          bounds: shareBounds,
         );
-        debugPrint('[PDF] Export succeeded with NotoSansSC.');
+        debugPrint('[PDF] Export succeeded with NotoSansSC (sharePdf).');
         return;
       } catch (e) {
         debugPrint('[PDF] NotoSansSC render failed: $e — retrying ASCII-only.');
@@ -307,10 +316,11 @@ class PdfService {
     final helveticaBold = pw.Font.helveticaBold();
     final bytes = await _buildPdfBytes(content, helvetica, helveticaBold,
         asciiOnly: true);
-    await Printing.layoutPdf(
-      onLayout: (_) async => bytes,
-      name: pdfName,
+    await Printing.sharePdf(
+      bytes: bytes,
+      filename: pdfName,
+      bounds: shareBounds,
     );
-    debugPrint('[PDF] Export succeeded in ASCII-only fallback mode.');
+    debugPrint('[PDF] Export succeeded in ASCII-only fallback mode (sharePdf).');
   }
 }

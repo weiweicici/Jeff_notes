@@ -1,16 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'recording_provider.dart';
-import 'screens/notes_screen.dart';
+import 'screens/academic_hub_screen.dart';
+import 'services/supabase_config.dart';
+import 'services/file_sync_agent.dart';
 
-void main() {
+void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await SupabaseConfig.init();
   runApp(
     ChangeNotifierProvider(
       create: (_) => RecordingProvider(),
       child: const JeffNotesApp(),
     ),
   );
+  FileSyncAgent.instance.start();
 }
 
 class JeffNotesApp extends StatelessWidget {
@@ -56,7 +60,7 @@ class JeffNotesApp extends StatelessWidget {
         ),
       ),
       themeMode: provider.isDarkMode ? ThemeMode.dark : ThemeMode.light,
-      home: const NotesScreen(),
+      home: const AcademicHubScreen(),
     );
   }
 }
