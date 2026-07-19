@@ -1,3 +1,4 @@
+// ignore_for_file: experimental_member_use
 import 'dart:io';
 import 'package:audio_service/audio_service.dart';
 import 'package:audio_session/audio_session.dart';
@@ -8,13 +9,30 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   final AudioPlayer player = AudioPlayer();
 
   MyAudioHandler() {
-    // Forward playback events from just_audio to audio_service
     player.playbackEventStream.map(_transformEvent).pipe(playbackState);
+
+    // Last line of defense: if playback starts (e.g. from lock screen or system
+    // auto-resume) without headphones, immediately intercept and stop.
+    player.playingStream.listen((playing) async {
+      if (!playing) return;
+      if (!(await _isHeadphonesConnected())) {
+        debugPrint('[AudioHandler] playingStream — no headphones, stopping immediately.');
+        await player.stop();
+      }
+    });
   }
 
-  /// iOS: 使用 AVAudioSession.currentRoute.outputs 做实时路由检查（不用缓存设备列表）
+  /// 实时硬件耳机/蓝牙路由校验（先强制激活 AudioSession 刷新系统路由）
   Future<bool> _isHeadphonesConnected() async {
     try {
+      final session = await AudioSession.instance;
+      await session.configure(AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+      ));
+      await session.setActive(true);
+
       if (Platform.isIOS || Platform.isMacOS) {
         final avSession = AVAudioSession();
         final route = await avSession.currentRoute;
@@ -22,7 +40,10 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
         debugPrint('[AudioHandler] iOS currentRoute outputs: ${outputs.map((o) => o.portType.name).join(", ")}');
 
-        if (outputs.isEmpty) return false;
+        if (outputs.isEmpty) {
+          try { await session.setActive(false); } catch (_) {}
+          return false;
+        }
 
         for (final output in outputs) {
           final t = output.portType;
@@ -31,15 +52,22 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
             return true;
           }
         }
+
+        try {
+          await session.setActive(false);
+        } catch (_) {}
         return false;
       }
 
       // Android fallback
-      final session = await AudioSession.instance;
       final devices = await session.getDevices();
-      if (devices.isEmpty) return false;
+      if (devices.isEmpty) {
+        try {
+          await session.setActive(false);
+        } catch (_) {}
+        return false;
+      }
       for (final device in devices) {
-        // ignore: experimental_member_use
         final type = device.type;
         if (type == AudioDeviceType.wiredHeadset ||
             type == AudioDeviceType.wiredHeadphones ||
@@ -52,6 +80,10 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           return true;
         }
       }
+
+      try {
+        await session.setActive(false);
+      } catch (_) {}
       return false;
     } catch (e) {
       debugPrint('[AudioHandler] Headphone check error: $e');

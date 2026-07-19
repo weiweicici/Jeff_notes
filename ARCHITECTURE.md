@@ -250,6 +250,11 @@ The system encapsulates audio playback through `TtsService` (a ChangeNotifier si
 ### 15.2 Headphone Safety & Automatic Interruption
 To prevent accidental sound leakage in quiet environments (e.g., libraries, classrooms), the system enforces strict audio output safety rules:
 - **Headphone Check**: Playback will not start unless headphones or Bluetooth headsets are actively connected. It queries the platform's current audio route outputs (`AVAudioSession` outputs on iOS) to ensure a physical speaker is not being used.
-- **Disconnection Listener**: Subscribes to `AudioSession.devicesChangedEventStream`. If headphones (wired/wireless/AirPods) are disconnected, the playback session is instantly paused.
-- **Microphone Co-existence**: Configures the `AudioSession` category to `AVAudioSessionCategory.playAndRecord` with speaker defaulting. This ensures that the active microphone recording capability is not locked or interrupted when TTS audio plays.
+- **Disconnection Listener**: Subscribes to `AudioSession.devicesChangedEventStream` as well as running a periodic background headphone monitor. If headphones (wired/wireless/AirPods) are disconnected, the playback session is instantly paused to prevent any leakage.
+- **Microphone Co-existence & Recording Ready**: Before recording starts, the app calls `releaseForRecording()`, which stops all TTS playback and dynamically switches the `AudioSession` category back to `AVAudioSessionCategory.playAndRecord` to release microphone access for recording.
+
+### 15.3 iOS Platform Configuration & Background Playback
+To support background audio playback and system-level lock screen controls (lock screen control center) while maintaining strict safety, the audio session is configured as follows:
+- **AVAudioSessionCategory.playback**: When playing TTS or recorded audio, the session is set to `.playback` mode. This ensures that the system allows playback to continue when the screen is locked or the app is sent to the background.
+- **No Category Options (`AVAudioSessionCategoryOptions.none`)**: Since iOS automatically handles Bluetooth/AirPlay routing for playback-only categories, explicitly passing option flags like `.allowBluetoothA2DP` is invalid and will trigger an iOS parameter error (`OSStatus error -50`). Leaving options as `.none` (empty) allows the system to route audio to Bluetooth/AirPods correctly while ensuring successful initialization.
 

@@ -182,7 +182,7 @@ class RecordingProvider extends ChangeNotifier {
 
   final List<InsightNote> _allNotes = [];
   String? _statusMessage;
-  int _lastSummaryTotalCount = 0;
+
   String? _finalReviewContent;
   bool _isGeneratingFinalReview = false;
   String? _lastExportedPath;
@@ -549,7 +549,7 @@ class RecordingProvider extends ChangeNotifier {
       _sessionAudioPaths.clear(); // 清空上次 session 的音频切片路径
       _allNotes.clear();
       _lastTranscript = null;
-      _lastSummaryTotalCount = 0;
+
       _finalReviewContent = null;
       _statusMessage = null;
       notifyListeners();
@@ -590,41 +590,7 @@ class RecordingProvider extends ChangeNotifier {
       });
     }
 
-    final currentTranscripts = _allNotes.where((n) => !n.isSummary).toList();
-    if (currentTranscripts.length > _lastSummaryTotalCount) {
-      final remainingText = currentTranscripts
-          .skip(_lastSummaryTotalCount)
-          .map((e) => e.transcript)
-          .join(" ");
-      if (remainingText.trim().isNotEmpty) {
-        await _performBatchSummary(remainingText, "final_flush_${DateTime.now().millisecondsSinceEpoch}");
-      }
-    }
-    
-    // 即时汇总弹出：停止后立即将缓存中所有的每分钟 block 总结整合成 MD 弹出
-    // 讲座模式与小组讨论模式均支持，闲谈模式无摘要故跳过
-    if (_currentMode != AppMode.freeTalk) {
-      final summaries = _allNotes.where((n) => n.isSummary).toList();
-      if (summaries.isNotEmpty) {
-        final buffer = StringBuffer();
-        if (_currentMode == AppMode.lecture) {
-          buffer.writeln("# 📝 讲座实时小结汇总 (Live Session Summaries)");
-          buffer.writeln("> 此处为您点击停止后，立即从本地缓存还原的每分钟核心小结。系统正在后台为您生成深度的 AI 学术复盘报告，请稍候...");
-        } else {
-          buffer.writeln("# 💬 讨论实时要点汇总 (Live Discussion Summaries)");
-          buffer.writeln("> 此处为您点击停止后，立即从本地缓存还原的讨论要点。系统正在后台为您生成深度讨论复盘，请稍候...");
-        }
-        buffer.writeln();
-        for (int i = 0; i < summaries.length; i++) {
-          buffer.writeln("### ⏰ 第 ${i + 1} 分钟要点");
-          buffer.writeln(summaries[i].summary);
-          buffer.writeln();
-        }
-        // 即刻激发 UI 模态弹出展示，消除用户等待焦虑
-        _sessionReadyController.add(buffer.toString());
-      }
-    }
-
+    // 闲谈模式无摘要故跳过，讲座/讨论模式不弹窗，直接进入 Finalizing 状态
     _statusMessage = "Finalizing AI tasks...";
     notifyListeners();
     await ApiScheduler().untilIdle();
@@ -779,27 +745,9 @@ class RecordingProvider extends ChangeNotifier {
         notifyListeners();
       }
 
-      final totalCount = _allNotes.where((n) => !n.isSummary).length;
-      if (totalCount > 0 && totalCount % 12 == 0) {
-        final combinedText = _allNotes.where((n) => !n.isSummary).skip(_lastSummaryTotalCount).map((e) => e.transcript).join(" ");
-        _lastSummaryTotalCount = totalCount;
-        unawaited(_performBatchSummary(combinedText, "cluster_${DateTime.now().millisecondsSinceEpoch}"));
-      }
+
     } catch (e) {
       debugPrint("Pipeline Error: $e");
-    }
-  }
-
-  Future<void> _performBatchSummary(String text, String? clusterId) async {
-    if (_summaryService == null) return;
-    try {
-      final summary = await _summaryService!.summarize(text, mode: _currentMode, unit: _currentUnit);
-      final summaryNote = InsightNote(summary: summary, transcript: '', timestamp: DateTime.now(), isSummary: true, clusterId: clusterId);
-      _allNotes.add(summaryNote);
-      _saveShadowCache();
-      notifyListeners();
-    } catch (e) {
-      debugPrint("Batch summary error: $e");
     }
   }
 
@@ -847,7 +795,7 @@ class RecordingProvider extends ChangeNotifier {
         _finalReviewContent = "[AI service not ready — recap skipped]";
         debugPrint("[Final Academic Review] _aiService is null, skipping recap.");
       } else {
-        final material = _allNotes.where((n) => n.isSummary).map((n) => n.summary).join("\n\n");
+        final material = _allNotes.where((n) => !n.isSummary).map((n) => n.transcript).join(" ");
         if (material.isEmpty) {
           _finalReviewContent = "Not enough material.";
         } else {

@@ -1,3 +1,4 @@
+// ignore_for_file: experimental_member_use
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -12,6 +13,8 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_config.dart';
 import '../main.dart';
 
+enum ActiveAudioType { none, chinese, english, recorded }
+
 class TtsService extends ChangeNotifier {
   static final TtsService _instance = TtsService._internal();
   factory TtsService() => _instance;
@@ -20,43 +23,42 @@ class TtsService extends ChangeNotifier {
   final FlutterTts _flutterTts = FlutterTts();
 
   bool _isInitialized = false;
+  ActiveAudioType _currentAudioType = ActiveAudioType.none;
 
   // ── 中文本地原生 TTS 状态 ──────────────────────────
-  bool _isChinesePlaying = false;
-  double _chineseSpeed = 1.0;
-  double _chineseProgress = 0.0;
-  Timer? _chineseProgressTimer; // 计时器模拟中文朗读进度
-  int _chineseTextLength = 0;   // 当前朗读文本字数（用于估算时长）
-  bool get isChinesePlaying => _isChinesePlaying;
+  bool _isChineseSynthesizing = false;
+  double _chineseSpeed = 1.25;
+  bool get isChineseSynthesizing => _isChineseSynthesizing;
+  bool get isChinesePlaying => _audioPlayer.playing && _currentAudioType == ActiveAudioType.chinese;
   double get chineseSpeed => _chineseSpeed;
-  double get chineseProgress => _chineseProgress;
+
+  Stream<Duration> get chinesePositionStream => _audioPlayer.positionStream;
+  Stream<Duration?> get chineseDurationStream => _audioPlayer.durationStream;
 
   // ── 英文 AI 拟真音色 TTS 状态 ─────────────────────
   bool _isEnglishSynthesizing = false;
   double _englishSpeed = 1.0;
   bool get isEnglishSynthesizing => _isEnglishSynthesizing;
-  bool get isEnglishPlaying => _audioPlayer.playing;
+  bool get isEnglishPlaying => _audioPlayer.playing && (_currentAudioType == ActiveAudioType.english || _currentAudioType == ActiveAudioType.recorded);
   double get englishSpeed => _englishSpeed;
 
   Stream<Duration> get englishPositionStream => _audioPlayer.positionStream;
   Stream<Duration?> get englishDurationStream => _audioPlayer.durationStream;
 
-  bool get isPlaying => isChinesePlaying || isEnglishPlaying;
-  bool get isSynthesizing => _isEnglishSynthesizing;
+  bool get isPlaying => _audioPlayer.playing;
+  bool get isSynthesizing => _isChineseSynthesizing || _isEnglishSynthesizing;
 
   TtsService._internal();
 
   Future<void> init() async {
     if (_isInitialized) return;
 
-    // 1. Configure AudioSession — must be playAndRecord so mic is never locked out
-    //    even when TTS is playing. defaultToSpeaker routes audio to speaker/headphones.
+    // 1. Configure AudioSession — category must be playback for TTS audio
+    //    so iOS routes directly to headphones and NEVER defaults/forces speaker.
     final session = await AudioSession.instance;
     await session.configure(AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-      avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker |
-                                     AVAudioSessionCategoryOptions.allowBluetooth |
-                                     AVAudioSessionCategoryOptions.allowBluetoothA2dp,
+      avAudioSessionCategory: AVAudioSessionCategory.playback,
+      avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
       avAudioSessionMode: AVAudioSessionMode.spokenAudio,
       androidAudioAttributes: const AndroidAudioAttributes(
         contentType: AndroidAudioContentType.speech,
@@ -68,33 +70,19 @@ class TtsService extends ChangeNotifier {
     await session.setActive(true);
 
     // 2. Init FlutterTts for Chinese local playback
+    await _flutterTts.setSharedInstance(true);
+    await _flutterTts.setIosAudioCategory(
+      IosTextToSpeechAudioCategory.playback,
+      [],
+      IosTextToSpeechAudioMode.spokenAudio,
+    );
     await _flutterTts.setSpeechRate(0.5);
     await _flutterTts.setVolume(1.0);
     await _flutterTts.setPitch(1.0);
     await _flutterTts.setLanguage("zh-CN");
 
-    _flutterTts.setStartHandler(() {
-      _isChinesePlaying = true;
-      notifyListeners();
-    });
-
-    _flutterTts.setCompletionHandler(() {
-      _chineseProgressTimer?.cancel();
-      _chineseProgress = 1.0; // 播放完成，进度檀渀
-      _isChinesePlaying = false;
-      notifyListeners();
-    });
-
     _flutterTts.setErrorHandler((msg) {
       debugPrint("Chinese Local TTS Error: $msg");
-      _chineseProgressTimer?.cancel();
-      _isChinesePlaying = false;
-      notifyListeners();
-    });
-
-    _flutterTts.setCancelHandler(() {
-      _chineseProgressTimer?.cancel();
-      _isChinesePlaying = false;
       notifyListeners();
     });
 
@@ -106,13 +94,11 @@ class TtsService extends ChangeNotifier {
       notifyListeners();
     });
 
-    // 4. 监听设备变更（含 AirPods/有线耳机的拔出）→ 只要有耳机类设备被移除，立刻无条件暂停
+    // 4. 监听设备变更（含 AirPods/有线耳机的拔出）→ 有耳机被移除且正在播放时暂停
     //    用 devicesChangedEventStream 比 becomingNoisy 更可靠（后者对 AirPods 不触发）
     _devicesSubscription = session.devicesChangedEventStream.listen((event) async {
       if (!isPlaying) return;
-      // 检查被移除的设备中是否有耳机类
       final hasHeadphoneRemoved = event.devicesRemoved.any((d) {
-        // ignore: experimental_member_use
         final t = d.type;
         return t == AudioDeviceType.wiredHeadset ||
                t == AudioDeviceType.wiredHeadphones ||
@@ -124,7 +110,7 @@ class TtsService extends ChangeNotifier {
                t == AudioDeviceType.usbAudio;
       });
       if (hasHeadphoneRemoved) {
-        debugPrint('[TtsService] Headphone device removed → immediately pausing.');
+        debugPrint('[TtsService] Headphone device removed during playback → pausing.');
         await pauseAll();
       }
     });
@@ -133,14 +119,46 @@ class TtsService extends ChangeNotifier {
   }
 
   StreamSubscription? _devicesSubscription;
+  Timer? _headphoneMonitor;
 
-  /// 检查当前是否有耳机/蓝牙在实时路由中输出。
-  /// iOS 上使用 AVAudioSession.currentRoute.outputs 获取系统级实时路由，
-  /// 不依赖缓存的设备列表（getDevices() 可能包含已配对但未连接的设备）。
+  void _startHeadphoneMonitor() {
+    _stopHeadphoneMonitor();
+    _headphoneMonitor = Timer.periodic(const Duration(seconds: 2), (_) async {
+      if (!isPlaying) {
+        _stopHeadphoneMonitor();
+        return;
+      }
+      if (!(await isHeadphonesConnected())) {
+        debugPrint('[TtsService] Headphone monitor — lost headphones during playback, pausing.');
+        await pauseAll();
+      }
+    });
+  }
+
+  void _stopHeadphoneMonitor() {
+    _headphoneMonitor?.cancel();
+    _headphoneMonitor = null;
+  }
+
+  /// 检查当前是否有耳机/蓝牙连接。
   Future<bool> isHeadphonesConnected() async {
+    if (await _queryCurrentRoute()) return true;
+    await Future.delayed(const Duration(milliseconds: 200));
+    return await _queryCurrentRoute();
+  }
+
+  /// 严密检查系统输出路由（只允许耳机/蓝牙输出，坚决禁止扬声器外放）
+  Future<bool> _queryCurrentRoute() async {
     try {
+      final session = await AudioSession.instance;
+      await session.configure(AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+      ));
+      await session.setActive(true);
+
       if (Platform.isIOS || Platform.isMacOS) {
-        // iOS: 直接读取当前实时音频输出路由
         final avSession = AVAudioSession();
         final route = await avSession.currentRoute;
         final outputs = route.outputs;
@@ -148,33 +166,34 @@ class TtsService extends ChangeNotifier {
         debugPrint('[TtsService] iOS currentRoute outputs: ${outputs.map((o) => o.portType.name).join(", ")}');
 
         if (outputs.isEmpty) {
-          debugPrint('[TtsService] No outputs in currentRoute → no headphones');
+          try { await session.setActive(false); } catch (_) {}
           return false;
         }
 
-        // 只要有任何输出不是内置扬声器/听筒，就认为外接了耳机
         for (final output in outputs) {
           final t = output.portType;
           if (t != AVAudioSessionPort.builtInSpeaker &&
               t != AVAudioSessionPort.builtInReceiver) {
-            debugPrint('[TtsService] External output found: ${t.name} → headphones connected');
             return true;
           }
         }
 
-        debugPrint('[TtsService] Only built-in outputs → no headphones');
+        // 端口全是扬声器或听筒 → 绝对无耳机连接
+        try {
+          await session.setActive(false);
+        } catch (_) {}
         return false;
       }
 
-      // Android 回退：使用 AudioSession.getDevices()
-      final session = await AudioSession.instance;
+      // Android: use getDevices()
       final devices = await session.getDevices();
-      debugPrint('[TtsService] Android devices: ${devices.map((d) => "${d.name} (${d.type})").join(", ")}');
-
-      if (devices.isEmpty) return false;
-
-      for (var device in devices) {
-        // ignore: experimental_member_use
+      if (devices.isEmpty) {
+        try {
+          await session.setActive(false);
+        } catch (_) {}
+        return false;
+      }
+      for (final device in devices) {
         final type = device.type;
         if (type == AudioDeviceType.wiredHeadset ||
             type == AudioDeviceType.wiredHeadphones ||
@@ -187,9 +206,13 @@ class TtsService extends ChangeNotifier {
           return true;
         }
       }
+
+      try {
+        await session.setActive(false);
+      } catch (_) {}
       return false;
     } catch (e) {
-      debugPrint('[TtsService] isHeadphonesConnected error: $e');
+      debugPrint('[TtsService] _queryCurrentRoute error: $e');
     }
     return false;
   }
@@ -242,7 +265,7 @@ class TtsService extends ChangeNotifier {
   }
 
   // ════════════════════════════════════════════════════════════════════
-  // 🇨🇳 中文朗读接口（使用 iOS 本地系统 TTS，0毫秒开，无等待）
+  // 🇨🇳 中文朗读接口（使用 iOS/Android 本地系统 TTS 合成文件 + 2级缓存降级方案）
   // ════════════════════════════════════════════════════════════════════
 
   Future<void> speakChinese(String text) async {
@@ -252,55 +275,137 @@ class TtsService extends ChangeNotifier {
     final clean = _sanitizeMarkdown(text);
     if (clean.isEmpty) return;
 
-    // 互斥防打架：强行停止英文 AI 播放
-    await stopEnglish();
+    await stopAll();
 
-    // iOS AVSpeechSynthesizer 每次开始前先 stop 彻底复位
-    await _flutterTts.stop();
-    await _flutterTts.setLanguage("zh-CN");
-    await _flutterTts.setSpeechRate(_chineseSpeed * 0.5);
+    // ── 检查本地磁盘 Cache（针对同一文本的 MD5 散列名）──────────────
+    final textHash = md5.convert(utf8.encode(clean)).toString();
+    final docsDir = await getApplicationDocumentsDirectory();
+    final cacheDir = Directory("${docsDir.path}/tts_cache");
+    if (!await cacheDir.exists()) {
+      await cacheDir.create(recursive: true);
+    }
+    final ext = Platform.isIOS || Platform.isMacOS ? 'caf' : 'wav';
+    final cachedFile = File("${cacheDir.path}/chinese_$textHash.$ext");
 
-    _chineseProgress = 0.0; // 重置进度
-    _chineseTextLength = clean.length;
-    _isChinesePlaying = true;
-    notifyListeners();
-
-    // 启动计时器模拟进度（iOS 本地 TTS 约 4字/秒，按speed调整）
-    _chineseProgressTimer?.cancel();
-    final double charsPerSecond = 4.0 * _chineseSpeed;
-    final double totalDurationMs = (_chineseTextLength / charsPerSecond) * 1000;
-    final Stopwatch sw = Stopwatch()..start();
-    _chineseProgressTimer = Timer.periodic(const Duration(milliseconds: 100), (t) {
-      if (!_isChinesePlaying) {
-        t.cancel();
-        return;
-      }
-      final elapsed = sw.elapsedMilliseconds.toDouble();
-      _chineseProgress = (elapsed / totalDurationMs).clamp(0.0, 0.99);
+    // 如果命中了本地缓存，直接毫秒级载入本地文件播放，0秒等待！
+    if (await cachedFile.exists() && (await cachedFile.length()) > 0) {
+      debugPrint("[TtsCache] Hit local Chinese disk cache: ${cachedFile.path}");
+      _currentAudioType = ActiveAudioType.chinese;
+      final duration = await _audioPlayer.setFilePath(cachedFile.path);
+      globalAudioHandler.setPlaybackMetadata(
+        title: '中文大意 (本地缓存)',
+        artist: 'Jeff Notes',
+        duration: duration,
+      );
+      await _audioPlayer.setSpeed(_chineseSpeed);
+      await _audioPlayer.play();
+      _startHeadphoneMonitor();
       notifyListeners();
-    });
+      return;
+    }
 
-    await _flutterTts.speak(clean);
+    // ── 检查 Supabase 云端 Cache（跨设备共享缓存）───
+    await _tryFetchFromSupabaseCloud(cachedFile, textHash);
+    if (await cachedFile.exists() && (await cachedFile.length()) > 0) {
+      debugPrint("[TtsCache] Hit Supabase Cloud Chinese Cache: ${cachedFile.path}");
+      _currentAudioType = ActiveAudioType.chinese;
+      final duration = await _audioPlayer.setFilePath(cachedFile.path);
+      globalAudioHandler.setPlaybackMetadata(
+        title: '中文大意 (云端缓存)',
+        artist: 'Jeff Notes',
+        duration: duration,
+      );
+      await _audioPlayer.setSpeed(_chineseSpeed);
+      await _audioPlayer.play();
+      _startHeadphoneMonitor();
+      notifyListeners();
+      return;
+    }
+
+    // ── 未命中缓存：本地调用 FlutterTts 原生合成文件 ──────────────
+    try {
+      _isChineseSynthesizing = true;
+      notifyListeners();
+
+      await _flutterTts.setSharedInstance(true);
+      await _flutterTts.setLanguage("zh-CN");
+      await _flutterTts.setSpeechRate(0.5);
+      await _flutterTts.setVolume(1.0);
+      await _flutterTts.setPitch(1.0);
+
+      await _flutterTts.synthesizeToFile(clean, cachedFile.path, true);
+
+      if (await cachedFile.exists() && (await cachedFile.length()) > 0) {
+        debugPrint("[TtsCache] Saved synthesized Chinese audio to local cache: ${cachedFile.path}");
+
+        // 异步在后台静默保存一份到 Supabase Storage 云端（全网用户共享缓存）
+        _tryUploadToSupabaseCloud(cachedFile, textHash);
+
+        _isChineseSynthesizing = false;
+        _currentAudioType = ActiveAudioType.chinese;
+
+        final duration = await _audioPlayer.setFilePath(cachedFile.path);
+        globalAudioHandler.setPlaybackMetadata(
+          title: '中文大意',
+          artist: 'Jeff Notes',
+          duration: duration,
+        );
+        await _audioPlayer.setSpeed(_chineseSpeed);
+        await _audioPlayer.play();
+        _startHeadphoneMonitor();
+        notifyListeners();
+        return;
+      } else {
+        throw Exception("中文语音合成输出文件失败");
+      }
+    } catch (e) {
+      debugPrint("[TtsService] synthesizeToFile failed ($e), falling back to live TTS speak");
+      _isChineseSynthesizing = false;
+      notifyListeners();
+
+      // 降级无缝兜底：如果系统环境不支持文件合成，自动回退至 live speak，绝不打断用户或弹出 OSStatus 错误
+      _currentAudioType = ActiveAudioType.chinese;
+      await _flutterTts.stop();
+      await _flutterTts.setLanguage("zh-CN");
+      await _flutterTts.setSpeechRate(_chineseSpeed * 0.5);
+      await _flutterTts.speak(clean);
+      _startHeadphoneMonitor();
+      notifyListeners();
+    } finally {
+      _isChineseSynthesizing = false;
+      notifyListeners();
+    }
+  }
+
+  Future<void> playChinese() async {
+    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones");
+    _currentAudioType = ActiveAudioType.chinese;
+    await _audioPlayer.play();
+    _startHeadphoneMonitor();
   }
 
   Future<void> pauseChinese() async {
-    _chineseProgressTimer?.cancel();
-    await _flutterTts.pause();
-    _isChinesePlaying = false;
+    await _audioPlayer.pause();
     notifyListeners();
   }
 
   Future<void> stopChinese() async {
-    _chineseProgressTimer?.cancel();
-    await _flutterTts.stop();
-    _chineseProgress = 0.0;
-    _isChinesePlaying = false;
-    notifyListeners();
+    if (_currentAudioType == ActiveAudioType.chinese) {
+      await _audioPlayer.stop();
+      _currentAudioType = ActiveAudioType.none;
+      notifyListeners();
+    }
+  }
+
+  Future<void> seekChinese(Duration position) async {
+    await _audioPlayer.seek(position);
   }
 
   Future<void> setChineseSpeed(double speed) async {
     _chineseSpeed = speed;
-    await _flutterTts.setSpeechRate(speed * 0.5);
+    if (_currentAudioType == ActiveAudioType.chinese) {
+      await _audioPlayer.setSpeed(speed);
+    }
     notifyListeners();
   }
 
@@ -312,14 +417,14 @@ class TtsService extends ChangeNotifier {
     await init();
     if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones");
 
-    // 互斥防打架：停止中文本地 TTS
-    await stopChinese();
+    await stopAll();
 
     final file = File(wavPath);
     if (!await file.exists()) {
       throw Exception("找不到真实课堂录音文件");
     }
 
+    _currentAudioType = ActiveAudioType.recorded;
     final duration = await _audioPlayer.setFilePath(file.path);
     globalAudioHandler.setPlaybackMetadata(
       title: '英文原声 (真实课堂录音)',
@@ -328,6 +433,7 @@ class TtsService extends ChangeNotifier {
     );
     await _audioPlayer.setSpeed(_englishSpeed);
     await _audioPlayer.play();
+    _startHeadphoneMonitor();
     notifyListeners();
   }
 
@@ -342,8 +448,7 @@ class TtsService extends ChangeNotifier {
     final clean = _sanitizeMarkdown(text);
     if (clean.isEmpty) return;
 
-    // 互斥防打架：停止中文本地 TTS
-    await stopChinese();
+    await stopAll();
 
     // ── 检查本地磁盘 Cache（针对同一文本的 MD5 散列名）──────────────
     final textHash = md5.convert(utf8.encode(clean)).toString();
@@ -357,6 +462,7 @@ class TtsService extends ChangeNotifier {
     // 如果命中了本地缓存，直接毫秒级载入本地文件播放，0秒等待 & 0消耗 Token！
     if (await cachedFile.exists() && (await cachedFile.length()) > 0) {
       debugPrint("[TtsCache] Hit local disk cache: ${cachedFile.path}");
+      _currentAudioType = ActiveAudioType.english;
       final duration = await _audioPlayer.setFilePath(cachedFile.path);
       globalAudioHandler.setPlaybackMetadata(
         title: '英文听力原声 (本地缓存)',
@@ -365,6 +471,7 @@ class TtsService extends ChangeNotifier {
       );
       await _audioPlayer.setSpeed(_englishSpeed);
       await _audioPlayer.play();
+      _startHeadphoneMonitor();
       notifyListeners();
       return;
     }
@@ -373,6 +480,7 @@ class TtsService extends ChangeNotifier {
     await _tryFetchFromSupabaseCloud(cachedFile, textHash);
     if (await cachedFile.exists() && (await cachedFile.length()) > 0) {
       debugPrint("[TtsCache] Hit Supabase Cloud Cache: ${cachedFile.path}");
+      _currentAudioType = ActiveAudioType.english;
       final duration = await _audioPlayer.setFilePath(cachedFile.path);
       globalAudioHandler.setPlaybackMetadata(
         title: '英文听力原声 (云端缓存)',
@@ -381,6 +489,7 @@ class TtsService extends ChangeNotifier {
       );
       await _audioPlayer.setSpeed(_englishSpeed);
       await _audioPlayer.play();
+      _startHeadphoneMonitor();
       notifyListeners();
       return;
     }
@@ -440,10 +549,10 @@ class TtsService extends ChangeNotifier {
       // 异步在后台静默保存一份到 Supabase Storage 云端（全网用户共享缓存）
       _tryUploadToSupabaseCloud(cachedFile, textHash);
 
-      final concatSource = ConcatenatingAudioSource(children: audioSources);
       _isEnglishSynthesizing = false;
+      _currentAudioType = ActiveAudioType.english;
 
-      final duration = await _audioPlayer.setAudioSource(concatSource);
+      final duration = await _audioPlayer.setFilePath(cachedFile.path);
       globalAudioHandler.setPlaybackMetadata(
         title: '英文听力原声',
         artist: 'Jeff Notes AI',
@@ -451,6 +560,7 @@ class TtsService extends ChangeNotifier {
       );
       await _audioPlayer.setSpeed(_englishSpeed);
       await _audioPlayer.play();
+      _startHeadphoneMonitor();
       notifyListeners();
     } catch (e) {
       _isEnglishSynthesizing = false;
@@ -464,8 +574,9 @@ class TtsService extends ChangeNotifier {
 
   Future<void> playEnglish() async {
     if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones");
-    await stopChinese(); // 互斥
+    _currentAudioType = ActiveAudioType.english;
     await _audioPlayer.play();
+    _startHeadphoneMonitor();
   }
 
   Future<void> pauseEnglish() async {
@@ -474,8 +585,11 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> stopEnglish() async {
-    await _audioPlayer.stop();
-    notifyListeners();
+    if (_currentAudioType == ActiveAudioType.english || _currentAudioType == ActiveAudioType.recorded) {
+      await _audioPlayer.stop();
+      _currentAudioType = ActiveAudioType.none;
+      notifyListeners();
+    }
   }
 
   Future<void> seekEnglish(Duration position) async {
@@ -484,7 +598,9 @@ class TtsService extends ChangeNotifier {
 
   Future<void> setEnglishSpeed(double speed) async {
     _englishSpeed = speed;
-    await _audioPlayer.setSpeed(speed);
+    if (_currentAudioType == ActiveAudioType.english || _currentAudioType == ActiveAudioType.recorded) {
+      await _audioPlayer.setSpeed(speed);
+    }
     notifyListeners();
   }
 
@@ -493,19 +609,18 @@ class TtsService extends ChangeNotifier {
   // ════════════════════════════════════════════════════════════════════
 
   Future<void> pauseAll() async {
-    _chineseProgressTimer?.cancel();
+    _stopHeadphoneMonitor();
     await _flutterTts.pause();
     await _audioPlayer.pause();
-    _isChinesePlaying = false;
     notifyListeners();
   }
 
   Future<void> stopAll() async {
-    _chineseProgressTimer?.cancel();
+    _stopHeadphoneMonitor();
     await _flutterTts.stop();
-    _chineseProgress = 0.0;
     await _audioPlayer.stop();
-    _isChinesePlaying = false;
+    _currentAudioType = ActiveAudioType.none;
+    _isChineseSynthesizing = false;
     _isEnglishSynthesizing = false;
     notifyListeners();
     // 释放音频会话独占，让麦克风可以被后续录音重新激活

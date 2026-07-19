@@ -33,6 +33,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
   bool _isDragging = false;
   double _dragValue = 0.0;
 
+  bool _isChineseDragging = false;
+  double _chineseDragValue = 0.0;
+
   String _formatDuration(Duration? duration) {
     if (duration == null || duration == Duration.zero) return '00:00';
     final minutes = duration.inMinutes.remainder(60).toString().padLeft(2, '0');
@@ -101,6 +104,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
 
   /// 构建中文控制卡片
   Widget _buildChinesePlayerCard(BuildContext context, TtsService tts, bool isDark) {
+    final isSynthesizing = tts.isChineseSynthesizing;
     final isPlaying = tts.isChinesePlaying;
     final currentSpeed = tts.chineseSpeed;
 
@@ -112,11 +116,11 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             const Icon(Icons.flash_on_rounded, size: 16, color: Colors.amber),
             const SizedBox(width: 6),
             const Text(
-              '🇨🇳 中文大意 (0秒秒开 · 本地原生)',
+              '🇨🇳 中文大意 (0秒秒开 · 本地原生文件)',
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             ),
             const Spacer(),
-            // 速度选择器
+            // 速度选择器（默认 1.25x）
             PopupMenuButton<double>(
               initialValue: currentSpeed,
               tooltip: '播放速度',
@@ -138,36 +142,141 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             ),
           ],
         ),
-        const SizedBox(height: 6),
+
+        // 进度条（包含精准 Seek 功能）
+        StreamBuilder<Duration?>(
+          stream: tts.chineseDurationStream,
+          builder: (context, durationSnap) {
+            final duration = durationSnap.data ?? Duration.zero;
+            return StreamBuilder<Duration>(
+              stream: tts.chinesePositionStream,
+              builder: (context, posSnap) {
+                final position = posSnap.data ?? Duration.zero;
+                final maxMs = duration.inMilliseconds.toDouble();
+                final streamMs = position.inMilliseconds
+                    .toDouble()
+                    .clamp(0.0, maxMs > 0 ? maxMs : 1.0);
+
+                final displayMs = _isChineseDragging ? _chineseDragValue : streamMs;
+
+                return Column(
+                  children: [
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 3,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                        activeTrackColor: Colors.teal,
+                        inactiveTrackColor: isDark ? Colors.white24 : Colors.grey[300],
+                        thumbColor: Colors.teal,
+                      ),
+                      child: Slider(
+                        min: 0.0,
+                        max: maxMs > 0 ? maxMs : 1.0,
+                        value: displayMs.clamp(0.0, maxMs > 0 ? maxMs : 1.0),
+                        onChangeStart: maxMs > 0
+                            ? (val) => setState(() {
+                                  _isChineseDragging = true;
+                                  _chineseDragValue = val;
+                                })
+                            : null,
+                        onChanged: maxMs > 0
+                            ? (val) => setState(() => _chineseDragValue = val)
+                            : null,
+                        onChangeEnd: maxMs > 0
+                            ? (val) {
+                                tts.seekChinese(Duration(milliseconds: val.toInt()));
+                                setState(() => _isChineseDragging = false);
+                              }
+                            : null,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _formatDuration(
+                              _isChineseDragging ? Duration(milliseconds: _chineseDragValue.toInt()) : position,
+                            ),
+                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                          ),
+                          Text(
+                            _formatDuration(duration),
+                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        ),
+
+        const SizedBox(height: 4),
+
+        // 控制动作按钮
         Row(
+          mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text(
-              isPlaying ? '🔊 正在使用本地引擎朗读中...' : '点击播放按钮即刻出声',
-              style: TextStyle(
-                fontSize: 11,
-                color: isDark ? Colors.white54 : Colors.black54,
-              ),
-            ),
-            const Spacer(),
-            IconButton.filled(
+            IconButton(
+              icon: const Icon(Icons.replay_10_rounded),
               iconSize: 22,
-              icon: Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
-              style: IconButton.styleFrom(
-                backgroundColor: Colors.teal,
-                foregroundColor: Colors.white,
-              ),
               onPressed: () async {
-                if (isPlaying) {
-                  await tts.pauseChinese();
-                } else {
-                  try {
-                    await tts.speakChinese(widget.chineseText);
-                  } catch (e) {
-                    if (e.toString().contains('NoHeadphones')) {
-                      _showNoHeadphonesSnackBar(context);
+                final pos = await tts.chinesePositionStream.first;
+                final newPos = pos - const Duration(seconds: 10);
+                await tts.seekChinese(newPos < Duration.zero ? Duration.zero : newPos);
+              },
+            ),
+            const SizedBox(width: 8),
+
+            if (isSynthesizing)
+              const Padding(
+                padding: EdgeInsets.all(6.0),
+                child: SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.teal),
+                ),
+              )
+            else
+              IconButton.filled(
+                iconSize: 22,
+                icon: Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
+                style: IconButton.styleFrom(
+                  backgroundColor: Colors.teal,
+                  foregroundColor: Colors.white,
+                ),
+                onPressed: () async {
+                  if (isPlaying) {
+                    await tts.pauseChinese();
+                  } else {
+                    try {
+                      await tts.speakChinese(widget.chineseText);
+                    } catch (e) {
+                      if (!context.mounted) return;
+                      if (e.toString().contains('NoHeadphones')) {
+                        _showNoHeadphonesSnackBar(context);
+                      } else {
+                        ScaffoldMessenger.of(context).showSnackBar(
+                          SnackBar(content: Text('播放错误: $e')),
+                        );
+                      }
                     }
                   }
-                }
+                },
+              ),
+
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.forward_10_rounded),
+              iconSize: 22,
+              onPressed: () async {
+                final pos = await tts.chinesePositionStream.first;
+                await tts.seekChinese(pos + const Duration(seconds: 10));
               },
             ),
             const SizedBox(width: 8),
@@ -177,16 +286,6 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             ),
           ],
         ),
-        if (isPlaying || tts.chineseProgress > 0) ...[
-          const SizedBox(height: 8),
-          LinearProgressIndicator(
-            value: tts.chineseProgress,
-            backgroundColor: (isDark ? Colors.white : Colors.black).withOpacity(0.1),
-            valueColor: AlwaysStoppedAnimation<Color>(Colors.teal),
-            minHeight: 3,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ],
       ],
     );
   }
@@ -358,9 +457,10 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         );
                       }
                     } catch (e) {
+                      if (!context.mounted) return;
                       if (e.toString().contains('NoHeadphones')) {
                         _showNoHeadphonesSnackBar(context);
-                      } else if (context.mounted) {
+                      } else {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('播放错误: $e')),
                         );
