@@ -1064,7 +1064,7 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
-  Future<String> generateEssayMatrix(String topicA, String topicB, String level, {String? model}) async {
+  Future<String> generateEssayMatrix(String finalTopic, {String essayType = 'Comparison', String? model}) async {
     OpenAIService? service;
     if (model == 'llama70b') {
       service = _groqService;
@@ -1073,87 +1073,29 @@ class RecordingProvider extends ChangeNotifier {
     } else if (model == 'qwen72b') {
       service = _summaryService;
     }
-    
-    // 兜底逻辑：如果选定的服务未初始化，按照 70B -> 32B -> 72B 顺序选择可用服务
+
     service ??= _groqService ?? _aiService ?? _summaryService;
-    
+
     if (service == null) {
       throw Exception("AI service not ready. Please configure API Keys in settings.");
     }
-    
-    final prompt = """# Role: Jeff Notes 极简无痕学术写作架构师 (Natural EAL Essay Architect)
 
-# Inputs:
-Subject A: "$topicA"
-Subject B: "$topicB"
-Complexity Level: "$level"
+    final prompt = """你是一个英语水平普通的学生。请根据以下核心话题，写一篇长约 230 到 280 字的短文。
 
-# Task:
-根据输入的两个主体对象（Subject A 和 Subject B），产出两篇完全独立的、文风自然的学术对比范文（一篇纯相同点，一篇纯不同点），并提取对应的双级词组笔记。
+【核心话题】：$finalTopic
+【文章类型】：$essayType
 
-# Critical Constraints (最高死命令):
-1. **彻底摆脱死板句式 (Natural Academic Flow)**：严禁使用任何机械填空的八股文套话（如 "show a clear status", "highly matched", "the situation of $topicB also involves"）。AI 必须根据 $topicA 和 $topicB 的实际属性（注意区分单复数！如果是复数名词，谓语动词必须用复数！），自由、流畅地写出符合北美大一 EAL 课本规范的5段式对比作文（Introduction, 3 个 Body 段, Conclusion）。
-2. **绝对禁用第一人称 (Strict No First-Person)**：严格遵循教科书规范，整篇范文中**绝对不允许**出现任何第一人称代词（如 "I", "my", "me", "we", "our", "in my opinion"）。必须保持纯客观的学术视角。
-3. **结构逻辑要求 (Point-by-Point Style)**：
-   - 每篇作文必须是标准 5 段式。
-   - Introduction 必须包含一个客观的引入（Hook）和明确列出 3 个对比维度的 Thesis Statement。
-   - 每个 Body 段必须集中对比 **1 个具体的维度**。段落内部要自然过渡，使用平实的连接词（如 First, Second, For instance, However, Also），严禁在句尾写出逻辑复读的病句（避免 Run-on sentences）。
-   - Conclusion 总结 3 个核心点，干净利落地收尾。
-4. **强制 1 个真人微瑕 (Human-like Imperfection)**：为了让文章看起来 100% 像真人学生手写，整篇范文中允许且仅允许出现 1 处自然的微小瑕疵（例如漏掉一个冠词 "the"，或者把 "similar to" 误写为 "similar with"），但绝对不能出现大面积的主谓不一致或拼写灾难。
-5. **语言与专属词组笔记要求**：篇章 1 纯相同点，篇章 2 纯不同点。范文全英文。专属词组笔记部分结构保持不变，高级词组必须在范文里实际使用过并用 ==双等号== 包裹。
+【严格写作限制】：
+1. 必须完全使用"Cost, Time, Happiness"三个角度来展开论述。
+2. 语言必须"学术但通俗"，全篇使用简单的普通词汇表达出想法即可。严禁使用 I, Me, My, We, Us 等任何第一人称。
+3. 篇幅严格控制在 230–280 字之间，每个段落严格控制在 4–5 句话。
+4. 语言要求自然流畅，允许出现一到两处极其轻微的真人笔误或不够完美的日常句式（模拟普通的真人学生写作效果，绝不要刻意堆砌高难度华丽辞藻）。
+5. 必须在关键衔接处和主题句里自然使用且只使用 ==double equals== 标记核心学术短语（例如：==As a matter of fact==, ==It is widely believed that== 等）。
 
----
+【结构模版】：
+- 如果是 Comparison，请按照：Intro -> Body(Cost) -> Body(Happiness) -> Body(Time) -> Conclusion 的顺序。
+- 如果是 Argumentative，请按照：Intro -> Body(Cost) -> Body(Happiness) -> Body(Time-based Refutation) -> Conclusion 的顺序。""";
 
-# 📐 输出格式规范 (Output Format Specification):
-你必须严格按照以下 Markdown 结构回传数据，但段落内部的具体句子请根据主题自然生成，不要套用任何固定死板的句式：
-
-# 📊 TRACK 1: THE SIMILARITIES ESSAY
-### 🧱 篇章 1：纯 3 个相同点（Similarity）全套范文
-**Introduction**
-[自然生成的开头段，包含3个相同点的 Thesis Statement]
-
-**Body 1 (相同点 1：[相同点1中文描述])**
-[自然生成的Body 1，对比第一个相同点，注意主谓一致]
-
-**Body 2 (相同点 2：[相同点2中文描述])**
-[自然生成的Body 2，对比第二个相同点]
-
-**Body 3 (相同点 3：[相同点3中文描述])**
-[自然生成的Body 3，对比第三个相同点]
-
-**Conclusion**
-[自然生成的总结段]
-
----
-
-# 📊 TRACK 2: THE DIFFERENCES ESSAY
-### 🧱 篇章 2：纯 3 个不同点（Differences）全套范文
-**Introduction**
-[自然生成的开头段，包含3个不同点的 Thesis Statement]
-
-**Body 1 (不同点 1：[不同点1中文描述])**
-[自然生成的Body 1，对比第一个不同点，注意主谓一致]
-
-**Body 2 (不同点 2：[不同点2中文描述])**
-[自然生成的Body 2，对比第二个不同点]
-
-**Body 3 (不同点 3：[不同点3中文描述])**
-[自然生成的Body 3，对比第三个不同点]
-
-**Conclusion**
-[自然生成的总结段]
-
----
-
-# 📂 EXCLUSIVE LEXICAL NOTES
-### 📂 专属词组笔记
-💡 **朴素版词组（想得起、用着顺）**
-- [中文意思]：[英文朴素词组]
-
-💎 **高级版词组（拿 A+、惊艳教授）**
-- [中文意思]：==[高级学术替代词组]==
-""";
- 
     return await service.summarize(prompt, strategy: PromptStrategy.essay, mode: _currentMode, unit: _currentUnit);
   }
 

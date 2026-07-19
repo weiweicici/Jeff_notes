@@ -76,10 +76,14 @@ AcademicHubScreen (Home)
 - **Transcript List**: Each item shows English text + Chinese translation. `RepaintBoundary` + `ValueKey(note.id)` for efficient rendering. `ClampingScrollPhysics` prevents scroll bounce during async translation updates.
 - **FAB (RecordingPulseFAB)**: Red pulse animation during recording, orange static glow when paused, mic icon when idle.
 
-### 5.3 EssayConfigScreen (对比文章模板写作)
-- Accepts Topic A, Topic B, difficulty level, and AI model selection (Llama-3.3-70B / Qwen-32B / Qwen-72B).
-- Generates two complete essays (pure similarities, pure differences) using steel-template prompts with EAL-friendly chunk extraction.
-- Auto-retries once on failure (5s delay). Auto-saves to MD, supports clipboard copy and PDF export.
+### 5.3 EssayConfigScreen (学术写作助手)
+- **Dual-Input Topic Mechanism**: A custom `TextField` (hint: "例如: wearing masks") sits above a category-based preset dropdown. If the custom field is non-empty, it overrides the preset selection entirely — enabling both quick inspiration and structured topic selection.
+- **32 Preset Topics in 6 Categories**: Transportation & Safety, Technology & Digital, Daily Life & Consumer, School & Study, Work & Career, Media & Entertainment.
+- **Essay Type Toggle**: Comparison (Intro → Cost → Happiness → Time → Conclusion) or Argumentative (Intro → Cost → Happiness → Time-based Refutation → Conclusion).
+- **Cost · Time · Happiness Framework**: Every essay is structured around these three concrete angles, replacing vague "advantages/disadvantages" with measurable dimensions.
+- **AI Prompt** (in `RecordingProvider.generateEssayMatrix`): Student-level English, 230–280 words, strict no first-person, natural minor imperfections allowed, `==double equals==` for key academic phrases.
+- **Models**: Llama-3.3-70B (Groq, ~10s), Qwen-32B (~30s), Qwen-72B (~60s). Auto-retry once on failure (5s delay).
+- **Export**: Auto-saves to Markdown (`Jeff_Essay_{topic}_{timestamp}.md`), clipboard copy, and PDF export via `PdfService`.
 
 ## 6. Event-Driven UI & Auto-Popup
 The UI does not poll for summary completion. Instead, it uses a **Reactive Notification Stream**:

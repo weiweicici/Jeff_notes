@@ -147,11 +147,12 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
         StreamBuilder<Duration?>(
           stream: tts.chineseDurationStream,
           builder: (context, durationSnap) {
-            final duration = durationSnap.data ?? Duration.zero;
+            final isActive = tts.currentAudioType == ActiveAudioType.chinese;
+            final duration = isActive ? (durationSnap.data ?? Duration.zero) : Duration.zero;
             return StreamBuilder<Duration>(
               stream: tts.chinesePositionStream,
               builder: (context, posSnap) {
-                final position = posSnap.data ?? Duration.zero;
+                final position = isActive ? (posSnap.data ?? Duration.zero) : Duration.zero;
                 final maxMs = duration.inMilliseconds.toDouble();
                 final streamMs = position.inMilliseconds
                     .toDouble()
@@ -340,11 +341,12 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
         StreamBuilder<Duration?>(
           stream: tts.englishDurationStream,
           builder: (context, durationSnap) {
-            final duration = durationSnap.data ?? Duration.zero;
+            final isActive = tts.currentAudioType == ActiveAudioType.english || tts.currentAudioType == ActiveAudioType.recorded;
+            final duration = isActive ? (durationSnap.data ?? Duration.zero) : Duration.zero;
             return StreamBuilder<Duration>(
               stream: tts.englishPositionStream,
               builder: (context, posSnap) {
-                final position = posSnap.data ?? Duration.zero;
+                final position = isActive ? (posSnap.data ?? Duration.zero) : Duration.zero;
                 final maxMs = duration.inMilliseconds.toDouble();
                 final streamMs = position.inMilliseconds
                     .toDouble()

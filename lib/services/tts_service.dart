@@ -25,6 +25,8 @@ class TtsService extends ChangeNotifier {
   bool _isInitialized = false;
   ActiveAudioType _currentAudioType = ActiveAudioType.none;
 
+  ActiveAudioType get currentAudioType => _currentAudioType;
+
   // ── 中文本地原生 TTS 状态 ──────────────────────────
   bool _isChineseSynthesizing = false;
   double _chineseSpeed = 1.25;
