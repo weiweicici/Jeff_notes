@@ -14,6 +14,8 @@ import 'openai_service.dart';
 import 'ai_orchestrator_service.dart';
 import 'api_scheduler.dart';
 import 'models.dart';  // 包含 AppMode 枚举
+import 'prompt_provider.dart';  // 单元词汇高亮列表
+import 'services/tts_service.dart';  // 录音前释放音频会话
 
 class InsightNote {
   final String id;
@@ -187,6 +189,7 @@ class RecordingProvider extends ChangeNotifier {
   String? _identifiedLectureContext;
   bool _hasRecoveredCache = false;
   String _openRouterKey = '';
+  final List<String> _sessionAudioPaths = []; // 保存当次 session 所有录音切片路径
 
   List<InsightNote> get notes => _allNotes.reversed.toList();
   bool get isRecording => _isRecording;
@@ -229,6 +232,38 @@ class RecordingProvider extends ChangeNotifier {
   String get groqKey => _apiKeys[AIProvider.groq] ?? "";
   String get siliconFlowKey => _apiKeys[AIProvider.siliconFlow] ?? "";
   String get openRouterKey => _openRouterKey;
+
+  /// Returns clean Chinese + English full transcript for TTS playback.
+  /// Only includes actual spoken content — no markdown headers, bullets or AI summaries.
+  String get bilingualTtsText {
+    final transcripts = _allNotes.where((n) => !n.isSummary).toList();
+    if (transcripts.isEmpty) return "";
+
+    final chineseParts = <String>[];
+    final englishParts = <String>[];
+
+    for (final note in transcripts) {
+      final en = note.transcript.trim();
+      if (en.isNotEmpty && en != '...' && !en.startsWith('[')) {
+        englishParts.add(en);
+      }
+      final zh = note.translatedContent?.trim();
+      if (zh != null && zh.isNotEmpty && !zh.startsWith('[')) {
+        chineseParts.add(zh);
+      }
+    }
+
+    final buffer = StringBuffer();
+    if (chineseParts.isNotEmpty) {
+      buffer.write("中文全文：");
+      buffer.write(chineseParts.join("。"));
+    }
+    if (englishParts.isNotEmpty) {
+      if (buffer.isNotEmpty) buffer.write("  英文全文：");
+      buffer.write(englishParts.join(" "));
+    }
+    return buffer.toString();
+  }
 
   Future<void> updateSettings({
     String? groqKey,
@@ -457,15 +492,37 @@ class RecordingProvider extends ChangeNotifier {
   Future<void> _initializeAudioSession() async {
     try {
       final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration(
+      await session.configure(AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker |
+                                       AVAudioSessionCategoryOptions.allowBluetooth |
+                                       AVAudioSessionCategoryOptions.allowBluetoothA2dp,
         avAudioSessionMode: AVAudioSessionMode.spokenAudio,
       ));
       // setActive may fail if another app holds the session; safe to ignore at init
       await session.setActive(true);
     } catch (e) {
       debugPrint('[AudioSession] init setActive failed (will retry on record): $e');
+    }
+  }
+
+  /// 录音结束后重置会话：先 deactivate 释放麦克风独占，再 reactivate 准备下次录音。
+  Future<void> _resetAudioSessionAfterRecording() async {
+    try {
+      final session = await AudioSession.instance;
+      await session.setActive(false);
+      await Future.delayed(const Duration(milliseconds: 150));
+      await session.configure(AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker |
+                                       AVAudioSessionCategoryOptions.allowBluetooth |
+                                       AVAudioSessionCategoryOptions.allowBluetoothA2dp,
+        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+      ));
+      await session.setActive(true);
+      debugPrint('[AudioSession] Session reset after recording — ready for next session');
+    } catch (e) {
+      debugPrint('[AudioSession] resetAfterRecording error: $e');
     }
   }
 
@@ -478,6 +535,8 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> startRecording() async {
     if (await _audioRecorder.hasPermission()) {
+      // 修复 Bug 1: 先停止任何 TTS 播放并重置音频会话，防止麦克风被锁死
+      await TtsService().releaseForRecording();
       _updateService();
       if (_orchestrator == null) {
         _statusMessage = "Please configure your API Keys in Settings first";
@@ -487,6 +546,7 @@ class RecordingProvider extends ChangeNotifier {
       _isRecording = true;
       _isPaused = false;   // 新录音时重置暂停状态
       _lastAudioTail = Uint8List(0);
+      _sessionAudioPaths.clear(); // 清空上次 session 的音频切片路径
       _allNotes.clear();
       _lastTranscript = null;
       _lastSummaryTotalCount = 0;
@@ -580,6 +640,9 @@ class RecordingProvider extends ChangeNotifier {
         await _exportToMarkdown();
       }
     }
+
+    // 修复 Bug 2: 录音结束后重置音频会话，让下次录音可立即开始
+    await _resetAudioSessionAfterRecording();
   }
 
   /// 暂停录音：停止当前切片计时器和录音器，保留所有已有笔记，不做任何导出。
@@ -661,6 +724,7 @@ class RecordingProvider extends ChangeNotifier {
       final stitchResult = await compute(_backgroundStitchTask, StitchData(_lastAudioTail, path, kTailSize));
       final processedPath = stitchResult['path'] as String;
       _lastAudioTail = Uint8List.fromList(stitchResult['newTail'] as List<int>);
+      _sessionAudioPaths.add(processedPath); // 收集当次 session 切片路径
 
       final currentNote = InsightNote(summary: '', transcript: '...', timestamp: DateTime.now(), isProcessing: true);
       final noteId = currentNote.id;
@@ -858,12 +922,13 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   String _highlightText(String text) {
-    if (text.contains('==')) return text;
     String result = text;
+    // Numbers / statistics
     result = result.replaceAllMapped(
       RegExp(r'(\d+(?:\.\d+)?\s*(?:%|percent|million|billion|thousand|trillion))', caseSensitive: false),
       (m) => '==${m[1]}==',
     );
+    // Academic signal words
     const signalWords = [
       'however', 'therefore', 'because of', 'as a result', 'consequently',
       'in contrast', 'on the other hand', 'for example', 'for instance',
@@ -872,9 +937,26 @@ class RecordingProvider extends ChangeNotifier {
     ];
     for (final word in signalWords) {
       result = result.replaceAllMapped(
-        RegExp('\\b$word\\b', caseSensitive: false),
+        RegExp('(?<![=])\\b${RegExp.escape(word)}\\b(?![=])', caseSensitive: false),
         (m) => '==${m[0]}==',
       );
+    }
+    return result;
+  }
+
+  /// Wraps Pathways 3 Target Vocabulary words with ==word== in the English script.
+  /// Skips words that are already highlighted. Only runs when a unit is selected.
+  String _applyVocabularyHighlight(String text, PathwaysUnit unit) {
+    if (unit == PathwaysUnit.none) return text;
+    final vocab = PromptProvider.getUnitVocabularyList(unit);
+    String result = text;
+    for (final word in vocab) {
+      // Match whole word only, case-insensitive, skip if already inside ==...==
+      final pattern = RegExp(
+        '(?<!==)(?<![A-Za-z])${RegExp.escape(word)}(?![A-Za-z])(?!==)',
+        caseSensitive: false,
+      );
+      result = result.replaceAllMapped(pattern, (m) => '==${m[0]}==');
     }
     return result;
   }
@@ -902,43 +984,14 @@ class RecordingProvider extends ChangeNotifier {
       }
       sb.writeln();
 
-      if (_finalReviewContent != null && _finalReviewContent!.isNotEmpty) {
-        sb.writeln("---");
-        sb.writeln();
-        if (isDiscussion) {
-          sb.writeln("## Part 1 · AI Discussion Recap");
-        } else {
-          sb.writeln("## Part 1 · AI Academic Review");
-        }
-        sb.writeln();
-        sb.writeln(_finalReviewContent);
-        sb.writeln();
-      }
-
-      final summaries = _allNotes.where((n) => n.isSummary).toList();
-      if (summaries.isNotEmpty) {
-        sb.writeln("---");
-        sb.writeln();
-        if (isDiscussion) {
-          sb.writeln("## Part 2 · Discussion Block Summaries");
-        } else {
-          sb.writeln("## Part 2 · 60s Block Summaries");
-        }
-        sb.writeln();
-        for (int i = 0; i < summaries.length; i++) {
-          sb.writeln("### Block ${i + 1}");
-          sb.writeln(summaries[i].summary);
-          sb.writeln();
-        }
-      }
-
+      // ── Part 1: Full Script（放在最前，方便课上快速查阅原文）────────
       final transcripts = _allNotes.where((n) => !n.isSummary).toList();
       if (transcripts.isNotEmpty) {
         sb.writeln("---");
         sb.writeln();
-        sb.writeln("## Part 3 · Full Script");
+        sb.writeln("## Part 1 · Full Script");
         sb.writeln();
-        
+
         final List<String> chineseSegments = [];
         final List<String> englishSegments = [];
 
@@ -966,18 +1019,82 @@ class RecordingProvider extends ChangeNotifier {
 
         sb.writeln("### 英文全文 (English Transcript)");
         sb.writeln();
-        sb.writeln(_highlightText(englishSegments.join(" ")));
+        sb.writeln(_highlightText(_applyVocabularyHighlight(englishSegments.join(" "), _currentUnit)));
         sb.writeln();
       }
 
+      // ── Part 2: AI Review（原 Part 1）────────────────────────────
+      if (_finalReviewContent != null && _finalReviewContent!.isNotEmpty) {
+        sb.writeln("---");
+        sb.writeln();
+        if (isDiscussion) {
+          sb.writeln("## Part 2 · AI Discussion Recap");
+        } else {
+          sb.writeln("## Part 2 · AI Academic Review");
+        }
+        sb.writeln();
+        sb.writeln(_finalReviewContent);
+        sb.writeln();
+      }
+
+      // ── Part 3: Block Summaries（原 Part 2）──────────────────────
+      final summaries = _allNotes.where((n) => n.isSummary).toList();
+      if (summaries.isNotEmpty) {
+        sb.writeln("---");
+        sb.writeln();
+        if (isDiscussion) {
+          sb.writeln("## Part 3 · Discussion Block Summaries");
+        } else {
+          sb.writeln("## Part 3 · 60s Block Summaries");
+        }
+        sb.writeln();
+        for (int i = 0; i < summaries.length; i++) {
+          sb.writeln("### Block ${i + 1}");
+          sb.writeln(summaries[i].summary);
+          sb.writeln();
+        }
+      }
+
+
       await file.writeAsString(sb.toString());
       debugPrint("\x1B[32m[Export OK] ${file.absolute.path}\x1B[0m");
+
+      // ── 缝合当次 session 所有的真实录音切片，导出为同名的 .wav 录音文件 ──
+      if (_sessionAudioPaths.isNotEmpty) {
+        final wavFilename = filename.replaceAll('.md', '.wav');
+        final wavPath = '${directory.path}/$wavFilename';
+        await _stitchSessionAudioFiles(_sessionAudioPaths, wavPath);
+      }
+
       final module = isDiscussion ? 'discussion' : 'listening';
       _uploadToSupabase(file, module);
       _lastExportedPath = file.absolute.path;
       notifyListeners();
     } catch (e) {
       debugPrint("[Export Error] $e");
+    }
+  }
+
+  Future<void> _stitchSessionAudioFiles(List<String> paths, String outputPath) async {
+    try {
+      final List<int> allPcm = [];
+      for (final p in paths) {
+        final f = File(p);
+        if (!await f.exists()) continue;
+        final bytes = await f.readAsBytes();
+        final offset = _findDataChunkOffset(bytes);
+        if (bytes.length > offset) {
+          allPcm.addAll(bytes.sublist(offset));
+        }
+      }
+      if (allPcm.isNotEmpty) {
+        final header = _generateWavHeaderStatic(allPcm.length);
+        final stitchedBytes = Uint8List.fromList([...header, ...allPcm]);
+        await File(outputPath).writeAsBytes(stitchedBytes);
+        debugPrint('[SessionAudio] Successfully stitched ${paths.length} audio slices to $outputPath');
+      }
+    } catch (e) {
+      debugPrint('[SessionAudio] Stitch error: $e');
     }
   }
 
@@ -1016,7 +1133,7 @@ class RecordingProvider extends ChangeNotifier {
       throw Exception("AI service not ready. Please configure API Keys in settings.");
     }
     
-    final prompt = """# Role: Jeff Notes 钢铁模板学术写作架构师 (Strict EAL Essay Architect)
+    final prompt = """# Role: Jeff Notes 极简无痕学术写作架构师 (Natural EAL Essay Architect)
 
 # Inputs:
 Subject A: "$topicA"
@@ -1024,76 +1141,69 @@ Subject B: "$topicB"
 Complexity Level: "$level"
 
 # Task:
-根据输入的两个主体对象（Subject A 和 Subject B），严格按照下方给出的【钢铁模板】结构，同时产出两篇完全独立的学术对比范文（一篇纯相同点，一篇纯不同点），并提取对应的双级词组笔记。
+根据输入的两个主体对象（Subject A 和 Subject B），产出两篇完全独立的、文风自然的学术对比范文（一篇纯相同点，一篇纯不同点），并提取对应的双级词组笔记。
 
 # Critical Constraints (最高死命令):
-1. **结构绝对锁死**：必须一字不差地使用【钢铁模板】中的 Introduction, Body 1, Body 2, Body 3, 和 Conclusion 的通用骨架句式。你的任务是根据具体的主体（如 "$topicA" 与 "$topicB"）去替换括号中的主体名，并构思 3 个核心对比维度来填满细节，严禁修改任何模板万能连接词！
-2. **语域限制 (EAL-Friendly)**：生成的细节扩充部分（Meat）严禁使用极度偏门、晦涩的大词。必须分为“朴素版词组（想得起、用着顺）”和“高级版词组（拿 A+、惊艳教授）”两层，且高级词组必须自然融入到范文的细节描写中。
-3. **彻底单向单篇**：篇章 1 必须 100% 纯写相同点；篇章 2 必须 100% 纯写不同点。绝不允许在同一篇章内混写！
-4. **语言要求 (中英对照与纯英范文)**：
-   - 范文（Introduction, Body 1/2/3, Conclusion）的段落内容必须**完全为英文**。
-   - 只有在模板中明确标注有“中文”的括号里（例如：[相同点1中文]、[不同点1中文]），才使用中文进行归纳。
-   - 专属词组笔记中，中文意思部分使用中文，词组使用英文。
-   - 严禁将范文的英文模板翻译成中文！范文必须是可直接提交的高质量英文学术写作。
+1. **彻底摆脱死板句式 (Natural Academic Flow)**：严禁使用任何机械填空的八股文套话（如 "show a clear status", "highly matched", "the situation of $topicB also involves"）。AI 必须根据 $topicA 和 $topicB 的实际属性（注意区分单复数！如果是复数名词，谓语动词必须用复数！），自由、流畅地写出符合北美大一 EAL 课本规范的5段式对比作文（Introduction, 3 个 Body 段, Conclusion）。
+2. **绝对禁用第一人称 (Strict No First-Person)**：严格遵循教科书规范，整篇范文中**绝对不允许**出现任何第一人称代词（如 "I", "my", "me", "we", "our", "in my opinion"）。必须保持纯客观的学术视角。
+3. **结构逻辑要求 (Point-by-Point Style)**：
+   - 每篇作文必须是标准 5 段式。
+   - Introduction 必须包含一个客观的引入（Hook）和明确列出 3 个对比维度的 Thesis Statement。
+   - 每个 Body 段必须集中对比 **1 个具体的维度**。段落内部要自然过渡，使用平实的连接词（如 First, Second, For instance, However, Also），严禁在句尾写出逻辑复读的病句（避免 Run-on sentences）。
+   - Conclusion 总结 3 个核心点，干净利落地收尾。
+4. **强制 1 个真人微瑕 (Human-like Imperfection)**：为了让文章看起来 100% 像真人学生手写，整篇范文中允许且仅允许出现 1 处自然的微小瑕疵（例如漏掉一个冠词 "the"，或者把 "similar to" 误写为 "similar with"），但绝对不能出现大面积的主谓不一致或拼写灾难。
+5. **语言与专属词组笔记要求**：篇章 1 纯相同点，篇章 2 纯不同点。范文全英文。专属词组笔记部分结构保持不变，高级词组必须在范文里实际使用过并用 ==双等号== 包裹。
 
 ---
 
-# 📐 核心参考与输出钢骨模板 (The Bible Templates):
-
-你必须严格按照以下格式回传数据：
+# 📐 输出格式规范 (Output Format Specification):
+你必须严格按照以下 Markdown 结构回传数据，但段落内部的具体句子请根据主题自然生成，不要套用任何固定死板的句式：
 
 # 📊 TRACK 1: THE SIMILARITIES ESSAY
 ### 🧱 篇章 1：纯 3 个相同点（Similarity）全套范文
 **Introduction**
-In the modern world, $topicA and $topicB are two very important concepts that many people talk about. Although they look quite different at first, they actually share a lot of common ground. In my opinion, they have three major similarities, including [相同点1核心词], [相同点2核心词], and [相同点3核心词].
+[自然生成的开头段，包含3个相同点的 Thesis Statement]
 
-**Body 1 (相同点 1：[相同点1中文])**
-First, $topicA and $topicB are very similar in terms of [相同点1核心词]. Specifically, $topicA focuses heavily on [针对Subject A的细节展开]. Similarly, $topicB also cares a lot about [针对Subject B的细节展开]. Therefore, this first similarity shows that they are closer than we think in this area.
+**Body 1 (相同点 1：[相同点1中文描述])**
+[自然生成的Body 1，对比第一个相同点，注意主谓一致]
 
-**Body 2 (相同点 2：[相同点2中文])**
-Second, there is a strong common ground between $topicA and $topicB when it comes to [相同点2核心词]. This means they face the exact same situation. For instance, $topicA is deeply driven by [针对Subject A的细节展开], and $topicB is also influenced by [针对Subject B的细节展开]. As a result, we can see that their developments in this field are highly matched.
+**Body 2 (相同点 2：[相同点2中文描述])**
+[自然生成的Body 2，对比第二个相同点]
 
-**Body 3 (相同点 3：[相同点3中文])**
-Third, $topicA and $topicB are also identical because of [相同点3核心词]. On one hand, the growth of $topicA relies on [针对Subject A of the details]. On the other hand, the success of $topicB also comes from [针对Subject B of the details]. Consequently, this final point clearly demonstrates that these two subjects share the same path.
+**Body 3 (相同点 3：[相同点3中文描述])**
+[自然生成的Body 3，对比第三个相同点]
 
 **Conclusion**
-In conclusion, although $topicA and $topicB have their own characteristics, their similarities are very obvious. As mentioned above, they both focus on [相同点1核心词], share a common ground in [相同点2核心词], and are driven by [相同点3核心词]. Therefore, it is clear that these two subjects share the same path in many ways.
+[自然生成的总结段]
 
 ---
 
 # 📊 TRACK 2: THE DIFFERENCES ESSAY
 ### 🧱 篇章 2：纯 3 个不同点（Differences）全套范文
 **Introduction**
-In the modern world, $topicA and $topicB are two very important concepts that many people talk about. Although they share some common goals at first, they actually have many huge differences. In my opinion, they have three major differences, including [不同点1核心词], [不同点2核心词], and [不同点3核心词].
+[自然生成的开头段，包含3个不同点的 Thesis Statement]
 
-**Body 1 (不同点 1：[不同点1中文])**
-First, $topicA and $topicB have a major difference in terms of [不同点1核心词]. Specifically, $topicA focuses heavily on [针对Subject A的差异展开]. In contrast, $topicB cares more about [针对Subject B的差异展开]. Therefore, this first difference shows that they are very distinct in this area.
+**Body 1 (不同点 1：[不同点1中文描述])**
+[自然生成的Body 1，对比第一个不同点，注意主谓一致]
 
-**Body 2 (不同点 2：[不同点2中文])**
-Second, there is a huge gap between $topicA and $topicB when it comes to [不同点2核心词]. This means they face entirely different situations. For instance, $topicA is known for [针对Subject A的差异展开], while $topicB is driven by [针对Subject B的差异展开]. As a result, we can see that their developments in this field are not the same.
+**Body 2 (不同点 2：[不同点2中文描述])**
+[自然生成的Body 2，对比第二个不同点]
 
-**Body 3 (不同点 3：[不同点3中文])**
-Third, $topicA and $topicB are very different because of [不同点3核心词]. On one hand, the growth of $topicA relies on [针对Subject A的差异展开]. On the other hand, the success of $topicB comes from [针对Subject B的差异展开]. Consequently, this final point clearly demonstrates that these two subjects have different paths.
+**Body 3 (不同点 3：[不同点3中文描述])**
+[自然生成的Body 3，对比第三个不同点]
 
 **Conclusion**
-In conclusion, although $topicA and $topicB have some connections, their differences are very obvious. As mentioned above, they have different focus on [不同点1核心词], have a huge gap in [不同点2核心词], and are driven by different choices in [不同点3核心词]. Therefore, it is clear that these two subjects have different paths in many ways.
+[自然生成的总结段]
 
 ---
 
 # 📂 EXCLUSIVE LEXICAL NOTES
-### 📂 专属词组笔记【生成的场景标签】
-提取你在上述两篇文章的 Body 段细节描述中所使用的核心词组。
-
+### 📂 专属词组笔记
 💡 **朴素版词组（想得起、用着顺）**
-- 中文意思 1：[英文朴素词组 1]
-- 中文意思 2：[英文朴素词组 2]
-- 中文意思 3：[英文朴素词组 3]
+- [中文意思]：[英文朴素词组]
 
 💎 **高级版词组（拿 A+、惊艳教授）**
-(高级学术替代词组必须在范文里实际使用过，并且必须使用 ==双等号== 将其包裹起来，例如 ==adhere to==，以便进行前端高亮显示)
-- 中文意思 1：[对应的高级学术替代词组 1]
-- 中文意思 2：[对应的高级学术替代词组 2]
-- 中文意思 3：[对应的高级学术替代词组 3]
+- [中文意思]：==[高级学术替代词组]==
 """;
  
     return await service.summarize(prompt, strategy: PromptStrategy.essay, mode: _currentMode, unit: _currentUnit);

@@ -8,8 +8,10 @@ import 'history_screen.dart';
 import '../widgets/academic_markdown.dart';
 import '../widgets/fade_in_slide_up.dart';
 import '../widgets/recording_pulse_fab.dart';
+import '../widgets/tts_player_bar.dart';
 import '../models.dart'; // 包含 AIProvider 和 AppMode 枚举
 import '../recording_provider.dart'; // 放在其他导入之后，避免冲突
+import '../services/tts_service.dart';
 
 class NotesScreen extends StatefulWidget {
   const NotesScreen({super.key});
@@ -63,6 +65,7 @@ class _NotesScreenState extends State<NotesScreen> {
 
   @override
   void dispose() {
+    TtsService().stop();
     _sessionReadySub?.cancel();
     _scrollController.dispose();
     super.dispose();
@@ -139,10 +142,21 @@ class _NotesScreenState extends State<NotesScreen> {
                             color: provider.currentSessionMode == AppMode.lecture ? Colors.blueAccent : Colors.deepPurpleAccent
                           )
                         ),
-                        IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                        Row(
+                          children: [
+                            IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                          ],
+                        ),
                       ],
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 8),
+                    TtsPlayerBar(
+                      text: provider.bilingualTtsText.isNotEmpty
+                          ? provider.bilingualTtsText
+                          : content,
+                      siliconFlowKey: provider.siliconFlowKey,
+                    ),
+                    const SizedBox(height: 12),
                     MarkdownBody(
                       data: content,
                       softLineBreak: true,
@@ -164,7 +178,9 @@ class _NotesScreenState extends State<NotesScreen> {
           ),
         ),
       ),
-    );
+    ).whenComplete(() {
+      TtsService().stop();
+    });
   }
 
   @override

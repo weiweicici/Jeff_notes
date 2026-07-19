@@ -4,6 +4,7 @@ import '../recording_provider.dart';
 import 'notes_screen.dart';
 import 'essay_config_screen.dart';
 import 'reading_screen.dart';
+import 'grammar_screen.dart';
 import 'history_screen.dart';
 
 class AcademicHubScreen extends StatelessWidget {
@@ -313,7 +314,25 @@ class AcademicHubScreen extends StatelessWidget {
                         ),
                       ],
                     ),
-                    const SizedBox(height: 24), // 保证与下方 Word Chunk Memory 的视觉呼吸感
+                    const SizedBox(height: 24),
+                    _buildHubCard(
+                      context: context,
+                      title: "🔤 语法精讲",
+                      subtitle: "Focus on Grammar 4 × AI 练习",
+                      icon: Icons.text_fields_rounded,
+                      isActive: true,
+                      tagText: "NEW",
+                      gradientColors: isDark
+                          ? [const Color(0xFF6C3483), const Color(0xFF8E44AD)]
+                          : [const Color(0xFFF4ECF7), const Color(0xFFE8DAEF)],
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const GrammarScreen()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 24),
 
                     // Card 3: Grammar
                     _buildHubCard(

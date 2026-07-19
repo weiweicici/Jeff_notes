@@ -281,16 +281,17 @@ class PdfService {
       boldFont = pw.Font.ttf(boldFontData);
       useNoto = true;
       debugPrint('[PDF] NotoSansSC loaded from assets.');
-    } catch (_) {
+    } catch (e) {
+      debugPrint('[PDF] Asset font load failed: $e — trying Google Fonts.');
       try {
         baseFont = await PdfGoogleFonts.notoSansSCRegular();
         boldFont = await PdfGoogleFonts.notoSansSCBold();
         useNoto = true;
         debugPrint('[PDF] NotoSansSC loaded from Google Fonts.');
-      } catch (_) {
+      } catch (e2) {
+        debugPrint('[PDF] Google Fonts load failed: $e2 — falling back to Helvetica.');
         baseFont = pw.Font.helvetica();
         boldFont = pw.Font.helveticaBold();
-        debugPrint('[PDF] Fallback: Helvetica.');
       }
     }
 
@@ -312,15 +313,20 @@ class PdfService {
     }
 
     // ── 步骤 3：兜底 — Helvetica + ASCII-only ────────────
-    final helvetica = pw.Font.helvetica();
-    final helveticaBold = pw.Font.helveticaBold();
-    final bytes = await _buildPdfBytes(content, helvetica, helveticaBold,
-        asciiOnly: true);
-    await Printing.sharePdf(
-      bytes: bytes,
-      filename: pdfName,
-      bounds: shareBounds,
-    );
-    debugPrint('[PDF] Export succeeded in ASCII-only fallback mode (sharePdf).');
+    try {
+      final helvetica = pw.Font.helvetica();
+      final helveticaBold = pw.Font.helveticaBold();
+      final bytes = await _buildPdfBytes(content, helvetica, helveticaBold,
+          asciiOnly: true);
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: pdfName,
+        bounds: shareBounds,
+      );
+      debugPrint('[PDF] Export succeeded in ASCII-only fallback mode (sharePdf).');
+    } catch (e) {
+      debugPrint('[PDF] ASCII-only fallback also failed: $e');
+      rethrow; // 向上传播，NoteDetailScreen 的 catch 块会显示 SnackBar
+    }
   }
 }

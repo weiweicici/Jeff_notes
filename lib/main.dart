@@ -1,13 +1,30 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+import 'package:audio_service/audio_service.dart';
 import 'recording_provider.dart';
 import 'screens/academic_hub_screen.dart';
 import 'services/supabase_config.dart';
 import 'services/file_sync_agent.dart';
+import 'services/grammar_repository.dart';
+import 'services/audio_handler.dart';
+import 'data/grammar_content.dart';
+
+late MyAudioHandler globalAudioHandler;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SupabaseConfig.init();
+  GrammarRepository.setHardcodedProvider(() => GrammarContent.parts);
+
+  globalAudioHandler = await AudioService.init(
+    builder: () => MyAudioHandler(),
+    config: const AudioServiceConfig(
+      androidNotificationChannelId: 'com.zhenfeng.jeffnotes.channel.audio',
+      androidNotificationChannelName: 'Jeff Notes Playback',
+      androidNotificationOngoing: true,
+    ),
+  );
+
   runApp(
     ChangeNotifierProvider(
       create: (_) => RecordingProvider(),

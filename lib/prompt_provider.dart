@@ -50,9 +50,9 @@ class PromptProvider {
         comparisonFrame = '成功的"个人特质(Personal traits)"与"外部机遇(External opportunities)"对比';
       case PathwaysUnit.unit6:
         topicName = 'Unit 6: Design with Purpose';
-        focusInstruction = '设计思维、工程创新与以人为本的问题解决方式';
-        signalWords = 'Problem/Solution 类信号词（如 designed to, in order to, solves, addresses the issue of）引导的设计目的与功能';
-        comparisonFrame = '设计的"功能性(Functionality)"与"美学(Aesthetics)"对比';
+        focusInstruction = '仿生设计(Biomimicry)的定义、设计流程(Design Process Stages)及具体学术案例';
+        signalWords = 'Process/Stage 类信号词（如 first, after that, once, finally, typically）以及 Example 类信号词（如 for example, in other cases, let me give you）引导的步骤与案例';
+        comparisonFrame = '人类面临的问题(Human problems)与自然解决方案(Natural solutions)的对比，以及设计的效果与成本权衡（如 effective rate, expensive）';
       case PathwaysUnit.unit7:
         topicName = 'Unit 7: Inspired to Protect';
         focusInstruction = '环境保护、濒危物种保护及生态可持续发展';
@@ -92,23 +92,22 @@ class PromptProvider {
 
   static String getLecturePrompt({PathwaysUnit unit = PathwaysUnit.none}) {
     final injection = _getUnitInjection(unit, isLecture: true);
-    return '''# Role: 学术讲座考点分析专家 (60s 语义滑动窗口)
-# Task: 提取核心考点，禁止输出口语复述。
+    return '''# Role: 学术讲座极简速记专家 (60s 语义滑动窗口)
+# Task: 将本段内容压缩为恰好三行速记卡片，供学生课上扫一眼。
 $injection
-# Rules:
-1. **强制换行**：每个模块输出后必须紧跟两个换行符 (\\n\\n)。
-2. **考点高亮**：使用 ==内容== 包裹。
+# 铁律 (必须严格遵守):
+1. 输出必须恰好为三行，每行以对应 Emoji 前缀开头，总字数严格不超过 60 词。
+2. 每行格式：Emoji + 中括号标签 + 核心内容（英文关键词 + 中文括号注释）。
+3. 若段落无步骤/流程内容，第二行写「🔢 [步骤] N/A」；若无案例，第三行写「🔍 [案例] N/A」。
+4. 步骤行：检测 first / after that / once / finally / then / typically 等序列词，按顺序用「→」连接。
+5. 案例行：严格提取「案例名 | 核心机制/关键词 | 数字结果」三件套，用「|」分隔。
+6. 使用 ==关键词== 高亮最重要的 1-2 个英文术语。
+7. 绝对禁止口语复述、散文总结、多余解释。
 
-# 输出格式:
-**[P] 核心命题**: (内容，本段落讨论的学术核心论点)
-
-**[K] 信号/定义**: (术语及其核心学术定义)
-
-**[D] 细节硬化**: (数据/名词，精准提取本段中出现的百分比、年份、统计数据等客观数据，单行逗号分隔)
-
-**[L] 逻辑关联**: (因果/对比，必须基于信号词引导的逻辑关联进行提炼)
-
-语言：专业学术中文。''';
+# 输出格式（三行，缺一不可）:
+📌 [定义] ==核心术语== = 简短定义（中文括号注释）
+🔢 [步骤] Step1 → Step2 → Step3（如无步骤，写 N/A）
+🔍 [案例] 案例名: 关键词/机制 | 数字结果 | 评价（如无案例，写 N/A）''';
   }
 
   static String getDiscussionPrompt({PathwaysUnit unit = PathwaysUnit.none}) {
@@ -201,26 +200,44 @@ $unitStrategyBlock
 """;
     }
 
-    return """You are an expert EAP (English for Academic Purposes) Instructor and Exam Designer for EAL students specialized in "Pathways 3: Listening, Speaking, and Critical Thinking Third Edition".
-Based on the provided English and Chinese lecture transcripts, you must generate a structured study guide targeting high-yield exam points.
+    return """You are an expert EAP (English for Academic Purposes) Exam Coach for EAL students using "Pathways 3: Listening, Speaking, and Critical Thinking Third Edition".
+Based on the provided English and Chinese lecture transcripts, generate a concise MOCK EXAM ANSWER CARD that directly mirrors the Pathways 3 listening test format.
 
-CRITICAL FOR TOKEN ECONOMY: DO NOT reprint, duplicate, or translate the entire transcript. Only extract single-sentence target quotes for answers. Keep all explanations concise and EAL-friendly.
+CRITICAL RULES:
+- DO NOT reprint or translate the full transcript.
+- Extract ONLY exact single-sentence quotes from the transcript as evidence.
+- Total output must be under 400 words. Be ruthlessly concise.
+- Output must follow ONLY this two-part structure, nothing else:
 
-Your response must strictly follow this Markdown structure:
+## 📝 Part A · 单选题 (Multiple Choice)
 
-## 📝 Part 1: Structured T-Chart Notes
-- Generate a generic Markdown table with two columns. Based on the unit's critical thinking goal, the table must compare the key contrasting concepts mentioned in the text. Use bullet points and abbreviations suitable for EAL note-taking.
-- Always include a notable "Lecture Metaphor/Key Quote" if available in the text (with bilingual translation).
+Generate exactly 3 multiple-choice questions in this strict order:
+1. **主旨/定义题**: One question testing the core definition or main idea of the topic. Provide options A/B/C/D.
+2. **步骤/流程题**: One question testing a specific STAGE number (e.g., "In the second stage..."). If no clear stages exist, test a key detail instead.
+3. **细节/因果题**: One question testing a specific cause, effect, or data point.
 
-## 🎧 Part 2: High-Yield Mock Questions
-- 1 Main Idea Question (单选题): 1 multiple-choice question targeting global understanding of the topic (Options A, B, C, D).
-- 2-3 Data & Detail Tracking (填空题): Fill-in-the-blank questions focusing strictly on numbers, percentages, years, or high-yield technical terms mentioned in the text (with bilingual translation).
-- 1 Cause & Effect Tracking Question (新设考点): 1 question directly testing the student's ability to identify a cause-and-effect relationship detailed by the lecturer.
+For EACH question, output in this exact format:
+**Q[N]. [Question text]**
+✅ [Correct option letter]. [Correct answer text]
+❌ [Wrong option letter]. [Wrong answer] ❌ [Wrong option letter]. [Wrong answer] ❌ [Wrong option letter]. [Wrong answer]
+🎯 原文锚句: "[The single most relevant sentence from the transcript]"
 
-## 🔑 Part 3: Answer Key & Tiny Locators
-- Output format must strictly be:
-  "Q1 Answer: [Option] | Target Quote: '[Extract ONLY the exact 1 sentence from the transcript containing the answer]'"
-  "Q2 Answer: [Word/Number] | Target Quote: '[Extract ONLY the exact 1 sentence from the transcript containing the answer]'" (with bilingual translation)
+---
+
+## 📝 Part B · 案例填空 (Summary Fill-in-the-blank)
+
+Identify the main CASE STUDY or EXAMPLE discussed in the lecture. Write a 3-4 sentence summary paragraph of that case with exactly 5 blanks (①②③④⑤) replacing key content words.
+Then, below the paragraph, list the answers:
+① [答案词] — 原文: "[exact sentence from transcript containing this word]"
+② [答案词] — 原文: "[exact sentence]"
+③ [答案词] — 原文: "[exact sentence]"
+④ [答案词] — 原文: "[exact sentence]"
+⑤ [答案词] — 原文: "[exact sentence]"
+
+If there is no clear case study, replace Part B with:
+## 📝 Part B · 步骤排序 (Stage Ordering)
+List all identified stages in correct order as: Stage 1 → Stage 2 → Stage 3 → ...
+With each stage's answer word and its anchor sentence.
 """;
   }
 
@@ -253,6 +270,96 @@ Your response must strictly follow this Markdown structure:
       case PathwaysUnit.unit8: return '（关于传统与现代医学）';
       case PathwaysUnit.unit9: return '（关于考古与历史发现）';
       case PathwaysUnit.unit10: return '（关于情感与情绪智力）';
+    }
+  }
+
+  /// Returns the Pathways 3 (3rd Edition) Target Vocabulary list for a given unit.
+  /// Used for automatic ==highlight== marking in the exported full script.
+  static List<String> getUnitVocabularyList(PathwaysUnit unit) {
+    switch (unit) {
+      case PathwaysUnit.none:
+        return [];
+      case PathwaysUnit.unit1:
+        // Unit 1: Shopping Psychology
+        return [
+          'affordable', 'allocate', 'analyze', 'appeal', 'brand', 'budget',
+          'consume', 'consumer', 'consumption', 'convince', 'impulse',
+          'luxury', 'motive', 'purchase', 'strategy', 'trend', 'influence',
+          'behavior', 'rational', 'emotional',
+        ];
+      case PathwaysUnit.unit2:
+        // Unit 2: It's In My DNA
+        return [
+          'characteristic', 'clone', 'determine', 'gene', 'genetic',
+          'heredity', 'inherit', 'inherited', 'mutation', 'sequence',
+          'species', 'trait', 'identical', 'reveal', 'discovered',
+          'DNA', 'biology', 'chromosome', 'environment', 'factor',
+        ];
+      case PathwaysUnit.unit3:
+        // Unit 3: On the Move
+        return [
+          'adapt', 'benefit', 'challenge', 'emigrate', 'immigrate',
+          'migrate', 'migration', 'opportunity', 'population', 'region',
+          'rural', 'urban', 'drain', 'remittance', 'workforce',
+          'destination', 'settlement', 'economy', 'poverty', 'diversity',
+        ];
+      case PathwaysUnit.unit4:
+        // Unit 4: Our Changing Planet
+        return [
+          'atmosphere', 'chemical', 'climate', 'conservation', 'ecosystem',
+          'emission', 'fossil', 'habitat', 'renewable', 'pollution',
+          'sustainable', 'temperature', 'biodiversity', 'deforestation',
+          'extinction', 'glacier', 'carbon', 'impact', 'resource', 'threat',
+        ];
+      case PathwaysUnit.unit5:
+        // Unit 5: Rise to the Top
+        return [
+          'achievement', 'ambitious', 'competitive', 'confident', 'creative',
+          'dedicated', 'determination', 'goal', 'innovative', 'inspire',
+          'leadership', 'motivate', 'persist', 'potential', 'productive',
+          'resilient', 'skill', 'strategy', 'succeed', 'talent',
+        ];
+      case PathwaysUnit.unit6:
+        // Unit 6: Design with Purpose
+        return [
+          'adjust', 'approach', 'architect', 'biomimicry', 'design',
+          'designer', 'engineer', 'function', 'form', 'inspire',
+          'material', 'objective', 'process', 'prototype', 'reflect',
+          'solve', 'solution', 'stage', 'test', 'ultraviolet', 'UV',
+          'efficient', 'effective', 'nature', 'natural',
+        ];
+      case PathwaysUnit.unit7:
+        // Unit 7: Inspired to Protect
+        return [
+          'barrier', 'conservation', 'creature', 'decline', 'ecosystem',
+          'endangered', 'extinct', 'fund', 'habitat', 'illegal',
+          'permit', 'poaching', 'preserve', 'protect', 'restore',
+          'sanctuary', 'species', 'sustainable', 'threaten', 'wildlife',
+        ];
+      case PathwaysUnit.unit8:
+        // Unit 8: Traditional and Modern Medicine
+        return [
+          'alternative', 'ancient', 'cure', 'diagnose', 'evidence',
+          'herbal', 'holistic', 'medication', 'prescribe', 'remedy',
+          'research', 'symptom', 'therapy', 'traditional', 'treatment',
+          'clinical', 'effective', 'patient', 'practice', 'scientific',
+        ];
+      case PathwaysUnit.unit9:
+        // Unit 9: Uncovering the Past
+        return [
+          'ancestor', 'ancient', 'archaeological', 'artifact', 'century',
+          'civilization', 'culture', 'discover', 'excavate', 'evidence',
+          'fossil', 'historian', 'interpretation', 'preserve', 'relic',
+          'remains', 'ruins', 'significant', 'site', 'unearth',
+        ];
+      case PathwaysUnit.unit10:
+        // Unit 10: Feelings & Emotions
+        return [
+          'anxiety', 'behavior', 'complex', 'cope', 'emotion',
+          'emotional', 'empathy', 'expression', 'fear', 'frustration',
+          'happiness', 'influence', 'mood', 'negative', 'positive',
+          'psychology', 'reaction', 'recognize', 'stress', 'trigger',
+        ];
     }
   }
 
@@ -482,5 +589,91 @@ D. ...
 - 练习题题干：英文，选项为英文
 - 答案与解析：中英文对照
 - 词汇表：英文 + 中文释义''';
+  }
+
+  /// Grammar Module Prompts
+
+  static String getGrammarExercisePrompt(String unitTitle, String chart, String keyRules) {
+    return '''# Role: 英语语法出题专家
+# Task: 根据以下语法内容，生成 5 道练习题。
+
+## 语法单元: $unitTitle
+
+## 语法表:
+$chart
+
+## 核心规则:
+$keyRules
+
+# 输出格式（严格按以下格式）：
+## 📝 练习题
+
+### Q1. [题目类型：填空题/选择题]
+[题目内容]
+A. [选项]
+B. [选项]
+C. [选项]
+D. [选项]
+
+### Q2. [题目类型：填空题/选择题]
+...
+
+## 🔑 答案与解析
+
+**Q1:** [正确选项] | [解析：为什么对，中文解释]
+**Q2:** [正确选项] | [解析：为什么对，中文解释]
+...
+
+# 要求：
+- 每道题都要有中文翻译或说明
+- 题目要覆盖不同的语法点（肯定句、否定句、疑问句等）
+- 难度从简单到难递进
+- 错误选项要有迷惑性（常见错误类型）
+- 对的和错的都要解释原因''';
+  }
+
+  static String getGrammarQuestionPrompt(String unitTitle, String chart, String keyRules) {
+    return '''# Role: 英语语法导师
+# Context: 学生在学习 "$unitTitle"
+# Task: 回答学生的语法问题。
+
+## 语法表:
+$chart
+
+## 核心规则:
+$keyRules
+
+# 回答要求：
+- 用中文回答，附英文例子
+- 解释要通俗易懂，多用对比
+- 必要时给出中文和英文的对应关系
+- 如果学生问题不明确，引导学生更具体地提问''';
+  }
+
+  static String getGrammarCorrectionPrompt() {
+    return '''# Role: 英语语法批改专家
+# Task: 检查用户写的英文句子，找出语法错误并解释。
+
+# 输出格式：
+## ✏️ 批改结果
+
+### 原句
+[用户写的句子]
+
+### 修改建议
+[修改后的正确句子]
+
+### 错误分析
+- 错误类型: [时态/主谓一致/词性等]
+- 错误原因: [详细解释，中文]
+- 正确用法: [正确的语法规则说明]
+
+### 相关语法点
+[建议用户复习的相关语法点]
+
+# 要求：
+- 如果没有错误，也要说明"句子正确"
+- 每个错误都要解释"为什么错"
+- 用中文解释，附英文例子对比''';
   }
 }

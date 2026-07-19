@@ -62,6 +62,6 @@ class ReadingQuizService {
       _callGroq(PromptProvider.getPathwaysUnitPrompt(unit));
 
   /// 优先返回内置本地数据，无本地数据时返回 null
-  static String? getPathwaysLocalContent(PathwaysUnit unit) =>
+  static PathwaysUnitData? getPathwaysLocalContent(PathwaysUnit unit) =>
       PathwaysContent.units[unit];
 }

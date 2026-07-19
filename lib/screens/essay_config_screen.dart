@@ -11,6 +11,110 @@ import '../widgets/academic_markdown.dart';
 import '../utils/pdf_service.dart';
 import 'history_screen.dart';
 
+// --- NEW PATHWAYS 3 COMPATIBLE DATA SOURCE START ---
+enum EssayCategory {
+  animals,     
+  cities,      
+  people,      
+  technology,  
+  environment, 
+  lifestyle,   
+}
+
+class PresetTopicPair {
+  final String topicA;
+  final String topicB;
+  final String chineseLabel;
+
+  const PresetTopicPair({
+    required this.topicA,
+    required this.topicB,
+    required this.chineseLabel,
+  });
+}
+
+const Map<EssayCategory, List<PresetTopicPair>> pathwaysPresetTopics = {
+  EssayCategory.animals: [
+    PresetTopicPair(topicA: "Cats", topicB: "Dogs", chineseLabel: "宠物猫 vs 宠物狗"),
+    PresetTopicPair(topicA: "Wild Wolves", topicB: "Giant Pandas", chineseLabel: "野生灰狼 vs 大熊猫"),
+  ],
+  EssayCategory.cities: [
+    PresetTopicPair(topicA: "Vancouver", topicB: "Hong Kong", chineseLabel: "温哥华 vs 香港"),
+    PresetTopicPair(topicA: "Edmonton", topicB: "Calgary", chineseLabel: "埃德蒙顿 vs 卡尔加里"),
+  ],
+  EssayCategory.people: [
+    PresetTopicPair(topicA: "Famous Scientists", topicB: "Pop Singers", chineseLabel: "著名科学家 vs 流行歌手"),
+    PresetTopicPair(topicA: "Professional Athletes", topicB: "Movie Stars", chineseLabel: "职业运动员 vs 电影明星"),
+  ],
+  EssayCategory.technology: [
+    PresetTopicPair(topicA: "Online Learning", topicB: "Traditional Schools", chineseLabel: "网络课程 vs 传统学校"),
+    PresetTopicPair(topicA: "E-books", topicB: "Printed Books", chineseLabel: "电子书 vs 纸质印刷书"),
+    PresetTopicPair(topicA: "Online Shopping", topicB: "In-store Shopping", chineseLabel: "网购 vs 实体店购物"),
+  ],
+  EssayCategory.environment: [
+    PresetTopicPair(topicA: "Public Transportation", topicB: "Private Cars", chineseLabel: "公共交通 vs 自家私家车"),
+    PresetTopicPair(topicA: "Solar Energy", topicB: "Coal Energy", chineseLabel: "太阳能清洁能源 vs 传统煤炭能源"),
+  ],
+  EssayCategory.lifestyle: [
+    PresetTopicPair(topicA: "Working from Home", topicB: "Working in an Office", chineseLabel: "居家办公 vs 办公室上班"),
+    PresetTopicPair(topicA: "Large Companies", topicB: "Small Businesses", chineseLabel: "大公司工作 vs 小团队创业"),
+  ],
+};
+// --- NEW PATHWAYS 3 COMPATIBLE DATA SOURCE END ---
+
+class EssayTopicPreset {
+  final String label;
+  final String topicA;
+  final String topicB;
+  final EssayCategory? category;
+
+  const EssayTopicPreset({
+    required this.label,
+    required this.topicA,
+    required this.topicB,
+    this.category,
+  });
+}
+
+final List<EssayTopicPreset> _topicPresets = [
+  const EssayTopicPreset(
+    label: "自定义主题 (Custom Topics)",
+    topicA: "",
+    topicB: "",
+  ),
+  ...pathwaysPresetTopics.entries.expand((entry) {
+    String prefix;
+    switch (entry.key) {
+      case EssayCategory.animals:
+        prefix = "🐾 动物";
+        break;
+      case EssayCategory.cities:
+        prefix = "🏙️ 城市";
+        break;
+      case EssayCategory.people:
+        prefix = "👥 人物";
+        break;
+      case EssayCategory.technology:
+        prefix = "💻 科技";
+        break;
+      case EssayCategory.environment:
+        prefix = "🌲 环境";
+        break;
+      case EssayCategory.lifestyle:
+        prefix = "☕ 生活";
+        break;
+    }
+    return entry.value.map((pair) {
+      return EssayTopicPreset(
+        label: "$prefix | ${pair.topicA} vs ${pair.topicB} (${pair.chineseLabel})",
+        topicA: pair.topicA,
+        topicB: pair.topicB,
+        category: entry.key,
+      );
+    });
+  }),
+];
+
 class EssayConfigScreen extends StatefulWidget {
   const EssayConfigScreen({super.key});
 
@@ -19,8 +123,9 @@ class EssayConfigScreen extends StatefulWidget {
 }
 
 class _EssayConfigScreenState extends State<EssayConfigScreen> {
-  final _topicAController = TextEditingController(text: "Human Migration / Brain Drain");
-  final _topicBController = TextEditingController(text: "Economic Development of Origin Countries");
+  final _topicAController = TextEditingController();
+  final _topicBController = TextEditingController();
+  late EssayTopicPreset _selectedPreset;
   String _selectedLevel = "Academic Advanced (TOEFL 100)";
   String _selectedModel = "llama70b"; // 默认首选 Llama 3.3 70B (Groq)
   bool _isGenerating = false;
@@ -44,7 +149,43 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
   ];
 
   @override
+  void initState() {
+    super.initState();
+    // 默认选用 Unit 3 预设并填充数据
+    _selectedPreset = _topicPresets[3];
+    _topicAController.text = _selectedPreset.topicA;
+    _topicBController.text = _selectedPreset.topicB;
+
+    _topicAController.addListener(_onTopicChanged);
+    _topicBController.addListener(_onTopicChanged);
+  }
+
+  void _onTopicChanged() {
+    final currentA = _topicAController.text.trim();
+    final currentB = _topicBController.text.trim();
+
+    EssayTopicPreset? matchedPreset;
+    for (var preset in _topicPresets) {
+      if (preset.label == "自定义主题 (Custom Topics)") continue;
+      if (preset.topicA == currentA && preset.topicB == currentB) {
+        matchedPreset = preset;
+        break;
+      }
+    }
+
+    matchedPreset ??= _topicPresets[0]; // 若不匹配任何预设，则设为“自定义主题”
+
+    if (_selectedPreset != matchedPreset) {
+      setState(() {
+        _selectedPreset = matchedPreset!;
+      });
+    }
+  }
+
+  @override
   void dispose() {
+    _topicAController.removeListener(_onTopicChanged);
+    _topicBController.removeListener(_onTopicChanged);
     _topicAController.dispose();
     _topicBController.dispose();
     super.dispose();
@@ -402,6 +543,45 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
+                      DropdownButtonFormField<EssayTopicPreset>(
+                        value: _selectedPreset,
+                        dropdownColor: isDark ? const Color(0xFF1E1E2F) : Colors.white,
+                        style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 14),
+                        isExpanded: true,
+                        decoration: InputDecoration(
+                          labelText: "选择预设对比主题 (Preset Topic)",
+                          labelStyle: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
+                          enabledBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: BorderSide(color: isDark ? Colors.white10 : Colors.black12),
+                          ),
+                          focusedBorder: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(12),
+                            borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
+                          ),
+                        ),
+                        items: _topicPresets.map((preset) {
+                          return DropdownMenuItem<EssayTopicPreset>(
+                            value: preset,
+                            child: Text(
+                              preset.label,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          );
+                        }).toList(),
+                        onChanged: (val) {
+                          if (val != null) {
+                            setState(() {
+                              _selectedPreset = val;
+                              if (val.label != "自定义主题 (Custom Topics)") {
+                                _topicAController.text = val.topicA;
+                                _topicBController.text = val.topicB;
+                              }
+                            });
+                          }
+                        },
+                      ),
+                      const SizedBox(height: 20),
                       TextField(
                         controller: _topicAController,
                         style: TextStyle(color: isDark ? Colors.white : Colors.black87),

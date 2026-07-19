@@ -55,12 +55,23 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
     super.dispose();
   }
 
+  /// 提取课文正文（去掉练习部分），确保 AI 只处理课文
+  String get _readingText {
+    final idx = widget.contentMd.indexOf('\n## 📝 练习');
+    if (idx == -1) {
+      // 也可能以 --- 或 ## 分隔
+      final fallback = widget.contentMd.indexOf('\n---\n');
+      return fallback == -1 ? widget.contentMd : widget.contentMd.substring(0, fallback);
+    }
+    return widget.contentMd.substring(0, idx);
+  }
+
   Future<void> _generateQuiz() async {
     setState(() {
       _loadingQuiz = true;
       _quizResult = null;
     });
-    final result = await ReadingQuizService.generateQuiz(widget.contentMd);
+    final result = await ReadingQuizService.generateQuiz(_readingText);
     if (mounted) setState(() {
       _quizResult = result;
       _loadingQuiz = false;
@@ -72,7 +83,7 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
       _loadingSummary = true;
       _summaryResult = null;
     });
-    final result = await ReadingQuizService.getSummary(widget.contentMd);
+    final result = await ReadingQuizService.getSummary(_readingText);
     if (mounted) setState(() {
       _summaryResult = result;
       _loadingSummary = false;
@@ -84,7 +95,7 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
       _loadingVocab = true;
       _vocabResult = null;
     });
-    final result = await ReadingQuizService.getVocabulary(widget.contentMd);
+    final result = await ReadingQuizService.getVocabulary(_readingText);
     if (mounted) setState(() {
       _vocabResult = result;
       _loadingVocab = false;
@@ -94,8 +105,8 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
   void _openTranslateSheet() {
     _openTextSheet(
       title: '翻译',
-      hint: '编辑要翻译的文本（默认全文）',
-      initialText: widget.contentMd,
+      hint: '编辑要翻译的文本（默认课文正文）',
+      initialText: _readingText,
       onConfirm: (text) async {
         setState(() {
           _loadingTranslation = true;
@@ -113,8 +124,8 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
   void _openParaphraseSheet() {
     _openTextSheet(
       title: '转述',
-      hint: '编辑要转述的文本（默认全文）',
-      initialText: widget.contentMd,
+      hint: '编辑要转述的文本（默认课文正文）',
+      initialText: _readingText,
       onConfirm: (text) async {
         setState(() {
           _loadingParaphrase = true;

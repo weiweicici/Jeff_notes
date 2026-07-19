@@ -11,7 +11,8 @@ echo "📦 正在构建 iOS Release (no-codesign)..."
 flutter build ios --release --no-codesign
 
 # 定义路径
-IPA_NAME="JeffNotes.ipa"
+DATE_STR=$(date +%Y%m%d)
+IPA_NAME="JeffNotes_${DATE_STR}.ipa"
 APP_PATH="build/ios/iphoneos/Runner.app"
 PAYLOAD_DIR="Payload"
 

@@ -216,3 +216,40 @@ All reading AI features use:
 | `image_picker` | ^1.1.2 | Multi-select photo import |
 | `file_picker` | ^8.1.7 | PDF file selection |
 | `pdf_render` | ^1.5.1 | PDF page-to-image rendering for OCR |
+| `flutter_tts` | ^4.1.0 | Offline native text-to-speech for Chinese summary |
+| `just_audio` | ^0.9.39 | Audio player for English realistic TTS and local recordings |
+| `audio_service` | ^0.18.15 | System audio session and background playback integration |
+
+## 14. Grammar Module (语法精讲)
+
+### 14.1 Architecture Overview
+A specialized grammar learning and correction system. It displays structural textbook data based on the Focus on Grammar 4 series, and integrates with LLM endpoints for practice and interactive questioning. All UI code is located in [grammar_screen.dart](file:///Users/macmini/jeff_notes/lib/screens/grammar_screen.dart) and [grammar_detail_screen.dart](file:///Users/macmini/jeff_notes/lib/screens/grammar_detail_screen.dart).
+
+### 14.2 Repository Pattern (grammar_repository.dart)
+Implements a **three-tier data source hierarchy** for retrieving academic grammar structures:
+1. **Cloud (Supabase)**: Fetches curriculum details from the `grammar_units` table ordered by `sort_order` via HTTP GET.
+2. **Local Cache File**: Serializes retrieved data to `grammar_units_cache.json` in the App Support Directory. Subsequent loads read from cache if offline.
+3. **Hardcoded Backup**: Falls back to offline asset data defined in `grammar_content.dart` if both cloud and cache access fail.
+
+### 14.3 Service & Prompts (grammar_service.dart)
+Uses Groq API (`llama-3.3-70b-versatile` model) with specialized prompts configured in `PromptProvider`:
+- **generateExercise(unit)**: Generates 5 target grammar practice questions based on unit objectives.
+- **askQuestion(unit, question)**: Provides contextual explanations for custom user queries about specific rules.
+- **correctSentence(sentence)**: Performs sentence correction, highlighting structural improvements.
+
+---
+
+## 15. TTS Player & Service Module (语音朗读与播放安全)
+
+### 15.1 Core Architecture
+The system encapsulates audio playback through `TtsService` (a ChangeNotifier singleton) and provides interactive playback UI via `TtsPlayerBar` (in `tts_player_bar.dart`). It separates Chinese and English playback pipelines to optimize latency and user experience:
+1. **Chinese Playback Pipeline (0ms Latency)**: Sanitizes markdown syntax and uses `flutter_tts` to invoke the device's native offline TTS engine. Starts instantly with zero cloud API latency.
+2. **English Playback Pipeline (High-Fidelity AI)**: Synthesizes realistic speech via SiliconFlow API, saves the output stream using `just_audio`, and supports real-time progress updates, duration tracking, and slider scrubbing.
+3. **Recorded Playback**: If a merged recording (.wav) exists for the session, `TtsPlayerBar` supports direct playback of the user's local recorded voice.
+
+### 15.2 Headphone Safety & Automatic Interruption
+To prevent accidental sound leakage in quiet environments (e.g., libraries, classrooms), the system enforces strict audio output safety rules:
+- **Headphone Check**: Playback will not start unless headphones or Bluetooth headsets are actively connected. It queries the platform's current audio route outputs (`AVAudioSession` outputs on iOS) to ensure a physical speaker is not being used.
+- **Disconnection Listener**: Subscribes to `AudioSession.devicesChangedEventStream`. If headphones (wired/wireless/AirPods) are disconnected, the playback session is instantly paused.
+- **Microphone Co-existence**: Configures the `AudioSession` category to `AVAudioSessionCategory.playAndRecord` with speaker defaulting. This ensures that the active microphone recording capability is not locked or interrupted when TTS audio plays.
+

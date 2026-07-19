@@ -129,19 +129,20 @@ class _ReadingScreenState extends State<ReadingScreen> {
     if (!mounted) return;
 
     // 优先查本地内置数据
-    final local = ReadingQuizService.getPathwaysLocalContent(unit);
+    final data = ReadingQuizService.getPathwaysLocalContent(unit);
     String content;
-    if (local != null) {
-      content = local;
+    if (data != null) {
+      content = data.fullContent;
     } else {
       showDialog(
         context: context,
         barrierDismissible: false,
         builder: (_) => const Center(child: CircularProgressIndicator()),
       );
-      content = await ReadingQuizService.getPathwaysContent(unit);
+      final aiContent = await ReadingQuizService.getPathwaysContent(unit);
       if (!mounted) return;
       Navigator.of(context).pop();
+      content = aiContent;
 
       if (content.startsWith('[')) {
         if (mounted) {
