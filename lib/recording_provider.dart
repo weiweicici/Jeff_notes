@@ -1080,21 +1080,52 @@ class RecordingProvider extends ChangeNotifier {
       throw Exception("AI service not ready. Please configure API Keys in settings.");
     }
 
-    final prompt = """你是一个英语水平普通的学生。请根据以下核心话题，写一篇长约 230 到 280 字的短文。
+    final prompt = """You are an academic writing assistant inside a student's learning app. Your goal is to generate an "academic yet highly accessible" essay based strictly on the user's input topic. 
 
-【核心话题】：$finalTopic
-【文章类型】：$essayType
+### 🔴 CRITICAL REGULATORY MATRIX (STRICTLY ENFORCED)
+1. TOTAL LENGTH: Strictly between 230 and 280 words.
+2. PARAGRAPH STRUCTURE: Exactly 5 paragraphs total (1 Intro, 3 Bodies, 1 Conclusion). Exactly 4 sentences per paragraph. Do not write more, do not write less.
+3. PERSPECTIVE: NO first-person pronouns allowed (DO NOT use I, me, my, we, us, our). Keep it completely objective and neutral.
+4. LOGICAL PILLARS: You must analyze the topic using three specific dimensions across the three body paragraphs: Cost, Happiness, and Time.
+5. HIGHLIGHT STRATEGY: Enclose the specific transition phrases in ==double equals== as shown in the examples. Use only plain, natural, student-level transition phrases. Do not use high-level test words (e.g., avoid "First and foremost", "Furthermore", "In addition to economic benefits").
+6. NATURAL FLAW INJECTION: You MUST deliberately inject exactly 1 or 2 natural grammar mistakes typical for Chinese English learners (e.g., subject-verb agreement error like "there is many people", omitting an article "go to university by bus", or a slight noun plural slip like "a daily fees").
 
-【严格写作限制】：
-1. 必须完全使用"Cost, Time, Happiness"三个角度来展开论述。
-2. 语言必须"学术但通俗"，全篇使用简单的普通词汇表达出想法即可。严禁使用 I, Me, My, We, Us 等任何第一人称。
-3. 篇幅严格控制在 230–280 字之间，每个段落严格控制在 4–5 句话。
-4. 语言要求自然流畅，允许出现一到两处极其轻微的真人笔误或不够完美的日常句式（模拟普通的真人学生写作效果，绝不要刻意堆砌高难度华丽辞藻）。
-5. 必须在关键衔接处和主题句里自然使用且只使用 ==double equals== 标记核心学术短语（例如：==As a matter of fact==, ==It is widely believed that== 等）。
+---
 
-【结构模版】：
-- 如果是 Comparison，请按照：Intro -> Body(Cost) -> Body(Happiness) -> Body(Time) -> Conclusion 的顺序。
-- 如果是 Argumentative，请按照：Intro -> Body(Cost) -> Body(Happiness) -> Body(Time-based Refutation) -> Conclusion 的顺序。""";
+### 📘 SHOT 1: ARGUMENTATIVE TYPE TEMPLATE (Use this exact structural framework for any new argumentative topic)
+Topic: Free school lunches
+
+School lunch is more than just food; it is a vital part of a student's daily life. Students need good food every day to stay healthy and focus on their classes. Recently, the topic of whether schools should provide free meals has sparked a heated debate. Obviously, free school lunches are the best choice, because this decision is highly beneficial in terms of both saving money and improving happiness.
+
+==To begin with==, providing free meals significantly reduces the financial burden on families. Many parents spend a lot of money every month to buy school lunches or groceries for their children. Free lunches allow families to save this money for other important educational needs. *There is many families* who struggle with daily expenses, so this policy helps them a lot.
+
+==Another important point is that== free lunches greatly improve student happiness and school equality. When every student eats the same food together, it reduces the social gap between rich and poor children. No one feels left out or embarrassed because of their poor lunch box. Consequently, a friendly and happy school environment is successfully created.
+
+==However, some people think that== preparing free meals for everyone wastes too much time in school. ==Yet, this is not true because== buying food or packing lunches takes even more time for families at home. Free meals actually make the school day faster because students just line up and eat without waiting to pay money. Therefore, it is a highly time-efficient choice for the whole school.
+
+==In conclusion==, free school lunches bring great advantages to the modern education system. It not only saves a large amount of cost for parents but also makes students feel more equal and happier. ==Therefore, it is better to== implement this policy in schools. This simple change will definitely create a better future for all students.
+
+---
+
+### 📙 SHOT 2: COMPARISON TYPE TEMPLATE (Use this exact structural framework for any new comparison topic)
+Topic: Free vs. Paid school lunches
+
+School lunch is more than just food; it is a vital part of a student's daily life. Students need good food every day to stay healthy and focus on their classes. There are two main ways to handle this issue, which are free school lunches and paid school lunches. Obviously, comparing these two options reveals significant differences in terms of financial cost, time management, and overall happiness.
+
+==First of all==, the financial cost is a major difference between the two choices. Free school lunches require the government to pay for everything, which saves money for parents. On the contrary, paid school lunches require families to pay *a daily fees*, which can increase their monthly expenses. Therefore, the two systems have completely opposite impacts on the family budget.
+
+==In terms of happiness==, the two choices create very different levels of student satisfaction. Free meals make everyone feel equal because all students eat the same food, which increases their overall happiness. In contrast, paid meals might make low-income students feel sad or embarrassed if they cannot afford good food. A happy school environment is much easier to achieve when food is free.
+
+==Finally, it is also important to compare== the time efficiency of these two methods. Free school lunches save time because students do not need to wait in line to pay cash or bring lunch boxes. However, paid lunches can cause delays since processing payments takes time every day. Although paid lunches might offer more choices, they definitely waste more time during the lunch break.
+
+==To sum up==, both free and paid school lunches have their own distinct features. While free lunches are better for saving cost and improving happiness, paid lunches might offer different options despite taking more time. ==After looking at both sides==, schools must carefully evaluate the situation. Understanding these differences helps schools choose the best method for their students.
+
+---
+
+Now, generate a brand new essay following the exact pattern, paragraph length (4 sentences per paragraph), style, and constraints demonstrated above for the following user request:
+
+Type: $essayType
+Topic: $finalTopic""";
 
     return await service.summarize(prompt, strategy: PromptStrategy.essay, mode: _currentMode, unit: _currentUnit);
   }

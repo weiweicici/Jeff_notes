@@ -77,11 +77,12 @@ AcademicHubScreen (Home)
 - **FAB (RecordingPulseFAB)**: Red pulse animation during recording, orange static glow when paused, mic icon when idle.
 
 ### 5.3 EssayConfigScreen (学术写作助手)
-- **Dual-Input Topic Mechanism**: A custom `TextField` (hint: "例如: wearing masks") sits above a category-based preset dropdown. If the custom field is non-empty, it overrides the preset selection entirely — enabling both quick inspiration and structured topic selection.
-- **32 Preset Topics in 6 Categories**: Transportation & Safety, Technology & Digital, Daily Life & Consumer, School & Study, Work & Career, Media & Entertainment.
+- **Dual-Input Topic Mechanism**: A custom `TextField` (hint: "例如: wearing masks") sits above a category-based topic grid. If the custom field is non-empty, it overrides the preset selection entirely — enabling both quick inspiration and structured topic selection.
+- **46 Preset Topics in 11 Categories**: Transportation & Safety, Technology & Digital, Daily Life & Consumer, School & Study, Work & Career, Media & Entertainment, Health & Lifestyle, Environment & Sustainability, Society & Culture, Family & Relationships, Ethics & Technology Boundaries.
+- **Topic Picker**: `ChoiceChip` grid (`Wrap` layout) displays chinese-only labels for one-glance scanning; category switch reloads the grid instantly. Replaced the old `DropdownButtonFormField`.
 - **Essay Type Toggle**: Comparison (Intro → Cost → Happiness → Time → Conclusion) or Argumentative (Intro → Cost → Happiness → Time-based Refutation → Conclusion).
 - **Cost · Time · Happiness Framework**: Every essay is structured around these three concrete angles, replacing vague "advantages/disadvantages" with measurable dimensions.
-- **AI Prompt** (in `RecordingProvider.generateEssayMatrix`): Student-level English, 230–280 words, strict no first-person, natural minor imperfections allowed, `==double equals==` for key academic phrases.
+- **AI Prompt** (in `RecordingProvider.generateEssayMatrix`): English 2-shot prompt with REGULATORY MATRIX (6 strict constraints) plus full Argumentative and Comparison essay examples. Models follow the shot examples to produce consistent structure, tone, and `==double equals==` transition marking.
 - **Models**: Llama-3.3-70B (Groq, ~10s), Qwen-32B (~30s), Qwen-72B (~60s). Auto-retry once on failure (5s delay).
 - **Export**: Auto-saves to Markdown (`Jeff_Essay_{topic}_{timestamp}.md`), clipboard copy, and PDF export via `PdfService`.
 

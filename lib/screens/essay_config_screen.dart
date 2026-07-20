@@ -18,6 +18,11 @@ enum EssayCategory {
   school,
   career,
   media,
+  health,
+  environment,
+  society,
+  family,
+  ethics,
 }
 
 class PresetTopic {
@@ -72,6 +77,30 @@ const Map<EssayCategory, List<PresetTopic>> presetTopicsByCategory = {
     PresetTopic(topic: "Traveling to natural areas (Eco-tourism) vs. Visiting historic big cities", chineseLabel: "自然生态游 vs 历史名城游"),
     PresetTopic(topic: "Living completely without internet for a weekend vs. Staying connected 24/7", chineseLabel: "断网周末 vs 全天联网"),
   ],
+  EssayCategory.health: [
+    PresetTopic(topic: "Exercising regularly vs. Leading a sedentary lifestyle", chineseLabel: "规律运动 vs 久坐不动"),
+    PresetTopic(topic: "Eating fast food vs. Cooking home-made meals", chineseLabel: "吃快餐 vs 自己做饭"),
+    PresetTopic(topic: "Paying attention to mental health vs. Ignoring mental well-being", chineseLabel: "关注心理健康 vs 忽视心理状态"),
+    PresetTopic(topic: "Getting enough sleep vs. Staying up late", chineseLabel: "保证充足睡眠 vs 经常熬夜"),
+  ],
+  EssayCategory.environment: [
+    PresetTopic(topic: "Protecting the environment vs. Prioritizing economic development", chineseLabel: "保护环境 vs 优先发展经济"),
+    PresetTopic(topic: "Using renewable energy vs. Relying on fossil fuels", chineseLabel: "使用可再生能源 vs 依赖化石燃料"),
+    PresetTopic(topic: "Reducing consumption vs. Recycling waste", chineseLabel: "减少消费 vs 回收利用垃圾"),
+  ],
+  EssayCategory.society: [
+    PresetTopic(topic: "Living in a multicultural society vs. Preserving traditional culture", chineseLabel: "多元文化社会 vs 保持传统文化"),
+    PresetTopic(topic: "Living and working abroad vs. Staying in one's home country", chineseLabel: "出国发展 vs 留在祖国"),
+    PresetTopic(topic: "Promoting gender equality vs. Maintaining traditional gender roles", chineseLabel: "提倡性别平等 vs 维持传统性别角色"),
+  ],
+  EssayCategory.family: [
+    PresetTopic(topic: "Living in a nuclear family vs. Living in an extended family", chineseLabel: "核心家庭 vs 大家庭"),
+    PresetTopic(topic: "Raising children in the city vs. Raising children in the countryside", chineseLabel: "城市养娃 vs 农村养娃"),
+  ],
+  EssayCategory.ethics: [
+    PresetTopic(topic: "AI replacing human jobs vs. AI creating new job opportunities", chineseLabel: "AI 取代工作 vs AI 创造新岗位"),
+    PresetTopic(topic: "Protecting data privacy vs. Enjoying the convenience of technology", chineseLabel: "保护数据隐私 vs 享受科技便利"),
+  ],
 };
 
 String _categoryLabel(EssayCategory c) {
@@ -82,6 +111,11 @@ String _categoryLabel(EssayCategory c) {
     case EssayCategory.school:         return '📚 学校与学习';
     case EssayCategory.career:         return '💼 工作与未来职场';
     case EssayCategory.media:          return '🎬 媒体与娱乐生活';
+    case EssayCategory.health:         return '🏃 健康与生活方式';
+    case EssayCategory.environment:    return '🌿 环境与可持续发展';
+    case EssayCategory.society:        return '🌍 社会与文化';
+    case EssayCategory.family:         return '👨‍👩‍👧‍👦 家庭与人际关系';
+    case EssayCategory.ethics:         return '🤖 伦理与科技边界';
   }
 }
 
@@ -475,31 +509,45 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
           ),
           const SizedBox(height: 20),
 
-          DropdownButtonFormField<PresetTopic>(
-            value: _selectedPreset,
-            dropdownColor: isDark ? const Color(0xFF1E1E2F) : Colors.white,
-            style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 14),
-            isExpanded: true,
-            decoration: InputDecoration(
-              labelText: "预设话题",
-              labelStyle: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: isDark ? Colors.white10 : Colors.black12),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
-              ),
+          Text(
+            "预设话题",
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w500,
+              color: isDark ? Colors.grey[400] : Colors.grey[600],
             ),
-            items: presetTopicsByCategory[_selectedCategory]!.map((p) {
-              return DropdownMenuItem(
-                value: p,
-                child: Text('${p.topic}  (${p.chineseLabel})', overflow: TextOverflow.ellipsis),
+          ),
+          const SizedBox(height: 10),
+          Consumer<RecordingProvider>(
+            builder: (context, provider, _) {
+              final topics = presetTopicsByCategory[_selectedCategory]!;
+              return Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: topics.map((p) {
+                  final selected = _selectedPreset == p;
+                  return ChoiceChip(
+                    label: Text(
+                      p.chineseLabel,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
+                        color: selected ? Colors.white : (isDark ? Colors.grey[300] : Colors.black87),
+                      ),
+                    ),
+                    selected: selected,
+                    selectedColor: Colors.blueAccent,
+                    backgroundColor: isDark ? const Color(0xFF2A2A3E) : Colors.grey[100],
+                    side: BorderSide.none,
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    visualDensity: VisualDensity.compact,
+                    onSelected: (val) {
+                      if (val) setState(() => _selectedPreset = p);
+                    },
+                  );
+                }).toList(),
               );
-            }).toList(),
-            onChanged: (val) {
-              if (val != null) setState(() => _selectedPreset = val);
             },
           ),
           const SizedBox(height: 20),
