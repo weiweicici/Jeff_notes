@@ -370,9 +370,9 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                _buildIntroCard(isDark),
-                const SizedBox(height: 24),
                 _buildFormCard(isDark),
+                const SizedBox(height: 24),
+                _buildIntroCard(isDark),
                 const SizedBox(height: 24),
                 if (_errorMessage != null) _buildErrorCard(),
                 if (_isGenerating) _buildLoadingIndicator(isDark),
