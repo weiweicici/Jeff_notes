@@ -388,7 +388,7 @@ class RecordingProvider extends ChangeNotifier {
       _groqService = OpenAIService(
         apiKey: groqKey,
         baseUrl: "https://api.groq.com/openai/v1",
-        defaultModel: "llama-3.3-70b-versatile",
+        defaultModel: "openai/gpt-oss-120b",
         whisperModel: "whisper-large-v3",
       );
       debugPrint("Groq 服务创建完成");
@@ -397,7 +397,7 @@ class RecordingProvider extends ChangeNotifier {
     }
 
     // 2. 根据最速最省 Token 的多分配架构：
-    // - STT (快车轨) 必须用 Groq (llama-3.3-70b-versatile/whisper) 以追求极致英文字幕速度
+    // - STT (快车轨) 必须用 Groq (whisper) 以追求极致英文字幕速度
     // - 翻译/复盘 (主服务) 使用硅基流动 Qwen，备用硅基 Qwen-72B
     // - 滑动窗口摘要 (辅助AI服务) 使用硅基流动 Qwen-72B 以保障极佳的指令执行力，避免抢占主通道并发
     

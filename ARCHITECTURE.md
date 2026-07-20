@@ -114,7 +114,7 @@ The UI does not poll for summary completion. Instead, it uses a **Reactive Notif
 - **Translation (Real-Time)**: SiliconFlow (`Qwen/Qwen2.5-32B-Instruct`) as primary, SiliconFlow (`Qwen/Qwen2.5-72B-Instruct`) as secondary fallback.
 - **60s Sliding Summary (Background)**: SiliconFlow (`Qwen/Qwen2.5-72B-Instruct`).
 - **Final Summary (Intelligence)**: Primary `_aiService` (Qwen-32B) with fallback to `_summaryService` (Qwen-72B).
-- **Essay Generation**: Groq (`llama-3.3-70b-versatile`, ~10s) or SiliconFlow Qwen-32B (~30s) or SiliconFlow Qwen-72B (~60s).
+- **Essay Generation**: Groq (`openai/gpt-oss-120b`, ~10s) or SiliconFlow Qwen-32B (~30s) or SiliconFlow Qwen-72B (~60s).
 - **Framework**: Flutter 3.24.0+ (iOS 15.5+).
 
 ## 11. Supabase Cloud Sync (FileSyncAgent)
@@ -186,7 +186,7 @@ A completely independent module that reuses the `archives` table with `module='r
 ### 12.3 Services
 
 #### ReadingQuizService (reading_quiz_service.dart)
-Common Groq API caller with 5 static methods, all following the same pattern (read API key → call `llama-3.3-70b-versatile` → return markdown string):
+Common Groq API caller with 5 static methods, all following the same pattern (read API key → call `openai/gpt-oss-120b` → return markdown string):
 - `generateQuiz(text)` → 3 questions (main idea, detail, vocabulary)
 - `getSummary(text)` → structured Chinese summary with key arguments and English terms
 - `getTranslation(text)` → paragraph-by-paragraph bilingual translation
@@ -206,7 +206,7 @@ Private helper `_callGroq(systemPrompt, text)` reduces duplication.
 
 ### 12.5 AI Configuration
 All reading AI features use:
-- **Model**: Groq `llama-3.3-70b-versatile`
+- **Model**: Groq `openai/gpt-oss-120b`
 - **API Key**: Read from `SharedPreferences` key `api_key_groq` (shared with existing STT service)
 - **Temperature**: 0.5
 - **Timeout**: 60 seconds
@@ -237,7 +237,7 @@ Implements a **three-tier data source hierarchy** for retrieving academic gramma
 3. **Hardcoded Backup**: Falls back to offline asset data defined in `grammar_content.dart` if both cloud and cache access fail.
 
 ### 14.3 Service & Prompts (grammar_service.dart)
-Uses Groq API (`llama-3.3-70b-versatile` model) with specialized prompts configured in `PromptProvider`:
+Uses Groq API (`openai/gpt-oss-120b` model) with specialized prompts configured in `PromptProvider`:
 - **generateExercise(unit)**: Generates 5 target grammar practice questions based on unit objectives.
 - **askQuestion(unit, question)**: Provides contextual explanations for custom user queries about specific rules.
 - **correctSentence(sentence)**: Performs sentence correction, highlighting structural improvements.

@@ -6,7 +6,7 @@ import '../models.dart';
 
 class GrammarService {
   static const String _groqUrl = 'https://api.groq.com/openai/v1/chat/completions';
-  static const String _model = 'llama-3.3-70b-versatile';
+  static const String _model = 'openai/gpt-oss-120b';
 
   static Future<String?> _callGroq(String systemPrompt, String userMessage) async {
     final prefs = await SharedPreferences.getInstance();
