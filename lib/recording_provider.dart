@@ -993,11 +993,6 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   Future<String> generateEssayMatrix(String finalTopic, {String essayType = 'Comparison'}) async {
-    final key = geminiKey.trim();
-    if (key.isEmpty) {
-      throw Exception("Gemini API Key not configured. Please add your key in Settings.");
-    }
-
     const systemPrompt = """You are a simple, accessible English essay generator for English learners.
 Your task is to generate a standardized 5-paragraph essay based on the user's provided topic, followed by its precise Chinese translation.
 
@@ -1049,46 +1044,87 @@ Part 1: The English Essay with == highlighters.
 ---
 Part 2: The sentence-by-sentence Chinese translation.""";
 
-    final url = Uri.parse(
-      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key.trim()}",
-    );
+    // Try Gemini 2.5 Flash first
+    final geminiKey = this.geminiKey.trim();
+    if (geminiKey.isNotEmpty) {
+      try {
+        final url = Uri.parse(
+          "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$geminiKey",
+        );
 
+        final response = await http.post(
+          url,
+          headers: {"Content-Type": "application/json"},
+          body: jsonEncode({
+            "system_instruction": {
+              "parts": [{"text": systemPrompt}],
+            },
+            "contents": [
+              {
+                "parts": [
+                  {"text": "Type: $essayType\nTopic: $finalTopic"},
+                ],
+              },
+            ],
+            "generationConfig": {
+              "temperature": 0.7,
+            },
+          }),
+        ).timeout(const Duration(seconds: 120));
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final candidates = data['candidates'] as List?;
+          if (candidates != null && candidates.isNotEmpty) {
+            final parts = candidates[0]['content']?['parts'] as List?;
+            if (parts != null && parts.isNotEmpty) {
+              final text = parts[0]['text'] as String?;
+              if (text != null && text.trim().isNotEmpty) {
+                return text.trim();
+              }
+            }
+          }
+        }
+        debugPrint("[Essay] Gemini failed (${response.statusCode}), falling back to SiliconFlow Qwen...");
+      } catch (e) {
+        debugPrint("[Essay] Gemini exception: $e, falling back to SiliconFlow Qwen...");
+      }
+    } else {
+      debugPrint("[Essay] No Gemini key configured, using SiliconFlow Qwen...");
+    }
+
+    // Fallback: SiliconFlow Qwen via OpenAI-compatible API
+    final siliconKey = siliconFlowKey.trim();
+    if (siliconKey.isEmpty) {
+      throw Exception("Gemini API Key not configured and no SiliconFlow key available. Please add a key in Settings.");
+    }
+
+    final url = Uri.parse("https://api.siliconflow.cn/v1/chat/completions");
     final response = await http.post(
       url,
-      headers: {"Content-Type": "application/json"},
+      headers: {
+        "Authorization": "Bearer $siliconKey",
+        "Content-Type": "application/json",
+      },
       body: jsonEncode({
-        "system_instruction": {
-          "parts": [{"text": systemPrompt}],
-        },
-        "contents": [
-          {
-            "parts": [
-              {"text": "Type: $essayType\nTopic: $finalTopic"},
-            ],
-          },
+        "model": "Qwen/Qwen2.5-7B-Instruct",
+        "messages": [
+          {"role": "system", "content": systemPrompt},
+          {"role": "user", "content": "Type: $essayType\nTopic: $finalTopic"},
         ],
-        "generationConfig": {
-          "temperature": 0.7,
-        },
+        "temperature": 0.7,
+        "max_tokens": 4096,
       }),
     ).timeout(const Duration(seconds: 120));
 
     if (response.statusCode != 200) {
-      throw Exception("Gemini API error ${response.statusCode}: ${response.body}");
+      throw Exception("SiliconFlow Qwen error ${response.statusCode}: ${response.body}");
     }
 
     final data = jsonDecode(response.body);
-    final candidates = data['candidates'] as List?;
-    if (candidates == null || candidates.isEmpty) {
-      throw Exception("Gemini returned empty response");
-    }
-    final parts = candidates[0]['content']?['parts'] as List?;
-    if (parts == null || parts.isEmpty) {
-      throw Exception("Gemini response missing content parts");
-    }
-    final text = parts[0]['text'] as String?;
+    final text = data['choices']?[0]?['message']?['content'] as String?;
     if (text == null || text.trim().isEmpty) {
-      throw Exception("Gemini returned empty essay text");
+      throw Exception("SiliconFlow Qwen returned empty essay");
     }
     return text.trim();
   }
