@@ -358,13 +358,218 @@ To prevent cluttering the screen and blocking note text, `TtsPlayerBar` uses a s
    - Tapping any sentence calculates the precise target duration offset and immediately seeks audio playback (`seekEnglish` / `seekChinese`) to that exact position in real-time.
    - If audio is idle when tapped, speech automatically starts and seeks to the selected sentence in one fluid interaction.
 
-### 12.1 Headphone Safety & Automatic Interruption
-To prevent accidental sound leakage in quiet environments (e.g., libraries, classrooms), the system enforces strict audio output safety rules:
-- **AudioSession Playback Recovery (`ensurePlaybackSession`)**: Before every headphone check or TTS/recorded playback start, `TtsService` invokes `ensurePlaybackSession()` to switch `AudioSessionCategory` to `.playback` (clearing any residual `defaultToSpeaker` from recording) and calls `setActive(true)`.
-- **Strict Route Output Check (`currentRoute.outputs`)**: On iOS/macOS, `_queryCurrentRoute()` inspects active physical output ports (`AVAudioSession.currentRoute.outputs`). If `builtInSpeaker` or `builtInReceiver` is present in active outputs, it is IMMEDIATELY blocked (`return false`). It never relies solely on paired device lists (`getDevices()`) because paired Bluetooth headphones remain in `getDevices()` even when taken out of ears or when iOS switches active output to the speaker.
-- **Pre-Play Interruption & Retries**: `isHeadphonesConnected()` performs up to 3 retries (with 100ms intervals) to allow iOS hardware audio routing to settle after category activation. If no headphone output is active, playback is aborted with SnackBar notification (`⚠️ 未检测到耳机，请连接耳机后播放`).
-- **Disconnection Listener & Periodic Monitor**: Subscribes to `AudioSession.devicesChangedEventStream` as well as running a 1.5s periodic background monitor (`_headphoneMonitor`). If headphones are unplugged or taken out of ears, `stopAll()` is called immediately to prevent any speaker leakage.
-- **Microsoft Edge Neural TTS Protocol**: Uses `wss://speech.platform.bing.com` with `TrustedClientToken=6A5AA1D4EAFF4E9FB37E23D68491D6F4`, Chrome/Edge User-Agent, Origin `chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold`, and dynamic 100-nanosecond Windows FileTime `Sec-MS-GEC` token calculation.
+### 12.1 Headphone Safety & Automatic Interruption — Absolute Priority Logic
+
+> **设计原则**: 只要物理输出路由中包含任意一个耳机/蓝牙/AirPlay 端口，就视为"耳机已连接"，**无条件放行**。只有当所有输出端口都是扬声器/听筒时，才阻断播放。此逻辑绝对优先于任何其他检查。
+
+#### 12.1.1 核心检测算法 (`_queryCurrentRoute` / `_queryRoute`)
+
+两处实现完全一致（`tts_service.dart:241-301` 和 `audio_handler.dart:45-101`），通过 `AVAudioSession.currentRoute` 获取 iOS 系统**当前激活生效**的物理输出端口列表（`route.outputs`），然后对每个端口分类扫描：
+
+```dart
+for (final output in outputs) {
+  final t = output.portType;
+
+  // 扬声器端口（阻止播放的判定依据）
+  if (t == AVAudioSessionPort.builtInSpeaker ||
+      t == AVAudioSessionPort.builtInReceiver) {
+    hasSpeaker = true;
+  }
+  // 耳机/蓝牙/AirPlay 端口（放行的判定依据）
+  else if (t == AVAudioSessionPort.headphones ||
+           t == AVAudioSessionPort.bluetoothA2dp ||
+           t == AVAudioSessionPort.bluetoothLe ||
+           t == AVAudioSessionPort.bluetoothHfp ||
+           t == AVAudioSessionPort.airPlay ||
+           t == AVAudioSessionPort.usbAudio ||
+           t == AVAudioSessionPort.carAudio) {
+    hasHeadphone = true;
+  }
+}
+```
+
+#### 12.1.2 判定优先级（与之前版本的唯一区别）
+
+```dart
+// ✅ 正确逻辑（当前版本）: 耳机优先
+if (hasHeadphone) return true;       // 有一条耳机端口 → 放行
+if (hasSpeaker) return false;        // 只有扬声器端口 → 阻断
+return false;
+
+// ❌ 错误逻辑（旧版本）: 扬声器优先 — 导致蓝牙耳机连上时也被误拦截
+if (hasSpeaker) return false;        // 扬声器优先判死
+return hasHeadphone;
+```
+
+#### 12.1.3 为什么必须「耳机优先」
+
+**问题根源**: iOS 在连接蓝牙耳机（AirPods 等）时，`currentRoute.outputs` **经常同时包含** `builtInSpeaker` 和 `bluetoothA2dp` 两个端口。系统把内置扬声器作为 fallback 路由保留在列表中，但实际音频输出走的是蓝牙耳机。旧逻辑先检查 `hasSpeaker`，一旦发现扬声器就立即 `return false`，耳机判据根本没机会执行。
+
+**修正效果**: 先检查 `hasHeadphone`，只要路由中有任意白名单内的耳机/蓝牙/AirPlay 端口，立即放行。扬声器端口的存在不影响判断。这样无论 iOS 返回几条路由，只要耳机物理连接正常即可播放。
+
+#### 12.1.4 白名单端口完整说明
+
+| 端口类型 (AVAudioSessionPort) | 对应设备 | 是否放行 |
+|---|---|---|
+| `headphones` | 有线耳机 (3.5mm / Lightning / USB-C) | ✅ 放行 |
+| `bluetoothA2dp` | 蓝牙立体声耳机 (AirPods 音乐模式) | ✅ 放行 |
+| `bluetoothLe` | 蓝牙低功耗音频耳机 (LE Audio) | ✅ 放行 |
+| `bluetoothHfp` | 蓝牙免提耳机 (AirPods 通话模式) | ✅ 放行 |
+| `airPlay` | AirPlay 音箱/投送设备 | ✅ 放行 |
+| `usbAudio` | USB 音频设备 | ✅ 放行 |
+| `carAudio` | 车载音频系统 | ✅ 放行 |
+| `builtInSpeaker` | iPhone/iPad 内置扬声器 | ❌ 阻断 |
+| `builtInReceiver` | 听筒 (通话用) | ❌ 阻断 |
+| 其他 (hdmi/lineOut/displayPort 等) | — | ❌ 阻断 |
+
+#### 12.1.5 播前三重保障
+
+每次朗读前（`speakChinese` / `speakEnglish` / `speakRecordedAudio` / `playEnglish`），执行严格的串行流水线：
+
+```
+① AudioSession 还原 → ② 等待路由稳定 → ③ 耳机检测 (3次重试)
+```
+
+**第一步 — `ensurePlaybackSession()`:**
+```dart
+final session = await AudioSession.instance;
+await session.configure(const AudioSessionConfiguration(
+  avAudioSessionCategory: AVAudioSessionCategory.playback,  // 纯播放模式
+  avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+  avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+));
+await session.setActive(true);
+await _flutterTts.setIosAudioCategory(
+  IosTextToSpeechAudioCategory.playback,
+  [],
+  IosTextToSpeechAudioMode.spokenAudio,
+);
+```
+
+清除录音阶段残留的 `defaultToSpeaker`，确保 iOS 音频会话处于纯播放状态。在 `stopAll()` 中会调用 `session.setActive(false)` 释放会话，因此每次播放前都必须重新激活。
+
+**第二步 — 300ms 硬件路由稳定延迟：**
+```dart
+await Future.delayed(const Duration(milliseconds: 300));
+```
+
+等待 iOS 硬件音频路由在 `setActive(true)` 后完成切换。若延迟过短，`currentRoute.outputs` 可能还未反映真实端口状态。
+
+**第三步 — `isHeadphonesConnected()` 3 次重试：**
+```dart
+Future<bool> isHeadphonesConnected() async {
+  for (int i = 0; i < 3; i++) {
+    final connected = await _queryCurrentRoute();
+    if (connected) return true;           // 任一次成功即放行
+    if (i < 2) await Future.delayed(const Duration(milliseconds: 100));
+  }
+  return false;                           // 3 次都失败 → 阻断
+}
+```
+
+3 次重试解决 iOS 路由切换的瞬时抖动（如刚连上蓝牙耳机时路由尚未完全切换）。若最终失败，调用方（`speakChinese` 等）抛出 `Exception("NoHeadphones")`，UI 层 `TtsPlayerBar` 和 `NoteDetailScreen` 捕获后显示橙色 SnackBar：`⚠️ 未检测到耳机，请连接耳机后播放`。
+
+#### 12.1.6 播中实时监控
+
+一旦成功开始播放，启动两个并行的监听器，任何时刻检测到耳机断开立即 `stopAll()`：
+
+**监听器一 — `AudioSession.devicesChangedEventStream`**（初始化时注册）:
+```dart
+_devicesSubscription = session.devicesChangedEventStream.listen((event) async {
+  if (!isPlaying) return;
+  final hasHeadphoneRemoved = event.devicesRemoved.any((d) {
+    final t = d.type;
+    return t == AudioDeviceType.wiredHeadset ||
+           t == AudioDeviceType.wiredHeadphones ||
+           t == AudioDeviceType.bluetoothSco ||
+           t == AudioDeviceType.bluetoothA2dp ||
+           t == AudioDeviceType.bluetoothLe ||
+           t == AudioDeviceType.hearingAid ||
+           t == AudioDeviceType.airPlay ||
+           t == AudioDeviceType.usbAudio;
+  });
+  if (hasHeadphoneRemoved) {
+    debugPrint('[TtsService] Headphone device removed during playback → pausing.');
+    await pauseAll();
+  }
+});
+```
+
+**监听器二 — 100ms 高频轮询 `_headphoneMonitor`**（每次播放开始时启动）:
+```dart
+_headphoneMonitor = Timer.periodic(const Duration(milliseconds: 100), (_) async {
+  if (!isPlaying) { _stopHeadphoneMonitor(); return; }
+  if (!(await isHeadphonesConnected())) {
+    debugPrint('[TtsService] Headphone monitor — lost headphones/speaker selected during playback, stopping immediately.');
+    await stopAll();
+  }
+});
+```
+
+轮询周期 100ms 确保 AirPods 被摘下或蓝牙断开后在 200-300ms 内静音，极少可能漏音。
+
+**监听器三 — `audio_handler.dart` `playingStream`**:
+```dart
+player.playingStream.listen((playing) async {
+  if (!playing) return;
+  if (!(await _isHeadphonesConnected())) {
+    debugPrint('[AudioHandler] playingStream — no headphones, stopping immediately.');
+    await player.stop();
+  }
+});
+```
+
+作为最后一道防线，在 `just_audio` 开始播放时再次验证耳机状态。
+
+#### 12.1.7 调用链路全景
+
+```
+TtsPlayerBar / NoteDetailScreen 播放按钮
+  └─ speakChinese() / speakEnglish() / speakRecordedAudio()
+       ├─ init()
+       │    ├─ AudioSession.instance.configure(.playback)    ← 初始化会话
+       │    └─ AudioSession.instance.setActive(true)
+       ├─ stopAll()
+       │    ├─ _stopHeadphoneMonitor()                       ← 停止旧监控
+       │    ├─ _flutterTts.stop() / _audioPlayer.stop()      ← 停止所有播放
+       │    └─ AudioSession.instance.setActive(false)         ← 释放会话
+       ├─ ensurePlaybackSession()                             ← 重新激活
+       │    ├─ session.configure(.playback, none, spokenAudio)
+       │    └─ session.setActive(true)
+       ├─ Future.delayed(300ms)                               ← 等待路由稳定
+       ├─ isHeadphonesConnected() × 3 次重试
+       │    └─ _queryCurrentRoute()                           ← 检查 AV route.outputs
+       │         ├─ 有耳机端口 → return true ✓
+       │         └─ 只有扬声器 → return false ✗ → throw "NoHeadphones" → SnackBar
+       ├─ _audioPlayer.play() / _flutterTts.speak()
+       ├─ _startHeadphoneMonitor()                            ← 100ms 轮询监控
+       └─ notifyListeners()
+
+audio_handler.dart (独立守护)
+  ├─ devicesChangedEventStream → 断开时 stopAll()
+  ├─ playingStream → 播放瞬间二次检查耳机
+  └─ play() 锁屏按钮 → 拦截无耳机播放
+```
+
+#### 12.1.8 所有播放入口一览
+
+| 方法 | 文件 | 行号 | 触发场景 |
+|---|---|---|---|
+| `speakChinese()` | `tts_service.dart:415` | 420 | 朗读中文 MD 内容 |
+| `speakRecordedAudio()` | `tts_service.dart:895` | 900 | 播放课堂录音 |
+| `speakEnglish()` | `tts_service.dart:931` | 936 | 英文 TTS 朗读 |
+| `playEnglish()` | `tts_service.dart:1345` | 1348 | 续播(暂停后恢复) |
+| `playChinese()` | `tts_service.dart:1376` | — | 续播中文 |
+| `MyAudioHandler.play()` | `audio_handler.dart:106` | 107 | 锁屏/控制中心播放按钮 |
+| `playingStream` 监听 | `audio_handler.dart:27` | 29 | 任何 `just_audio` 开始播放瞬间 |
+| `_headphoneMonitor` | `tts_service.dart:213` | 218 | 播放期间每 100ms 巡检 |
+
+#### 12.1.9 为什么不用 `getDevices()` 替代 `currentRoute.outputs`
+
+`AudioSession.instance.getDevices()` 返回的是 iOS 系统**所有已配对/可用的音频设备列表**，而非当前**激活生效**的输出端口。例如：
+- AirPods 放在充电盒里（已配对但未佩戴）→ `getDevices()` 仍返回 AirPods → 错误放行
+- iPhone 连接了车载蓝牙但用户选择了扬声器播放 → `getDevices()` 仍返回车载蓝牙 → 错误放行
+- `currentRoute.outputs` 反映 iOS 此刻实际音频输出到哪个物理端口，是最准确的判定依据
 
 ### 12.2 iOS Platform Configuration & Background Playback
 To support background audio playback and system-level lock screen controls (lock screen control center) while maintaining strict safety, the audio session is configured as follows:
