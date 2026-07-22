@@ -178,6 +178,16 @@ class TtsService extends ChangeNotifier {
     _isInitialized = true;
   }
 
+  /// 生成锁屏标题：取文本前 maxChars 个字符，换行符替换为空格
+  String _formatLockscreenTitle(String text, {int maxChars = 100}) {
+    final cleaned = text
+        .replaceAll(RegExp(r'==|[*_~`#>|\[\]\(\)-]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (cleaned.length <= maxChars) return cleaned;
+    return '${cleaned.substring(0, maxChars)}…';
+  }
+
   /// 恢复并激活 iOS/Android 为 Category.playback 纯播放模式（消除录音残留的 defaultToSpeaker 模式）
   Future<void> ensurePlaybackSession() async {
     try {
@@ -541,8 +551,8 @@ class TtsService extends ChangeNotifier {
 
       await _flutterTts.speak(clean);
       globalAudioHandler.setPlaybackMetadata(
-        title: '中文大意 (iOS 原生语音)',
-        artist: 'Jeff Notes Native Speech',
+        title: _formatLockscreenTitle(clean),
+        artist: '中文 · iOS 原生语音',
         duration: _chineseNativeDuration,
       );
       _startHeadphoneMonitor();
@@ -560,8 +570,8 @@ class TtsService extends ChangeNotifier {
       _currentAudioType = ActiveAudioType.chinese;
       final duration = await _audioPlayer.setFilePath(cachedFile.path);
       globalAudioHandler.setPlaybackMetadata(
-        title: '中文大意 (微软 Edge 晓晓女声)',
-        artist: 'Jeff Notes Neural Voice',
+        title: _formatLockscreenTitle(clean),
+        artist: '中文 · 晓晓神经网络女声',
         duration: duration,
       );
       await _audioPlayer.setSpeed(_chineseSpeed);
@@ -614,8 +624,8 @@ class TtsService extends ChangeNotifier {
 
         final duration = await _audioPlayer.setFilePath(cachedFile.path);
         globalAudioHandler.setPlaybackMetadata(
-          title: '中文大意 (微软 Edge 晓晓女声)',
-          artist: 'Jeff Notes Neural Voice',
+          title: _formatLockscreenTitle(clean),
+          artist: '中文 · 晓晓神经网络女声',
           duration: duration,
         );
         await _audioPlayer.setSpeed(_chineseSpeed);
@@ -664,8 +674,8 @@ class TtsService extends ChangeNotifier {
 
       await _flutterTts.speak(clean);
       globalAudioHandler.setPlaybackMetadata(
-        title: '中文大意 (iOS 离线原生语音)',
-        artist: 'Jeff Notes Native Speech',
+        title: _formatLockscreenTitle(clean),
+        artist: '中文 · iOS 离线原生语音',
         duration: _chineseNativeDuration,
       );
       _startHeadphoneMonitor();
@@ -929,6 +939,10 @@ class TtsService extends ChangeNotifier {
     if (_currentAudioType == ActiveAudioType.chinese) {
       await _audioPlayer.stop();
       _currentAudioType = ActiveAudioType.none;
+      globalAudioHandler.setPlaybackMetadata(
+        title: 'Jeff Notes',
+        artist: '播放已停止',
+      );
       notifyListeners();
     }
   }
@@ -1041,8 +1055,8 @@ class TtsService extends ChangeNotifier {
 
       await _flutterTts.speak(clean);
       globalAudioHandler.setPlaybackMetadata(
-        title: '英文听力原声 (iOS 系统高保真美音)',
-        artist: 'Jeff Notes Native Speech',
+        title: _formatLockscreenTitle(clean),
+        artist: 'English · iOS Native Voice',
       );
       _startHeadphoneMonitor();
       notifyListeners();
@@ -1067,8 +1081,8 @@ class TtsService extends ChangeNotifier {
       _currentAudioType = ActiveAudioType.english;
       final duration = await _audioPlayer.setFilePath(cachedFile.path);
       globalAudioHandler.setPlaybackMetadata(
-        title: '英文听力原声 (神经网络播音女声 · Bella)',
-        artist: 'Jeff Notes Neural Voice',
+        title: _formatLockscreenTitle(clean),
+        artist: 'English · AI Neural Voice',
         duration: duration,
       );
       await _audioPlayer.setSpeed(_englishSpeed);
@@ -1133,8 +1147,8 @@ class TtsService extends ChangeNotifier {
 
         final duration = await _audioPlayer.setFilePath(cachedFile.path);
         globalAudioHandler.setPlaybackMetadata(
-          title: '英文听力原声 (神经网络播音女声 · Jenny)',
-          artist: 'Jeff Notes Neural Voice',
+          title: _formatLockscreenTitle(clean),
+          artist: 'English · AI Neural Voice',
           duration: duration,
         );
         await _audioPlayer.setSpeed(_englishSpeed);
@@ -1158,8 +1172,8 @@ class TtsService extends ChangeNotifier {
       await _flutterTts.setSpeechRate(_englishSpeed * 0.5);
       await _flutterTts.speak(clean);
       globalAudioHandler.setPlaybackMetadata(
-        title: '英文听力原声 (iOS 离线原生美音)',
-        artist: 'Jeff Notes Native Speech',
+        title: _formatLockscreenTitle(clean),
+        artist: 'English · iOS Native Voice',
       );
       _startHeadphoneMonitor();
       notifyListeners();
@@ -1466,6 +1480,10 @@ class TtsService extends ChangeNotifier {
     if (_currentAudioType == ActiveAudioType.english || _currentAudioType == ActiveAudioType.recorded) {
       await _audioPlayer.stop();
       _currentAudioType = ActiveAudioType.none;
+      globalAudioHandler.setPlaybackMetadata(
+        title: 'Jeff Notes',
+        artist: '播放已停止',
+      );
       notifyListeners();
     }
   }
