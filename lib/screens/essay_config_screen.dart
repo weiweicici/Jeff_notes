@@ -138,7 +138,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
   EssayCategory _selectedCategory = EssayCategory.school;
   PresetTopic _selectedPreset = presetTopicsByCategory[EssayCategory.school]!.first;
 
-  String _essayType = 'Comparison';
+  String _essayType = 'Argumentative';
 
   bool _isGenerating = false;
   String? _resultMarkdown;
@@ -159,7 +159,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
     return _selectedPreset.topic;
   }
 
-  String _getLoadingLabel() => "Invoking GPT-OSS-120B... (~5-15s)";
+  String _getLoadingLabel() => "AI 生成中... (~5-15s)";
 
   Future<void> _confirmAndGenerate() async {
     if (_finalTopic.isEmpty) {
@@ -457,12 +457,13 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
 
           TextField(
             controller: _customController,
+            keyboardType: TextInputType.text,
             style: TextStyle(color: isDark ? Colors.white : Colors.black87),
             decoration: InputDecoration(
-              labelText: "灵感输入（可选）",
-              hintText: "例如: wearing masks",
+              labelText: "自定义话题（输入英文）",
+              hintText: "例如: Should students wear school uniforms?",
               hintStyle: TextStyle(color: isDark ? Colors.grey[600] : Colors.grey[400], fontSize: 13),
-              helperText: "填此框则优先使用，忽略下方预设",
+              helperText: "填此框则优先使用，忽略下方预设；建议用完整问句",
               helperStyle: TextStyle(fontSize: 11, color: isDark ? Colors.grey[600] : Colors.grey[400]),
               labelStyle: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
               enabledBorder: OutlineInputBorder(

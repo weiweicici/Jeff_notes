@@ -992,7 +992,7 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
-  Future<String> generateEssayMatrix(String finalTopic, {String essayType = 'Comparison'}) async {
+  Future<String> generateEssayMatrix(String finalTopic, {String essayType = 'Argumentative'}) async {
     const systemPrompt = """You are a simple, accessible English essay generator for English learners.
 Your task is to generate a standardized 5-paragraph essay based on the user's provided topic, followed by its precise Chinese translation.
 
