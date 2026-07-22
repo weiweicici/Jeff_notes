@@ -733,8 +733,13 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                               totalCount: karaokeParas.length,
                               docTitle: docTitle,
                               isPlaying: isPlaying,
-                            );
-                            _liveActivityStarted = true;
+                            ).then((ok) {
+                              if (ok) {
+                                _liveActivityStarted = true;
+                              } else {
+                                debugPrint('[LiveActivity] start failed - check iOS Settings > Face ID & Passcode > Live Activities');
+                              }
+                            });
                           }
                         }
 

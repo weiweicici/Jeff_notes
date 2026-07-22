@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_config.dart';
 import 'wakelock_service.dart';
+import 'live_activity_service.dart';
 import '../main.dart';
 
 enum ActiveAudioType { none, chinese, english, recorded }
@@ -503,6 +504,15 @@ class TtsService extends ChangeNotifier {
     if (clean.isEmpty) return;
 
     WakelockService.enable();
+
+    LiveActivityService.start(
+      activeSentence: _formatLockscreenTitle(clean, maxChars: 200),
+      nextSentence: '',
+      currentIndex: 1,
+      totalCount: 1,
+      docTitle: '中文 TTS',
+      isPlaying: true,
+    );
 
     final textHash = md5.convert(utf8.encode(clean)).toString();
     final docsDir = await getApplicationDocumentsDirectory();
@@ -1024,6 +1034,15 @@ class TtsService extends ChangeNotifier {
 
     WakelockService.enable();
 
+    LiveActivityService.start(
+      activeSentence: _formatLockscreenTitle(clean, maxChars: 200),
+      nextSentence: '',
+      currentIndex: 1,
+      totalCount: 1,
+      docTitle: 'English TTS',
+      isPlaying: true,
+    );
+
     // ════════════════════════════════════════════════════════════════════
     // 方案一：iOS 系统原生高保真美音女声 (0.000秒秒开 · 0元0Token · 100%离线)
     // ════════════════════════════════════════════════════════════════════
@@ -1523,6 +1542,7 @@ class TtsService extends ChangeNotifier {
     _currentAudioType = ActiveAudioType.none;
     _isChineseSynthesizing = false;
     _isEnglishSynthesizing = false;
+    LiveActivityService.end();
     notifyListeners();
     // 释放音频会话独占，让麦克风可以被后续录音重新激活
     try {
