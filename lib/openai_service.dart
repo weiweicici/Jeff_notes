@@ -33,12 +33,11 @@ class OpenAIService {
   String _sanitizeResponse(String text) {
     String cleaned = text.trim();
     // 移除 AI 常见的开头废话
-    final preambleRegex = RegExp(r'^(Here is the review:|Review:|Analysis:|以下是复盘报告[:：]|翻译结果[:：])', caseSensitive: false);
+    final preambleRegex = RegExp(r'^(Here is the essay:|Here is the review:|Review:|Analysis:|以下是作文[:：]|以下是复盘报告[:：]|翻译结果[:：])', caseSensitive: false);
     cleaned = cleaned.replaceFirst(preambleRegex, '').trim();
     
-    // [Fix] 移除 AI 常见的末尾备注 (Note: ...)
-    final noteRegex = RegExp(r'\n?\(?Note:.*$', caseSensitive: false, dotAll: true);
-    cleaned = cleaned.replaceFirst(noteRegex, '').trim();
+    // 仅移除位于文档最末尾独立一行的备注 (防止强行跨行干掉整篇作文)
+    cleaned = cleaned.replaceFirst(RegExp(r'\n\s*\(?Note\s*:[^\n]*\)?$', caseSensitive: false), '').trim();
 
     final fenceRegex = RegExp(r'```[a-zA-Z]*\n?|```');
     cleaned = cleaned.replaceAll(fenceRegex, '').trim();

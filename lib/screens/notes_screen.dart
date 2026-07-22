@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'history_screen.dart';
+import 'note_detail_screen.dart';
 import '../widgets/academic_markdown.dart';
 import '../widgets/fade_in_slide_up.dart';
 import '../widgets/recording_pulse_fab.dart';
@@ -45,13 +47,22 @@ class _NotesScreenState extends State<NotesScreen> {
     final provider = context.read<RecordingProvider>();
     _sessionReadySub = provider.sessionReadyStream.listen((content) {
       if (!mounted) return;
-      
-      // ⚠️ 仅在学术学院模式才进行自动大弹窗展示
-      if (provider.currentSessionMode == AppMode.lecture) {
-        setState(() {
-          _pendingSummaryContent = content;
-        });
-        _showFinalReviewModalWithContent(context, content);
+
+      final path = provider.lastExportedPath;
+      if (path != null && File(path).existsSync()) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => NoteDetailScreen(file: File(path)),
+          ),
+        );
+      } else {
+        if (provider.currentSessionMode == AppMode.lecture) {
+          setState(() {
+            _pendingSummaryContent = content;
+          });
+          _showFinalReviewModalWithContent(context, content);
+        }
       }
     },
       onError: (error) {
@@ -252,7 +263,7 @@ class _NotesScreenState extends State<NotesScreen> {
             ),
           ),
           IconButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen())),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen(initialModuleFilter: 'notes'))),
             icon: const Icon(Icons.history_edu),
           ),
           IconButton(
@@ -473,7 +484,7 @@ class _NotesScreenState extends State<NotesScreen> {
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (context) => const HistoryScreen()),
+                              MaterialPageRoute(builder: (context) => const HistoryScreen(initialModuleFilter: 'notes')),
                             );
                           },
                         ),
@@ -567,17 +578,18 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   late AppMode _tempMode;
   late PathwaysUnit _tempUnit;
   late int _tempDuration;
-  late bool _tempUseBluetooth;
   late bool _tempIsDarkMode;
   late bool _tempEnableFinalRecap;
   late bool _tempEnableLectureDiscovery;
   late TextEditingController _groqController;
   late TextEditingController _openRouterController;
   late TextEditingController _siliconFlowController;
+  late TextEditingController _geminiController;
 
   bool _obscureGroq = true;
   bool _obscureOpenRouter = true;
   bool _obscureSiliconFlow = true;
+  bool _obscureGemini = true;
 
   @override
   void initState() {
@@ -586,13 +598,13 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     _tempMode = p.appMode;
     _tempUnit = p.currentUnit;
     _tempDuration = p.sliceDuration.clamp(5, 8);
-    _tempUseBluetooth = p.useBluetooth;
     _tempIsDarkMode = p.isDarkMode;
     _tempEnableFinalRecap = p.enableFinalRecap;
     _tempEnableLectureDiscovery = p.enableLectureDiscovery;
     _groqController = TextEditingController(text: p.groqKey);
     _openRouterController = TextEditingController(text: p.openRouterKey);
     _siliconFlowController = TextEditingController(text: p.siliconFlowKey);
+    _geminiController = TextEditingController(text: p.geminiKey);
   }
 
   @override
@@ -600,6 +612,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     _groqController.dispose();
     _openRouterController.dispose();
     _siliconFlowController.dispose();
+    _geminiController.dispose();
     super.dispose();
   }
 
@@ -608,10 +621,10 @@ class _SettingsDialogState extends State<_SettingsDialog> {
       groqKey: _groqController.text,
       siliconFlowKey: _siliconFlowController.text,
       openRouterKey: _openRouterController.text,
+      geminiKey: _geminiController.text,
       mode: _tempMode,
       unit: _tempUnit,
       duration: _tempDuration,
-      useBluetooth: _tempUseBluetooth,
       isDarkMode: _tempIsDarkMode,
       enableFinalRecap: _tempEnableFinalRecap,
       enableLectureDiscovery: _tempEnableLectureDiscovery,
@@ -691,12 +704,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               onChanged: (val) => setState(() => _tempIsDarkMode = val),
             ),
             SwitchListTile(
-              title: const Text('Use Bluetooth Mic'),
-              value: _tempUseBluetooth,
-              contentPadding: EdgeInsets.zero,
-              onChanged: (val) => setState(() => _tempUseBluetooth = val),
-            ),
-            SwitchListTile(
               title: const Text('Final Academic Recap'),
               value: _tempEnableFinalRecap,
               contentPadding: EdgeInsets.zero,
@@ -759,6 +766,20 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                 suffixIcon: IconButton(
                   icon: Icon(_obscureSiliconFlow ? Icons.visibility_off : Icons.visibility, size: 20),
                   onPressed: () => setState(() => _obscureSiliconFlow = !_obscureSiliconFlow),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _geminiController,
+              obscureText: _obscureGemini,
+              decoration: InputDecoration(
+                labelText: 'Gemini API Key',
+                helperText: 'Recommended: for Gemini 2.0 Flash HD Speech Synthesis',
+                helperStyle: TextStyle(fontSize: 10, color: isDark ? Colors.white38 : Colors.black38),
+                suffixIcon: IconButton(
+                  icon: Icon(_obscureGemini ? Icons.visibility_off : Icons.visibility, size: 20),
+                  onPressed: () => setState(() => _obscureGemini = !_obscureGemini),
                 ),
               ),
             ),

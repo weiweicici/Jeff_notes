@@ -9,14 +9,15 @@ Jeff Notes 是一款专为学术讲座、课堂记录设计的 iOS 实时转录�
     - **👥 讨论模式 (Discussion)**：捕捉多方观点冲突与共识，生成地道的中英双语口语复述稿（紫色主题，摘要卡片默认折叠）。
     - **💬 闲谈模式 (FreeTalk)**：纯双语实时转写翻译，跳过 AI 总结，直接导出精炼中英对照文本。
 - **跨云混编大脑**：
-    - **Groq (Whisper-large-v3)**：负责极速语音转写 (STT)，告别等待。
-    - **硅基流动 (Qwen 2.5-32B-Instruct)**：负责实时翻译与全篇复盘，导师级水准。
-    - **硅基流动 (Qwen 2.5-72B-Instruct)**：负责 60 秒滑动窗口语义摘要与翻译兜底，精准捕捉考点。
+    - **Groq (Whisper-large-v3 + openai/gpt-oss-120b)**：负责极速语音转写 (STT)、实时翻译与全篇复盘。
+    - **硅基流动 (CosyVoice2-0.5B Bella)**：负责英文拟真 AI 音色 TTS 合成。
+    - **Microsoft Edge 神经网络女声**：中英文 TTS 兜底方案。
+    - **Google Gemini 2.0 Flash**：英文 TTS 次级兜底方案。
 - **Session Isolation 架构**：
     - 录音与处理完全解耦，停止当前录音可立即开始下一场，AI 在后台静默完成总结。
 - **双轨 AI 管线 (Dual-Track Pipeline)**：
     - **快车道**：每 5-8 秒切片即时 STT，英文原文几乎零延迟呈现。
-    - **慢车道**：每段英文立即翻译（batchSize=1），中文翻译紧随其后，主服务故障自动切换到兜底模型。
+    - **慢车道**：每段英文立即翻译（batchSize=1），中文翻译紧随其后（使用 Groq openai/gpt-oss-120b，主服务与兜底为同一实例）。
 - **音频拼接 (Overlap-Stitch)**：
     - 25600 字节尾部重叠拼接，彻底杜绝切片边界断词。
 - **崩溃恢复 (Shadow Cache)**：
@@ -31,9 +32,9 @@ Jeff Notes 是一款专为学术讲座、课堂记录设计的 iOS 实时转录�
     - **双类型支持**：对比文 (Comparison) 和议论文 (Argumentative) 两种结构模板。
     - **自然学术文风**：无第一人称、230–280 字、5 段 × 每段 4 句、允许轻微真人笔误、`==双等号==` 标记自然过渡词。
     - **英文双示例 Prompt**：搭配 REGULATORY MATRIX（6 条硬约束）及两篇完整范文，AI 严格模仿范文结构、句式与节奏产出。
-    - 可选 Llama-3.3-70B / Qwen-32B / Qwen-72B 三种模型，支持自动重试、MD 自动保存、剪贴板复制与 PDF 导出。
+    - 使用 Groq (openai/gpt-oss-120b) 生成，支持自动重试、MD 自动保存、剪贴板复制与 PDF 导出。
 - **🔤 语法精讲 (Grammar Module)**：
-    - 针对 Focus on Grammar 4 的核心学术语法体系，结合 Groq (Llama-3.3-70b) 提供高精度交互式教学。
+    - 针对 Focus on Grammar 4 的核心学术语法体系，结合 Groq (openai/gpt-oss-120b) 提供高精度交互式教学。
     - 支持自动生成 5 道定制化语法练习题、针对特定语法概念的 AI 深度问答，以及句子语法纠错与重塑。
 - **🎧 TTS 语音合成与安全播放**：
     - **双轨朗读管线**：中文大意采用本地原生系统 TTS 引擎，毫秒级秒开无等待；英文原声采用 SiliconFlow 高拟真 AI 音色合成，配合 just_audio 实现精确的进度条拖拽与播放控制。

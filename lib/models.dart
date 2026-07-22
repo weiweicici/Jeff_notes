@@ -1,4 +1,4 @@
-enum AIProvider { groq, siliconFlow }
+enum AIProvider { groq, siliconFlow, gemini }
 enum AppMode { lecture, discussion, freeTalk }
 enum PromptStrategy { general, toeflIelts, scientific, humanities, recap, discovery, discussion, essay, grammar }
 enum PathwaysUnit {

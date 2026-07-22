@@ -148,7 +148,6 @@ class RecordingProvider extends ChangeNotifier {
   OpenAIService? _aiService;
   OpenAIService? _fastAiService;
   OpenAIService? _groqService;
-  OpenAIService? _summaryService;
   OpenAIService? _fallbackTranslationService;
   AIOrchestratorService? _orchestrator;
   final StreamController<String> _sessionReadyController = StreamController<String>.broadcast();
@@ -159,7 +158,6 @@ class RecordingProvider extends ChangeNotifier {
   
   AIProvider _selectedProvider = AIProvider.groq;
   int _sliceDuration = 5;
-  bool _useBluetooth = false;
   bool _isDarkMode = false;
   bool _enableFinalRecap = false;
   bool _enableLectureDiscovery = false;
@@ -169,6 +167,7 @@ class RecordingProvider extends ChangeNotifier {
   final Map<AIProvider, String> _apiKeys = {
     AIProvider.siliconFlow: "",
     AIProvider.groq: "",
+    AIProvider.gemini: "",
   };
 
   
@@ -197,7 +196,6 @@ class RecordingProvider extends ChangeNotifier {
   bool get isPending => _isPending;
   AIProvider get selectedProvider => _selectedProvider;
   int get sliceDuration => _sliceDuration;
-  bool get useBluetooth => _useBluetooth;
   bool get isDarkMode => _isDarkMode;
   bool get enableFinalRecap => _enableFinalRecap;
   bool get enableLectureDiscovery => _enableLectureDiscovery;
@@ -215,9 +213,11 @@ class RecordingProvider extends ChangeNotifier {
   AppMode get appMode => currentMode;
   AppMode get currentSessionMode => currentMode;
 
+  String get groqKey => _apiKeys[AIProvider.groq] ?? '';
+  String get siliconFlowKey => _apiKeys[AIProvider.siliconFlow] ?? '';
+  String get geminiKey => _apiKeys[AIProvider.gemini] ?? '';
+  String get openRouterKey => _openRouterKey;
 
-  // Track previously initialized keys to avoid redundant recreation
-  String _prevSiliconKey = "";
   String _prevGroqKey = "";
 
 
@@ -229,9 +229,6 @@ class RecordingProvider extends ChangeNotifier {
     await _checkRecoveryCache();
   }
 
-  String get groqKey => _apiKeys[AIProvider.groq] ?? "";
-  String get siliconFlowKey => _apiKeys[AIProvider.siliconFlow] ?? "";
-  String get openRouterKey => _openRouterKey;
 
   /// Returns clean Chinese + English full transcript for TTS playback.
   /// Only includes actual spoken content — no markdown headers, bullets or AI summaries.
@@ -265,13 +262,13 @@ class RecordingProvider extends ChangeNotifier {
     return buffer.toString();
   }
 
-  Future<void> updateSettings({
+    Future<void> updateSettings({
     String? groqKey,
     String? siliconFlowKey,
     String? openRouterKey,
+    String? geminiKey,
 
     int? duration,
-    bool? useBluetooth,
     bool? isDarkMode,
     bool? enableFinalRecap,
     bool? enableLectureDiscovery,
@@ -285,7 +282,6 @@ class RecordingProvider extends ChangeNotifier {
       await prefs.setInt('slice_duration', clamped);
       _sliceDuration = clamped;
     }
-    if (useBluetooth != null) { await prefs.setBool('use_bluetooth', useBluetooth); _useBluetooth = useBluetooth; }
     if (isDarkMode != null) { await prefs.setBool('is_dark_mode', isDarkMode); _isDarkMode = isDarkMode; }
     if (enableFinalRecap != null) { await prefs.setBool('enableFinalRecap', enableFinalRecap); _enableFinalRecap = enableFinalRecap; }
     if (enableLectureDiscovery != null) { await prefs.setBool('enableLectureDiscovery', enableLectureDiscovery); _enableLectureDiscovery = enableLectureDiscovery; }
@@ -307,17 +303,17 @@ class RecordingProvider extends ChangeNotifier {
       _apiKeys[AIProvider.siliconFlow] = trimmedKey;
       debugPrint("保存 SiliconFlow API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
     }
+    if (geminiKey != null) {
+      final trimmedKey = geminiKey.trim();
+      await prefs.setString('api_key_${AIProvider.gemini.name}', trimmedKey);
+      _apiKeys[AIProvider.gemini] = trimmedKey;
+      debugPrint("保存 Gemini API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
+    }
     if (openRouterKey != null) {
       final trimmedKey = openRouterKey.trim();
       await prefs.setString('api_key_openrouter', trimmedKey);
       _openRouterKey = trimmedKey;
       debugPrint("保存 OpenRouter API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
-    }
-    if (siliconFlowKey != null) {
-      final trimmedKey = siliconFlowKey.trim();
-      await prefs.setString('api_key_${AIProvider.siliconFlow.name}', trimmedKey);
-      _apiKeys[AIProvider.siliconFlow] = trimmedKey;
-      debugPrint("保存 SiliconFlow API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
     }
 
     _updateService();
@@ -327,7 +323,6 @@ class RecordingProvider extends ChangeNotifier {
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     _sliceDuration = (prefs.getInt('slice_duration') ?? 5).clamp(5, 8);
-    _useBluetooth = prefs.getBool('use_bluetooth') ?? false;
     _isDarkMode = prefs.getBool('is_dark_mode') ?? false;
     _enableFinalRecap = prefs.getBool('enableFinalRecap') ?? false;
     _enableLectureDiscovery = prefs.getBool('enableLectureDiscovery') ?? false;
@@ -344,120 +339,53 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   void _updateService() {
-    final siliconKey = _apiKeys[AIProvider.siliconFlow] ?? "";
     final groqKey = _apiKeys[AIProvider.groq] ?? "";
+    final groqChanged = groqKey != _prevGroqKey;
 
-    // 调试日志：打印硅基流动 API Key 的前6位字符
-    if (siliconKey.isNotEmpty) {
-      final prefix = siliconKey.length >= 6 ? siliconKey.substring(0, 6) : siliconKey;
-      debugPrint("硅基流动 API Key 读取成功，前6位: $prefix...");
-    } else {
-      debugPrint("硅基流动 API Key 为空或未找到");
-    }
-
-    // 调试日志：打印 Groq API Key 的前6位字符
-    if (groqKey.isNotEmpty) {
-      final prefix = groqKey.length >= 6 ? groqKey.substring(0, 6) : groqKey;
-      debugPrint("Groq API Key 读取成功，前6位: $prefix...");
-    } else {
-      debugPrint("Groq API Key 为空或未找到");
-    }
-
-
-    // 只在 key 变化时重新创建服务，避免重复初始化导致红屏
-    final bool siliconChanged = siliconKey != _prevSiliconKey;
-    final bool groqChanged = groqKey != _prevGroqKey;
-    if (!siliconChanged && !groqChanged && _orchestrator != null) {
-      // Keys 未变化且服务已初始化，直接返回，保持现有服务实例
+    if (!groqChanged && _orchestrator != null) {
       return;
     }
 
-    // 只有在真正变化（或首次初始化）时，才清理并重新创建
     _fastSub?.cancel();
     _accurateSub?.cancel();
     _orchestrator?.dispose();
 
-    // 更新记录的上一次键值
-    _prevSiliconKey = siliconKey;
     _prevGroqKey = groqKey;
 
     
-    // 1. 初始化 Groq 服务
+    // 1. 初始化 Groq 服务（STT 专用，独立实例避免并发干扰）
+    OpenAIService? groqSTT;
     if (groqKey.isNotEmpty) {
-      debugPrint("正在创建 Groq 服务，API Key 长度: ${groqKey.length}");
+      groqSTT = OpenAIService(
+        apiKey: groqKey,
+        baseUrl: "https://api.groq.com/openai/v1",
+        defaultModel: "openai/gpt-oss-120b",
+        whisperModel: "whisper-large-v3",
+      );
       _groqService = OpenAIService(
         apiKey: groqKey,
         baseUrl: "https://api.groq.com/openai/v1",
         defaultModel: "openai/gpt-oss-120b",
         whisperModel: "whisper-large-v3",
       );
-      debugPrint("Groq 服务创建完成");
+      debugPrint("Groq 服务创建完成 (STT + Chat 各一个独立实例)");
     } else {
+      groqSTT = null;
       _groqService = null;
     }
 
-    // 2. 根据最速最省 Token 的多分配架构：
-    // - STT (快车轨) 必须用 Groq (whisper) 以追求极致英文字幕速度
-    // - 翻译/复盘 (主服务) 使用硅基流动 Qwen，备用硅基 Qwen-72B
-    // - 滑动窗口摘要 (辅助AI服务) 使用硅基流动 Qwen-72B 以保障极佳的指令执行力，避免抢占主通道并发
-    
-    OpenAIService? mainTranslationService;
-    OpenAIService? fallbackTranslationService;
-    OpenAIService? summaryService;
-
-    // 使用硅基流动的 Qwen 2.5 32B 作为主翻译/复盘服务 (极速且性价比高)
-    if (siliconKey.isNotEmpty) {
-      debugPrint("正在创建硅基流动 Qwen-2.5-32B 主翻译/复盘服务");
-      mainTranslationService = OpenAIService(
-        apiKey: siliconKey,
-        baseUrl: "https://api.siliconflow.cn/v1",
-        defaultModel: "Qwen/Qwen2.5-32B-Instruct",
-        whisperModel: "FunAudioLLM/SenseVoiceSmall",
-      );
-    }
-
-    // 初始化硅基流动 72B 辅助服务（用于 60s 摘要和备用翻译/降级）
-    OpenAIService? silicon72BService;
-    if (siliconKey.isNotEmpty) {
-      debugPrint("正在创建硅基流动 Qwen-2.5-72B 辅助总结/兜底服务");
-      silicon72BService = OpenAIService(
-        apiKey: siliconKey,
-        baseUrl: "https://api.siliconflow.cn/v1",
-        defaultModel: "Qwen/Qwen2.5-72B-Instruct",
-        whisperModel: "FunAudioLLM/SenseVoiceSmall",
-      );
-      fallbackTranslationService = silicon72BService;
-      summaryService = silicon72BService;
-    }
-
-    // 确定最终绑定的服务对象
-    if (mainTranslationService != null) {
-      _aiService = mainTranslationService;
-      debugPrint("主翻译/复盘服务绑定为: 硅基流动 (Qwen-32B)");
-    } else if (_groqService != null) {
-      _aiService = _groqService;
-      debugPrint("主服务兜底绑定为: Groq");
+    // 2. 全量服务使用 Groq
+    if (_groqService != null) {
+      _aiService = _groqService;                      // 翻译/复盘
+      _fastAiService = groqSTT;                       // STT 独立实例
+      _fallbackTranslationService = _groqService;      // 备用翻译
+      debugPrint("全部 AI 服务绑定为: Groq (openai/gpt-oss-120b)");
     } else {
       _aiService = null;
-      debugPrint("警告：未绑定任何可用的 AI 主服务");
+      _fastAiService = null;
+      _fallbackTranslationService = null;
+      debugPrint("警告：Groq 服务不可用，AI 功能将不可用");
     }
-
-    // STT 固定使用 Groq
-    if (_groqService != null) {
-      _fastAiService = _groqService;
-      debugPrint("STT (快轨转录) 固定绑定为: Groq Whisper");
-    } else {
-      _fastAiService = _aiService;
-      debugPrint("警告：无 Groq 服务，STT 转录使用主服务替代");
-    }
-
-    // 绑定 Semantic 滑动窗口摘要服务（首选 Qwen/硅基，无则使用主 AI 服务）
-    _summaryService = summaryService ?? _aiService;
-    debugPrint("摘要服务绑定为: ${_summaryService?.baseUrl.contains('siliconflow') == true ? '硅基流动 (Qwen-72B)' : '主服务'}");
-
-    // 绑定备用翻译服务（硅基流动 Qwen），以便在主通道超时/故障时平滑切换
-    _fallbackTranslationService = fallbackTranslationService;
-    debugPrint("备用翻译服务绑定为: ${_fallbackTranslationService != null ? '硅基流动 (Qwen-72B)' : '无'}");
     
     if (_aiService != null && _fastAiService != null) {
       _orchestrator = AIOrchestratorService(
@@ -492,11 +420,9 @@ class RecordingProvider extends ChangeNotifier {
   Future<void> _initializeAudioSession() async {
     try {
       final session = await AudioSession.instance;
-      await session.configure(AudioSessionConfiguration(
+      await session.configure(const AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker |
-                                       AVAudioSessionCategoryOptions.allowBluetooth |
-                                       AVAudioSessionCategoryOptions.allowBluetoothA2dp,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker,
         avAudioSessionMode: AVAudioSessionMode.spokenAudio,
       ));
       // setActive may fail if another app holds the session; safe to ignore at init
@@ -512,11 +438,9 @@ class RecordingProvider extends ChangeNotifier {
       final session = await AudioSession.instance;
       await session.setActive(false);
       await Future.delayed(const Duration(milliseconds: 150));
-      await session.configure(AudioSessionConfiguration(
+      await session.configure(const AudioSessionConfiguration(
         avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker |
-                                       AVAudioSessionCategoryOptions.allowBluetooth |
-                                       AVAudioSessionCategoryOptions.allowBluetoothA2dp,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker,
         avAudioSessionMode: AVAudioSessionMode.spokenAudio,
       ));
       await session.setActive(true);
@@ -605,6 +529,10 @@ class RecordingProvider extends ChangeNotifier {
       } else {
         await _exportToMarkdown();
       }
+    }
+
+    if (_lastExportedPath != null) {
+      _sessionReadyController.add(_finalReviewContent ?? _lastExportedPath!);
     }
 
     // 修复 Bug 2: 录音结束后重置音频会话，让下次录音可立即开始
@@ -1064,36 +992,38 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
-  Future<String> generateEssayMatrix(String finalTopic, {String essayType = 'Comparison', String? model}) async {
-    OpenAIService? service;
-    if (model == 'llama70b') {
-      service = _groqService;
-    } else if (model == 'qwen32b') {
-      service = _aiService;
-    } else if (model == 'qwen72b') {
-      service = _summaryService;
-    }
-
-    service ??= _groqService ?? _aiService ?? _summaryService;
-
-    if (service == null) {
+  Future<String> generateEssayMatrix(String finalTopic, {String essayType = 'Comparison'}) async {
+    if (_groqService == null) {
       throw Exception("AI service not ready. Please configure API Keys in settings.");
     }
 
     final prompt = """You are an academic writing assistant inside a student's learning app. Your goal is to generate an "academic yet highly accessible" essay based strictly on the user's input topic. 
 
 ### 🔴 CRITICAL REGULATORY MATRIX (STRICTLY ENFORCED)
-1. TOTAL LENGTH: Strictly between 230 and 280 words.
+1. TOTAL LENGTH: Strictly between 230 and 280 words for the English essay.
 2. PARAGRAPH STRUCTURE: Exactly 5 paragraphs total (1 Intro, 3 Bodies, 1 Conclusion). Exactly 4 sentences per paragraph. Do not write more, do not write less.
 3. PERSPECTIVE: NO first-person pronouns allowed (DO NOT use I, me, my, we, us, our). Keep it completely objective and neutral.
 4. LOGICAL PILLARS: You must analyze the topic using three specific dimensions across the three body paragraphs: Cost, Happiness, and Time.
 5. HIGHLIGHT STRATEGY: Enclose the specific transition phrases in ==double equals== as shown in the examples. Use only plain, natural, student-level transition phrases. Do not use high-level test words (e.g., avoid "First and foremost", "Furthermore", "In addition to economic benefits").
 6. NATURAL FLAW INJECTION: You MUST deliberately inject exactly 1 or 2 natural grammar mistakes typical for Chinese English learners (e.g., subject-verb agreement error like "there is many people", omitting an article "go to university by bus", or a slight noun plural slip like "a daily fees").
+7. TWO-PART OUTPUT STRUCTURE (STRICTLY REQUIRED):
+   You MUST output the document in two distinct parts:
+   
+   ### Part 1: English Essay
+   (Write the complete 5-paragraph English essay following all instructions above)
+
+   ---
+
+   ### Part 2: 中文翻译
+   (Provide an accurate, elegant paragraph-by-paragraph Chinese translation of the 5 English paragraphs above)
+8. NO SUBHEADINGS: Do NOT insert any subheadings, headers, or markdown hashes (like ### or ##) inside Part 1 or Part 2. Only use double newlines between paragraphs.
 
 ---
 
 ### 📘 SHOT 1: ARGUMENTATIVE TYPE TEMPLATE (Use this exact structural framework for any new argumentative topic)
 Topic: Free school lunches
+
+### Part 1: English Essay
 
 School lunch is more than just food; it is a vital part of a student's daily life. Students need good food every day to stay healthy and focus on their classes. Recently, the topic of whether schools should provide free meals has sparked a heated debate. Obviously, free school lunches are the best choice, because this decision is highly beneficial in terms of both saving money and improving happiness.
 
@@ -1107,8 +1037,24 @@ School lunch is more than just food; it is a vital part of a student's daily lif
 
 ---
 
-### 📙 SHOT 2: COMPARISON TYPE TEMPLATE (Use this exact structural framework for any new comparison topic)
+### Part 2: 中文翻译
+
+学校午餐不仅仅是食物，更是学生日常生活中至关重要的一部分。学生每天都需要优质的食物来保持健康并专注于课堂。近来，学校是否应该提供免费午餐引发了热烈讨论。显而易见，提供免费午餐是最佳选择，因为这一决定在节省开支和提升幸福感方面都大有裨益。
+
+首先，提供免费午餐能显著减轻家庭的财务负担。许多家长每个月都要花大量资金为孩子购买学校午餐或食材。免费午餐让家庭能够把这笔钱节省下来，用于其他重要的教育需求。有许多家庭在日常开销中挣扎，因此这项政策对他们帮助极大。
+
+另一个重要点在于，免费午餐能极大提升学生的幸福感和学校的公平性。当每个学生都在一起吃同样的食物时，富裕与贫困孩子之间的社会差距就被缩小了。没有人会因为自己贫酸的午餐盒而感到孤立或尴尬。因此，一个友好快乐的校园环境得以成功塑造。
+
+然而，有人认为为所有人准备免费午餐会浪费太多学校时间。然而事实并非如此，因为在家里为孩子买饭或做午饭要花费家长更多的时间。免费午餐实际上让学校的一天更加高效，因为学生只需排队用餐，无需等待付款。因此，对于整所学校来说，这是一个极具时间效率的选择。
+
+总而言之，免费学校午餐为现代教育体系带来了极大的好处。它不仅为家长节省了大量成本，还让学生感到更加平等和幸福。因此，在学校实施这一政策显然更为明智。这一简单的改变必将为所有学生创造一个更加美好的未来。
+
+---
+
+### 📙 SHOT 2: COMPARISON TYPE TEMPLATE
 Topic: Free vs. Paid school lunches
+
+### Part 1: English Essay
 
 School lunch is more than just food; it is a vital part of a student's daily life. Students need good food every day to stay healthy and focus on their classes. There are two main ways to handle this issue, which are free school lunches and paid school lunches. Obviously, comparing these two options reveals significant differences in terms of financial cost, time management, and overall happiness.
 
@@ -1122,12 +1068,26 @@ School lunch is more than just food; it is a vital part of a student's daily lif
 
 ---
 
-Now, generate a brand new essay following the exact pattern, paragraph length (4 sentences per paragraph), style, and constraints demonstrated above for the following user request:
+### Part 2: 中文翻译
+
+学校午餐不仅仅是食物，更是学生日常生活中至关重要的一部分。学生每天都需要优质的食物来保持健康并专注于课堂。处理这个问题主要有两种方式，即免费学校午餐和付费学校午餐。显而易见，对比这两种选择可以在财务成本、时间管理和整体幸福感方面揭示出显著差异。
+
+首先，财务成本是两种选择之间的主要区别。免费学校午餐需要政府支付一切费用，从而为家长节省了资金。相反，付费学校午餐要求家庭支付日常费用，这会增加他们的每月开支。因此，这两种机制对家庭预算产生了截然相反的影响。
+
+在幸福感方面，这两种选择创造了截然不同的学生满意度。免费午餐让每个人都感到平等，因为所有学生都吃同样的食物，这提升了他们的整体幸福感。相比之下，如果低收入学生买不起好吃的食物，付费午餐可能会让他们感到悲伤或尴尬。当食物免费时，打造一个快乐的校园环境要容易得多。
+
+最后，比较这两种方法的时间效率也很重要。免费学校午餐节省了时间，因为学生不需要排队支付现金或携带午餐盒。然而，付费午餐可能会造成延误，因为每天处理付款都需要时间。虽然付费午餐可能提供更多选择，但它们在午休期间绝对浪费了更多时间。
+
+总而言之，免费和付费学校午餐都有其各自独特的特征。虽然免费午餐在节省成本和提高幸福感方面更好，但付费午餐尽管需要花费更多时间，却可能提供不同的选择。在审视了两个方面之后，学校必须仔细评估情况。了解这些差异有助于学校为其学生选择最佳方法。
+
+---
+
+Now, generate a brand new essay following the exact pattern, paragraph length (4 sentences per paragraph), two-part structure (Part 1 English Essay & Part 2 中文翻译), style, and constraints demonstrated above for the following user request:
 
 Type: $essayType
 Topic: $finalTopic""";
 
-    return await service.summarize(prompt, strategy: PromptStrategy.essay, mode: _currentMode, unit: _currentUnit);
+    return await _groqService!.summarize(prompt, strategy: PromptStrategy.essay, mode: _currentMode, unit: _currentUnit);
   }
 
   @override

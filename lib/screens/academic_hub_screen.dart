@@ -6,101 +6,12 @@ import 'essay_config_screen.dart';
 import 'reading_screen.dart';
 import 'grammar_screen.dart';
 import 'history_screen.dart';
+import 'smart_vocab_screen.dart';
 
 class AcademicHubScreen extends StatelessWidget {
   const AcademicHubScreen({super.key});
 
-  void _showBetaSheet(BuildContext context, String title, String featureName) {
-    showModalBottomSheet(
-      context: context,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        return Container(
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(28)),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withOpacity(0.2),
-                blurRadius: 20,
-                offset: const Offset(0, -5),
-              )
-            ],
-          ),
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
-          child: SafeArea(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 50,
-                  height: 5,
-                  decoration: BoxDecoration(
-                    color: isDark ? Colors.grey[700] : Colors.grey[300],
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                ),
-                const SizedBox(height: 28),
-                Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.deepPurple.withOpacity(0.1),
-                    shape: BoxShape.circle,
-                  ),
-                  child: const Icon(
-                    Icons.science_outlined,
-                    color: Colors.deepPurpleAccent,
-                    size: 40,
-                  ),
-                ),
-                const SizedBox(height: 20),
-                Text(
-                  title,
-                  style: TextStyle(
-                    fontSize: 22,
-                    fontWeight: FontWeight.bold,
-                    color: isDark ? Colors.white : Colors.black87,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 12),
-                Text(
-                  "“$featureName” 模块正在基于 SiliconFlow Qwen-72B 的学术论证与硬核句式重塑能力进行高精度的私有化对齐与模板微调，敬请期待！",
-                  style: TextStyle(
-                    fontSize: 14,
-                    color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    height: 1.5,
-                  ),
-                  textAlign: TextAlign.center,
-                ),
-                const SizedBox(height: 32),
-                SizedBox(
-                  width: double.infinity,
-                  height: 50,
-                  child: ElevatedButton(
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.deepPurpleAccent,
-                      foregroundColor: Colors.white,
-                      elevation: 0,
-                      shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(16),
-                      ),
-                    ),
-                    onPressed: () => Navigator.pop(context),
-                    child: const Text(
-                      "收到",
-                      style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-  }
+
 
   @override
   Widget build(BuildContext context) {
@@ -183,17 +94,17 @@ class AcademicHubScreen extends StatelessWidget {
                     ),
                     const SizedBox(height: 40),
                     
-                    // Card 1: Listening
+                    // 1. 学术听力同传
                     _buildHubCard(
                       context: context,
-                      title: "学术听力同传总结",
-                      subtitle: "Groq × Qwen 72B 实时提取考点",
+                      title: "🎧 学术听力同传",
+                      subtitle: "同声传译 × 智能总结",
                       icon: Icons.headphones_rounded,
                       isActive: true,
-                      tagText: "ACTIVE",
+                      tagText: "核心",
                       gradientColors: isDark
-                          ? [const Color(0xFF2C3E50), const Color(0xFF3498DB)]
-                          : [const Color(0xFFECF0F1), const Color(0xFFBDC3C7)],
+                          ? [const Color(0xFF1F3A60), const Color(0xFF3498DB)]
+                          : [const Color(0xFFE8F1F5), const Color(0xFFBEE3F8)],
                       onTap: () {
                         Navigator.push(
                           context,
@@ -201,129 +112,58 @@ class AcademicHubScreen extends StatelessWidget {
                         );
                       },
                     ),
-                    const SizedBox(height: 20),
+                    const SizedBox(height: 16),
 
-                    // Card 2: Essay
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          "Jeff's Writing Lab",
-                          style: TextStyle(
-                            fontSize: 18, 
-                            fontWeight: FontWeight.bold, 
-                            color: isDark ? Colors.white : Colors.black87,
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(24),
-                            gradient: LinearGradient(
-                              begin: Alignment.topLeft,
-                              end: Alignment.bottomRight,
-                              colors: isDark
-                                  ? [const Color(0xFF1E1E2F), const Color(0xFF1A1A26)]
-                                  : [Colors.white, const Color(0xFFFAFAFB)],
-                            ),
-                            boxShadow: [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
-                                blurRadius: 15,
-                                offset: const Offset(0, 8),
-                              )
-                            ],
-                            border: Border.all(
-                              color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04),
-                              width: 1,
-                            ),
-                          ),
-                          child: Material(
-                            color: Colors.transparent,
-                            child: InkWell(
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) => const EssayConfigScreen(),
-                                  ),
-                                );
-                              },
-                              borderRadius: BorderRadius.circular(24),
-                              splashColor: Colors.deepPurpleAccent.withOpacity(0.1),
-                              highlightColor: Colors.deepPurpleAccent.withOpacity(0.05),
-                              child: Padding(
-                                padding: const EdgeInsets.all(24.0),
-                                child: Row(
-                                  children: [
-                                    Container(
-                                      width: 56,
-                                      height: 56,
-                                      decoration: BoxDecoration(
-                                        shape: BoxShape.circle,
-                                        gradient: LinearGradient(
-                                          begin: Alignment.topLeft,
-                                          end: Alignment.bottomRight,
-                                          colors: isDark
-                                              ? [const Color(0xFF2980B9), const Color(0xFF6DD5FA)]
-                                              : [const Color(0xFFE0F7FA), const Color(0xFFB2EBF2)],
-                                        ),
-                                        boxShadow: [
-                                          BoxShadow(
-                                            color: const Color(0xFF6DD5FA).withOpacity(0.3),
-                                            blurRadius: 8,
-                                            offset: const Offset(0, 4),
-                                          )
-                                        ],
-                                      ),
-                                      alignment: Alignment.center,
-                                      child: const Text('✍️', style: TextStyle(fontSize: 26)),
-                                    ),
-                                    const SizedBox(width: 20),
-                                    Expanded(
-                                      child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            '对比文章模板写作',
-                                            style: TextStyle(
-                                              fontSize: 18, 
-                                              fontWeight: FontWeight.bold, 
-                                              color: isDark ? Colors.white : Colors.black87,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 6),
-                                          Text(
-                                            'Generate Similarities & Differences matrices with pure EAL chunks.',
-                                            style: TextStyle(
-                                              fontSize: 13, 
-                                              fontWeight: FontWeight.w400, 
-                                              color: isDark ? Colors.grey[400] : Colors.grey[600], 
-                                              height: 1.3,
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    const Icon(Icons.arrow_forward_ios, size: 16, color: Colors.grey),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 24),
+                    // 2. 对比作文写作
                     _buildHubCard(
                       context: context,
-                      title: "🔤 语法精讲",
-                      subtitle: "Focus on Grammar 4 × AI 练习",
+                      title: "✍️ 对比作文写作",
+                      subtitle: "对比论证 × 经典句型",
+                      icon: Icons.edit_note_rounded,
+                      isActive: true,
+                      tagText: "核心",
+                      gradientColors: isDark
+                          ? [const Color(0xFF1E4D6B), const Color(0xFF00B4DB)]
+                          : [const Color(0xFFE0F7FA), const Color(0xFFB2EBF2)],
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const EssayConfigScreen()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 3. 阅读精读剖析
+                    _buildHubCard(
+                      context: context,
+                      title: "📖 阅读精读剖析",
+                      subtitle: "截图 OCR × AI 出题",
+                      icon: Icons.menu_book_rounded,
+                      isActive: true,
+                      tagText: "进阶",
+                      gradientColors: isDark
+                          ? [const Color(0xFF1B4D3E), const Color(0xFF27AE60)]
+                          : [const Color(0xFFE8F5E9), const Color(0xFFC8E6C9)],
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(builder: (context) => const ReadingScreen()),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 4. Focus 语法精讲
+                    _buildHubCard(
+                      context: context,
+                      title: "🔤 Focus 语法精讲",
+                      subtitle: "Focus 4 体系 × AI 练习",
                       icon: Icons.text_fields_rounded,
                       isActive: true,
-                      tagText: "NEW",
+                      tagText: "基础",
                       gradientColors: isDark
-                          ? [const Color(0xFF6C3483), const Color(0xFF8E44AD)]
+                          ? [const Color(0xFF4A235A), const Color(0xFF8E44AD)]
                           : [const Color(0xFFF4ECF7), const Color(0xFFE8DAEF)],
                       onTap: () {
                         Navigator.push(
@@ -332,36 +172,23 @@ class AcademicHubScreen extends StatelessWidget {
                         );
                       },
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 16),
 
-                    // Card 3: Grammar
+                    // 5. 智能学术词库
                     _buildHubCard(
                       context: context,
-                      title: "硬核语法语法糖",
-                      subtitle: "高阶学术词汇平替",
-                      icon: Icons.spellcheck_rounded,
-                      isActive: false,
-                      tagText: "BETA",
-                      gradientColors: isDark
-                          ? [const Color(0xFFD35400), const Color(0xFFE67E22)]
-                          : [const Color(0xFFFDEBD0), const Color(0xFFF5CBA7)],
-                      onTap: () => _showBetaSheet(context, "硬核语法语法糖", "高阶学术词汇平替"),
-                    ),
-                    const SizedBox(height: 24),
-                    _buildHubCard(
-                      context: context,
-                      title: "阅读精读",
-                      subtitle: "截图OCR × AI出题",
-                      icon: Icons.menu_book_rounded,
+                      title: "📚 智能学术词库",
+                      subtitle: "高频考点 × 3D 翻牌复习",
+                      icon: Icons.style_rounded,
                       isActive: true,
-                      tagText: "NEW",
+                      tagText: "提炼",
                       gradientColors: isDark
-                          ? [const Color(0xFF1B6B3E), const Color(0xFF27AE60)]
-                          : [const Color(0xFFE8F5E9), const Color(0xFFC8E6C9)],
+                          ? [const Color(0xFF5D4037), const Color(0xFFD35400)]
+                          : [const Color(0xFFFDEBD0), const Color(0xFFF5CBA7)],
                       onTap: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => const ReadingScreen()),
+                          MaterialPageRoute(builder: (context) => const SmartVocabScreen()),
                         );
                       },
                     ),

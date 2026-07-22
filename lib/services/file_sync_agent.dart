@@ -31,6 +31,10 @@ class FileSyncAgent {
     _running = false;
   }
 
+  Future<void> syncNow() async {
+    await _syncOnce();
+  }
+
   Future<void> _syncOnce() async {
     try {
       final dir = await getApplicationDocumentsDirectory();
@@ -39,30 +43,35 @@ class FileSyncAgent {
       final uploaded = await UploadCache.load();
 
       for (final entity in files) {
-        final file = entity as File;
-        final bytes = await file.readAsBytes();
-        final hash = md5.convert(bytes).toString();
+        try {
+          final file = entity as File;
+          final bytes = await file.readAsBytes();
+          final hash = md5.convert(bytes).toString();
 
-        if (uploaded.contains(hash)) continue;
+          if (uploaded.contains(hash)) continue;
 
-        final module = _inferModule(file.path);
-        final title = file.path.split('/').last;
+          final module = _inferModule(file.path);
+          final title = file.path.split('/').last;
 
-        await SupabaseConfig.client.from('archives').insert({
-          'file_hash': hash,
-          'module': module,
-          'title': title,
-          'content_md': utf8.decode(bytes),
-          'file_size': bytes.length,
-        });
+          await SupabaseConfig.client.from('archives').insert({
+            'file_hash': hash,
+            'module': module,
+            'title': title,
+            'content_md': utf8.decode(bytes),
+            'file_size': bytes.length,
+          });
 
-        await UploadCache.mark(hash);
-        // ignore: avoid_print
-        print('[SyncAgent] Uploaded: $title ($module)');
+          await UploadCache.mark(hash);
+          // ignore: avoid_print
+          print('[SyncAgent] Uploaded: $title ($module)');
+        } catch (e) {
+          // ignore: avoid_print
+          print('[SyncAgent] Error syncing ${entity.path}: $e');
+        }
       }
     } catch (e) {
       // ignore: avoid_print
-      print('[SyncAgent] Error: $e');
+      print('[SyncAgent] Directory error: $e');
     }
   }
 

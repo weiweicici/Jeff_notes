@@ -9,10 +9,21 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   final AudioPlayer player = AudioPlayer();
 
   MyAudioHandler() {
-    player.playbackEventStream.map(_transformEvent).pipe(playbackState);
+    player.playbackEventStream.listen((event) {
+      playbackState.add(_transformEvent(event));
+    });
 
-    // Last line of defense: if playback starts (e.g. from lock screen or system
-    // auto-resume) without headphones, immediately intercept and stop.
+    // Instant device route change listener (AirPlay picker / headphone unplugged)
+    AudioSession.instance.then((session) {
+      session.devicesChangedEventStream.listen((_) async {
+        if (player.playing && !(await _isHeadphonesConnected())) {
+          debugPrint('[AudioHandler] Route changed to Speaker — stopping player immediately!');
+          await player.stop();
+        }
+      });
+    });
+
+    // Last line of defense: if playback starts without headphones, immediately stop.
     player.playingStream.listen((playing) async {
       if (!playing) return;
       if (!(await _isHeadphonesConnected())) {
@@ -22,51 +33,58 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     });
   }
 
-  /// 实时硬件耳机/蓝牙路由校验（先强制激活 AudioSession 刷新系统路由）
+  /// 实时硬件耳机/蓝牙路由校验（严格查验 iOS 当前生效的输出端口 currentRoute.outputs）
   Future<bool> _isHeadphonesConnected() async {
-    try {
-      final session = await AudioSession.instance;
-      await session.configure(AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
-        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-      ));
-      await session.setActive(true);
+    for (int i = 0; i < 3; i++) {
+      if (await _queryRoute()) return true;
+      if (i < 2) await Future.delayed(const Duration(milliseconds: 100));
+    }
+    return false;
+  }
 
+  Future<bool> _queryRoute() async {
+    try {
+      // 1. 对 iOS/macOS，直接核查系统【当前激活生效的输出端口 currentRoute.outputs】
       if (Platform.isIOS || Platform.isMacOS) {
         final avSession = AVAudioSession();
         final route = await avSession.currentRoute;
         final outputs = route.outputs;
 
-        debugPrint('[AudioHandler] iOS currentRoute outputs: ${outputs.map((o) => o.portType.name).join(", ")}');
+        if (outputs.isEmpty) return false;
 
-        if (outputs.isEmpty) {
-          try { await session.setActive(false); } catch (_) {}
-          return false;
-        }
+        bool hasSpeaker = false;
+        bool hasHeadphone = false;
 
         for (final output in outputs) {
           final t = output.portType;
-          if (t != AVAudioSessionPort.builtInSpeaker &&
-              t != AVAudioSessionPort.builtInReceiver) {
-            return true;
+          if (t == AVAudioSessionPort.builtInSpeaker ||
+              t == AVAudioSessionPort.builtInReceiver) {
+            hasSpeaker = true;
+          } else if (t == AVAudioSessionPort.headphones ||
+                     t == AVAudioSessionPort.bluetoothA2dp ||
+                     t == AVAudioSessionPort.bluetoothLe ||
+                     t == AVAudioSessionPort.bluetoothHfp ||
+                     t == AVAudioSessionPort.airPlay ||
+                     t == AVAudioSessionPort.usbAudio ||
+                     t == AVAudioSessionPort.carAudio) {
+            hasHeadphone = true;
           }
         }
 
-        try {
-          await session.setActive(false);
-        } catch (_) {}
+        if (hasHeadphone) {
+          return true;
+        }
+
+        if (hasSpeaker) {
+          return false;
+        }
+
         return false;
       }
 
-      // Android fallback
+      // 2. Android 硬件检查
+      final session = await AudioSession.instance;
       final devices = await session.getDevices();
-      if (devices.isEmpty) {
-        try {
-          await session.setActive(false);
-        } catch (_) {}
-        return false;
-      }
       for (final device in devices) {
         final type = device.type;
         if (type == AudioDeviceType.wiredHeadset ||
@@ -80,10 +98,6 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
           return true;
         }
       }
-
-      try {
-        await session.setActive(false);
-      } catch (_) {}
       return false;
     } catch (e) {
       debugPrint('[AudioHandler] Headphone check error: $e');
@@ -114,31 +128,51 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   @override
   Future<void> setSpeed(double speed) => player.setSpeed(speed);
 
-  /// Helper to change current media item information (title, artist, duration)
-  void setPlaybackMetadata({required String title, required String artist, Duration? duration}) {
+  VoidCallback? onSkipNext;
+  VoidCallback? onSkipPrevious;
+
+  @override
+  Future<void> skipToNext() async {
+    onSkipNext?.call();
+  }
+
+  @override
+  Future<void> skipToPrevious() async {
+    onSkipPrevious?.call();
+  }
+
+  /// Helper to change current media item information (title, artist, duration, artwork)
+  void setPlaybackMetadata({
+    required String title,
+    required String artist,
+    Duration? duration,
+    Duration? position,
+    bool? isPlaying,
+    Uri? artUri,
+  }) {
     mediaItem.add(MediaItem(
       id: 'tts_audio',
-      album: 'Jeff Notes',
+      album: 'Jeff Notes Academic',
       title: title,
       artist: artist,
-      duration: duration,
+      duration: duration ?? Duration.zero,
+      artUri: artUri,
     ));
   }
 
   PlaybackState _transformEvent(PlaybackEvent event) {
     return PlaybackState(
       controls: [
-        MediaControl.rewind,
+        MediaControl.skipToPrevious,
         if (player.playing) MediaControl.pause else MediaControl.play,
-        MediaControl.stop,
-        MediaControl.fastForward,
+        MediaControl.skipToNext,
       ],
       systemActions: const {
         MediaAction.seek,
-        MediaAction.seekForward,
-        MediaAction.seekBackward,
+        MediaAction.skipToNext,
+        MediaAction.skipToPrevious,
       },
-      androidCompactActionIndices: const [0, 1, 3],
+      androidCompactActionIndices: const [0, 1, 2],
       processingState: const {
         ProcessingState.idle: AudioProcessingState.idle,
         ProcessingState.loading: AudioProcessingState.loading,

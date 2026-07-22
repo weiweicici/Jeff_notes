@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import '../recording_provider.dart';
 import '../services/tts_service.dart';
 
 class TtsPlayerBar extends StatefulWidget {
@@ -30,11 +32,37 @@ class TtsPlayerBar extends StatefulWidget {
 }
 
 class _TtsPlayerBarState extends State<TtsPlayerBar> {
+  @override
+  void initState() {
+    super.initState();
+    final hasChinese = RegExp(r'[\u4e00-\u9fff]').hasMatch(widget.chineseText);
+    if (!hasChinese) {
+      final hasRecorded = widget.recordedAudioPath != null && widget.recordedAudioPath!.isNotEmpty;
+      _selectedTab = hasRecorded ? 2 : 1;
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _triggerEnglishPrefetch();
+    });
+  }
+
+  void _triggerEnglishPrefetch() {
+    if (widget.englishText.isNotEmpty && context.mounted) {
+      final provider = Provider.of<RecordingProvider>(context, listen: false);
+      TtsService().prefetchEnglish(
+        widget.englishText,
+        geminiKey: provider.geminiKey,
+        siliconFlowKey: widget.siliconFlowKey,
+      );
+    }
+  }
   bool _isDragging = false;
   double _dragValue = 0.0;
 
   bool _isChineseDragging = false;
   double _chineseDragValue = 0.0;
+
+  bool _isRecordedDragging = false;
+  double _recordedDragValue = 0.0;
 
   String _formatDuration(Duration? duration) {
     if (duration == null || duration == Duration.zero) return '00:00';
@@ -54,51 +82,125 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     );
   }
 
+  int _selectedTab = 0;
+
   @override
   Widget build(BuildContext context) {
     final tts = TtsService();
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final hasRecordedAudio = widget.recordedAudioPath != null && widget.recordedAudioPath!.isNotEmpty;
+    final hasChinese = RegExp(r'[\u4e00-\u9fff]').hasMatch(widget.chineseText);
+
+    // 自动跟随正在播放的声道无缝切换 Tab
+    if (tts.isChinesePlaying && hasChinese) {
+      _selectedTab = 0;
+    } else if (tts.isRecordedPlaying && hasRecordedAudio) {
+      _selectedTab = hasChinese ? 1 : 0;
+    } else if (tts.isEnglishPlaying) {
+      _selectedTab = (hasChinese ? 1 : 0) + (hasRecordedAudio ? 1 : 0);
+    }
 
     return ListenableBuilder(
       listenable: tts,
       builder: (context, _) {
         return Container(
-          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-          padding: const EdgeInsets.all(12),
+          margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+          padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             color: isDark ? const Color(0xFF1E1E2C) : Colors.grey[100],
-            borderRadius: BorderRadius.circular(16),
+            borderRadius: BorderRadius.circular(14),
             border: Border.all(
               color: isDark ? Colors.white12 : Colors.black.withOpacity(0.08),
             ),
             boxShadow: [
               BoxShadow(
                 color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
-                blurRadius: 10,
-                offset: const Offset(0, 4),
+                blurRadius: 8,
+                offset: const Offset(0, 3),
               ),
             ],
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              // ════════════════════════════════════════════════════════
-              // 🇨🇳 控制栏 1：中文大意（本地原生 TTS · 0 毫秒秒开）
-              // ════════════════════════════════════════════════════════
-              _buildChinesePlayerCard(context, tts, isDark),
+              // 顶部极简分段选择标签栏（仅占用一行 32px）
+              _buildSegmentedHeader(context, tts, isDark, hasRecordedAudio, hasChinese),
+              const SizedBox(height: 10),
 
-              const SizedBox(height: 12),
-              Divider(height: 1, color: isDark ? Colors.white12 : Colors.grey[300]),
-              const SizedBox(height: 12),
-
-              // ════════════════════════════════════════════════════════
-              // 🇬🇧 控制栏 2：英文原声（AI 拟真音色 + 精确进度条）
-              // ════════════════════════════════════════════════════════
-              _buildEnglishPlayerCard(context, tts, isDark),
+              // 下方仅渲染当前选中的 1 个播放控制卡片（大幅省下 65% 屏幕垂直空间）
+              if (hasChinese && _selectedTab == 0)
+                _buildChinesePlayerCard(context, tts, isDark)
+              else if (hasRecordedAudio && _selectedTab == (hasChinese ? 1 : 0))
+                _buildRecordedPlayerCard(context, tts, isDark)
+              else
+                _buildEnglishPlayerCard(context, tts, isDark),
             ],
           ),
         );
       },
+    );
+  }
+
+  /// 极简水平分段选择器
+  Widget _buildSegmentedHeader(BuildContext context, TtsService tts, bool isDark, bool hasRecordedAudio, bool hasChinese) {
+    final tabs = [
+      if (hasChinese) {'label': '🇨🇳 中文', 'index': 0},
+      if (hasRecordedAudio) {'label': '🎙️ 原音', 'index': hasChinese ? 1 : 0},
+      {'label': '🇬🇧 英文', 'index': (hasChinese ? 1 : 0) + (hasRecordedAudio ? 1 : 0)},
+    ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: isDark ? const Color(0xFF14141E) : Colors.grey[250],
+        borderRadius: BorderRadius.circular(10),
+      ),
+      padding: const EdgeInsets.all(3),
+      child: Row(
+        children: tabs.map((tab) {
+          final idx = tab['index'] as int;
+          final isSelected = _selectedTab == idx;
+          return Expanded(
+            child: GestureDetector(
+              onTap: () {
+                setState(() {
+                  _selectedTab = idx;
+                });
+              },
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 180),
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                decoration: BoxDecoration(
+                  color: isSelected
+                      ? (isDark ? const Color(0xFF2E2E42) : Colors.white)
+                      : Colors.transparent,
+                  borderRadius: BorderRadius.circular(8),
+                  boxShadow: isSelected
+                      ? [
+                          BoxShadow(
+                            color: Colors.black.withOpacity(0.08),
+                            blurRadius: 4,
+                            offset: const Offset(0, 2),
+                          )
+                        ]
+                      : [],
+                ),
+                child: Center(
+                  child: Text(
+                    tab['label'] as String,
+                    style: TextStyle(
+                      fontSize: 11,
+                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      color: isSelected
+                          ? (isDark ? Colors.white : Colors.black87)
+                          : (isDark ? Colors.white54 : Colors.black54),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }).toList(),
+      ),
     );
   }
 
@@ -113,13 +215,17 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
       children: [
         Row(
           children: [
-            const Icon(Icons.flash_on_rounded, size: 16, color: Colors.amber),
+            const Icon(Icons.interpreter_mode_rounded, size: 16, color: Colors.teal),
             const SizedBox(width: 6),
-            const Text(
-              '🇨🇳 中文大意 (0秒秒开 · 本地原生文件)',
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            Text(
+              tts.chineseEngine == ChineseTtsEngine.iosNative
+                  ? '🇨🇳 中文(iOS)'
+                  : '🇨🇳 中文(Edge)',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             ),
             const Spacer(),
+            _buildLoopModeButton(tts, isDark),
+            const SizedBox(width: 6),
             // 速度选择器（默认 1.25x）
             PopupMenuButton<double>(
               initialValue: currentSpeed,
@@ -142,17 +248,91 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             ),
           ],
         ),
+        const SizedBox(height: 6),
 
-        // 进度条（包含精准 Seek 功能）
+        // 中文方案一与方案二极简选择按钮
+        Container(
+          decoration: BoxDecoration(
+            color: isDark ? const Color(0xFF14141E) : Colors.grey[250],
+            borderRadius: BorderRadius.circular(8),
+          ),
+          padding: const EdgeInsets.all(2),
+          child: Row(
+            children: [
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => tts.setChineseEngine(ChineseTtsEngine.iosNative),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    decoration: BoxDecoration(
+                      color: tts.chineseEngine == ChineseTtsEngine.iosNative
+                          ? (isDark ? const Color(0xFF2E2E42) : Colors.white)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: tts.chineseEngine == ChineseTtsEngine.iosNative
+                          ? [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 3)]
+                          : [],
+                    ),
+                    child: Center(
+                      child: Text(
+                        '📱 iOS原生',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: tts.chineseEngine == ChineseTtsEngine.iosNative ? FontWeight.bold : FontWeight.normal,
+                          color: tts.chineseEngine == ChineseTtsEngine.iosNative
+                              ? (isDark ? Colors.amberAccent : Colors.teal)
+                              : (isDark ? Colors.white54 : Colors.black54),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: GestureDetector(
+                  onTap: () => tts.setChineseEngine(ChineseTtsEngine.edgeNeural),
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 180),
+                    padding: const EdgeInsets.symmetric(vertical: 5),
+                    decoration: BoxDecoration(
+                      color: tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                          ? (isDark ? const Color(0xFF2E2E42) : Colors.white)
+                          : Colors.transparent,
+                      borderRadius: BorderRadius.circular(6),
+                      boxShadow: tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                          ? [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 3)]
+                          : [],
+                    ),
+                    child: Center(
+                      child: Text(
+                        '🌐 微软Edge',
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: tts.chineseEngine == ChineseTtsEngine.edgeNeural ? FontWeight.bold : FontWeight.normal,
+                          color: tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                              ? (isDark ? Colors.cyanAccent : Colors.teal)
+                              : (isDark ? Colors.white54 : Colors.black54),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+
+        // 进度条（支持 60fps 动态实时刷新及精准 Seek）
         StreamBuilder<Duration?>(
           stream: tts.chineseDurationStream,
           builder: (context, durationSnap) {
-            final isActive = tts.currentAudioType == ActiveAudioType.chinese;
-            final duration = isActive ? (durationSnap.data ?? Duration.zero) : Duration.zero;
             return StreamBuilder<Duration>(
               stream: tts.chinesePositionStream,
               builder: (context, posSnap) {
-                final position = isActive ? (posSnap.data ?? Duration.zero) : Duration.zero;
+                final isActive = tts.currentAudioType == ActiveAudioType.chinese;
+                final duration = isActive ? (tts.currentDuration ?? durationSnap.data ?? Duration.zero) : Duration.zero;
+                final position = isActive ? (posSnap.data ?? tts.currentPosition) : Duration.zero;
                 final maxMs = duration.inMilliseconds.toDouble();
                 final streamMs = position.inMilliseconds
                     .toDouble()
@@ -227,7 +407,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               icon: const Icon(Icons.replay_10_rounded),
               iconSize: 22,
               onPressed: () async {
-                final pos = await tts.chinesePositionStream.first;
+                final pos = tts.currentPosition;
                 final newPos = pos - const Duration(seconds: 10);
                 await tts.seekChinese(newPos < Duration.zero ? Duration.zero : newPos);
               },
@@ -256,7 +436,16 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                     await tts.pauseChinese();
                   } else {
                     try {
-                      await tts.speakChinese(widget.chineseText);
+                      if (tts.currentAudioType == ActiveAudioType.chinese && tts.currentPosition > Duration.zero) {
+                        await tts.playChinese();
+                      } else {
+                        final provider = Provider.of<RecordingProvider>(context, listen: false);
+                        await tts.speakChinese(
+                          widget.chineseText,
+                          geminiKey: provider.geminiKey,
+                          siliconFlowKey: widget.siliconFlowKey,
+                        );
+                      }
                     } catch (e) {
                       if (!context.mounted) return;
                       if (e.toString().contains('NoHeadphones')) {
@@ -276,7 +465,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               icon: const Icon(Icons.forward_10_rounded),
               iconSize: 22,
               onPressed: () async {
-                final pos = await tts.chinesePositionStream.first;
+                final pos = tts.currentPosition;
                 await tts.seekChinese(pos + const Duration(seconds: 10));
               },
             ),
@@ -291,29 +480,199 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     );
   }
 
-  /// 构建英文 AI 控制卡片
-  Widget _buildEnglishPlayerCard(BuildContext context, TtsService tts, bool isDark) {
-    final isSynthesizing = tts.isEnglishSynthesizing;
-    final isPlaying = tts.isEnglishPlaying;
+  /// 构建真实课堂现场录音卡片
+  Widget _buildRecordedPlayerCard(BuildContext context, TtsService tts, bool isDark) {
+    final isPlaying = tts.isRecordedPlaying;
     final currentSpeed = tts.englishSpeed;
-    final hasRecordedAudio = widget.recordedAudioPath != null && widget.recordedAudioPath!.isNotEmpty;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(
-              hasRecordedAudio ? Icons.graphic_eq_rounded : Icons.auto_awesome,
-              size: 16,
-              color: hasRecordedAudio ? Colors.green : Colors.blueAccent,
-            ),
+            const Icon(Icons.graphic_eq_rounded, size: 16, color: Colors.green),
             const SizedBox(width: 6),
-            Text(
-              hasRecordedAudio ? '🇬🇧 英文原声音频 (真实课堂原音)' : '🇬🇧 英文原声 (AI 拟真音色 + 进度条)',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            const Text(
+              '🎙️ 现场原音',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             ),
             const Spacer(),
+            _buildLoopModeButton(tts, isDark),
+            const SizedBox(width: 6),
+            PopupMenuButton<double>(
+              initialValue: currentSpeed,
+              tooltip: '播放速度',
+              onSelected: (s) => tts.setEnglishSpeed(s),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                decoration: BoxDecoration(
+                  color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  '${currentSpeed}x',
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                ),
+              ),
+              itemBuilder: (_) => [0.75, 1.0, 1.25, 1.5, 2.0]
+                  .map((s) => PopupMenuItem<double>(value: s, child: Text('${s}x')))
+                  .toList(),
+            ),
+          ],
+        ),
+        StreamBuilder<Duration?>(
+          stream: tts.englishDurationStream,
+          builder: (context, durationSnap) {
+            final isActive = tts.currentAudioType == ActiveAudioType.recorded;
+            final duration = isActive ? (durationSnap.data ?? Duration.zero) : Duration.zero;
+            return StreamBuilder<Duration>(
+              stream: tts.englishPositionStream,
+              builder: (context, posSnap) {
+                final position = isActive ? (posSnap.data ?? Duration.zero) : Duration.zero;
+                final maxMs = duration.inMilliseconds.toDouble();
+                final streamMs = position.inMilliseconds.toDouble().clamp(0.0, maxMs > 0 ? maxMs : 1.0);
+                final displayMs = _isRecordedDragging ? _recordedDragValue : streamMs;
+
+                return Column(
+                  children: [
+                    SliderTheme(
+                      data: SliderTheme.of(context).copyWith(
+                        trackHeight: 3,
+                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                        activeTrackColor: Colors.green,
+                        inactiveTrackColor: isDark ? Colors.white24 : Colors.grey[300],
+                        thumbColor: Colors.green,
+                      ),
+                      child: Slider(
+                        min: 0.0,
+                        max: maxMs > 0 ? maxMs : 1.0,
+                        value: displayMs,
+                        onChangeStart: maxMs > 0
+                            ? (val) => setState(() {
+                                  _isRecordedDragging = true;
+                                  _recordedDragValue = val;
+                                })
+                            : null,
+                        onChanged: maxMs > 0
+                            ? (val) => setState(() => _recordedDragValue = val)
+                            : null,
+                        onChangeEnd: maxMs > 0
+                            ? (val) {
+                                tts.seekEnglish(Duration(milliseconds: val.toInt()));
+                                setState(() => _isRecordedDragging = false);
+                              }
+                            : null,
+                      ),
+                    ),
+                    Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            _formatDuration(
+                              _isRecordedDragging ? Duration(milliseconds: _recordedDragValue.toInt()) : position,
+                            ),
+                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                          ),
+                          Text(
+                            _formatDuration(duration),
+                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                );
+              },
+            );
+          },
+        ),
+        const SizedBox(height: 4),
+        Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.replay_10_rounded),
+              iconSize: 22,
+              onPressed: () async {
+                final pos = tts.currentPosition;
+                final newPos = pos - const Duration(seconds: 10);
+                await tts.seekEnglish(newPos < Duration.zero ? Duration.zero : newPos);
+              },
+            ),
+            const SizedBox(width: 8),
+            IconButton.filled(
+              iconSize: 24,
+              icon: Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
+              style: IconButton.styleFrom(
+                backgroundColor: Colors.green,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () async {
+                if (isPlaying) {
+                  await tts.pauseEnglish();
+                } else {
+                  try {
+                    await tts.speakRecordedAudio(widget.recordedAudioPath!);
+                  } catch (e) {
+                    if (!context.mounted) return;
+                    if (e.toString().contains('NoHeadphones')) {
+                      _showNoHeadphonesSnackBar(context);
+                    } else {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('播放错误: $e')),
+                      );
+                    }
+                  }
+                }
+              },
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.forward_10_rounded),
+              iconSize: 22,
+              onPressed: () async {
+                final pos = tts.currentPosition;
+                await tts.seekEnglish(pos + const Duration(seconds: 10));
+              },
+            ),
+            const SizedBox(width: 8),
+            IconButton(
+              icon: const Icon(Icons.stop_rounded, color: Colors.redAccent, size: 22),
+              onPressed: () => tts.stopEnglish(),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  /// 构建英文 AI 控制卡片
+  Widget _buildEnglishPlayerCard(BuildContext context, TtsService tts, bool isDark) {
+    final isSynthesizing = tts.isEnglishSynthesizing;
+    final isPlaying = tts.isEnglishPlaying;
+    final currentSpeed = tts.englishSpeed;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            const Icon(
+              Icons.auto_awesome,
+              size: 16,
+              color: Colors.blueAccent,
+            ),
+            const SizedBox(width: 6),
+            const Text(
+              '🇬🇧 英文AI',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            ),
+            const Spacer(),
+            _buildLoopModeButton(tts, isDark),
+            const SizedBox(width: 6),
             // 速度选择器
             PopupMenuButton<double>(
               initialValue: currentSpeed,
@@ -341,7 +700,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
         StreamBuilder<Duration?>(
           stream: tts.englishDurationStream,
           builder: (context, durationSnap) {
-            final isActive = tts.currentAudioType == ActiveAudioType.english || tts.currentAudioType == ActiveAudioType.recorded;
+            final isActive = tts.currentAudioType == ActiveAudioType.english;
             final duration = isActive ? (durationSnap.data ?? Duration.zero) : Duration.zero;
             return StreamBuilder<Duration>(
               stream: tts.englishPositionStream,
@@ -421,7 +780,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               icon: const Icon(Icons.replay_10_rounded),
               iconSize: 22,
               onPressed: () async {
-                final pos = await tts.englishPositionStream.first;
+                final pos = tts.currentPosition;
                 final newPos = pos - const Duration(seconds: 10);
                 await tts.seekEnglish(newPos < Duration.zero ? Duration.zero : newPos);
               },
@@ -450,11 +809,13 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                     await tts.pauseEnglish();
                   } else {
                     try {
-                      if (hasRecordedAudio) {
-                        await tts.speakRecordedAudio(widget.recordedAudioPath!);
+                      if (tts.currentAudioType == ActiveAudioType.english && tts.currentPosition > Duration.zero) {
+                        await tts.playEnglish();
                       } else {
+                        final provider = Provider.of<RecordingProvider>(context, listen: false);
                         await tts.speakEnglish(
                           widget.englishText,
+                          geminiKey: provider.geminiKey,
                           siliconFlowKey: widget.siliconFlowKey,
                         );
                       }
@@ -477,7 +838,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               icon: const Icon(Icons.forward_10_rounded),
               iconSize: 22,
               onPressed: () async {
-                final pos = await tts.englishPositionStream.first;
+                final pos = tts.currentPosition;
                 await tts.seekEnglish(pos + const Duration(seconds: 10));
               },
             ),
@@ -489,6 +850,40 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
           ],
         ),
       ],
+    );
+  }
+
+  Widget _buildLoopModeButton(TtsService tts, bool isDark) {
+    final isLoop = tts.isLoopMode;
+    return GestureDetector(
+      onTap: () => tts.toggleLoopMode(),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: (isLoop ? Colors.blueAccent : (isDark ? Colors.white : Colors.black)).withOpacity(isLoop ? 0.15 : 0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: isLoop ? Border.all(color: Colors.blueAccent.withOpacity(0.4), width: 1) : null,
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              isLoop ? Icons.repeat_one_rounded : Icons.repeat_rounded,
+              size: 13,
+              color: isLoop ? Colors.blueAccent : (isDark ? Colors.white70 : Colors.black54),
+            ),
+            const SizedBox(width: 3),
+            Text(
+              isLoop ? '无限循环' : '播放1次',
+              style: TextStyle(
+                fontSize: 10,
+                fontWeight: isLoop ? FontWeight.bold : FontWeight.normal,
+                color: isLoop ? Colors.blueAccent : (isDark ? Colors.white70 : Colors.black54),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }

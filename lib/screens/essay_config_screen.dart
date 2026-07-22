@@ -6,9 +6,15 @@ import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'package:path_provider/path_provider.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import '../recording_provider.dart';
 import '../widgets/academic_markdown.dart';
 import '../utils/pdf_service.dart';
+import '../services/supabase_config.dart';
+import 'note_detail_screen.dart';
+import '../services/upload_cache.dart';
+import '../services/file_sync_agent.dart';
 import 'history_screen.dart';
 
 enum EssayCategory {
@@ -133,7 +139,6 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
   PresetTopic _selectedPreset = presetTopicsByCategory[EssayCategory.school]!.first;
 
   String _essayType = 'Comparison';
-  String _selectedModel = 'llama70b';
 
   bool _isGenerating = false;
   String? _resultMarkdown;
@@ -141,12 +146,6 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
   String? _savedFilePath;
 
   final GlobalKey _pdfButtonKey = GlobalKey();
-
-  final List<Map<String, String>> _models = [
-    {"value": "llama70b", "label": "Llama 3.3 70B (Groq - ⚡ ~10s)"},
-    {"value": "qwen32b", "label": "Qwen 2.5 32B (硅基 - 🚀 ~30s)"},
-    {"value": "qwen72b", "label": "Qwen 2.5 72B (硅基 - 🐢 ~60s)"},
-  ];
 
   @override
   void dispose() {
@@ -160,18 +159,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
     return _selectedPreset.topic;
   }
 
-  String _getModelLabel(String val) {
-    for (var m in _models) {
-      if (m['value'] == val) return m['label'] ?? val;
-    }
-    return val;
-  }
-
-  String _getLoadingLabel() {
-    if (_selectedModel == 'llama70b') return "Invoking Llama-3.3-70B... (~5-15s)";
-    if (_selectedModel == 'qwen32b') return "Invoking Qwen-32B... (~15-40s)";
-    return "Invoking Qwen-72B... (~30-90s)";
-  }
+  String _getLoadingLabel() => "Invoking GPT-OSS-120B... (~5-15s)";
 
   Future<void> _confirmAndGenerate() async {
     if (_finalTopic.isEmpty) {
@@ -201,8 +189,6 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
             _confirmRow('话题', _finalTopic),
             const SizedBox(height: 6),
             _confirmRow('类型', _essayType == 'Comparison' ? '对比文 (Comparison)' : '议论文 (Argumentative)'),
-            const SizedBox(height: 6),
-            _confirmRow('模型', _getModelLabel(_selectedModel)),
           ],
         ),
         actions: [
@@ -254,18 +240,11 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
         _savedFilePath = savedPath;
         _isGenerating = false;
       });
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text(savedPath != null ? '✅ 已自动保存到历史记录' : '⚠️ 生成成功但自动保存失败'),
-            backgroundColor: savedPath != null ? Colors.green : Colors.orange,
-            action: savedPath != null
-                ? SnackBarAction(
-                    label: '查看',
-                    textColor: Colors.white,
-                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen())),
-                  )
-                : null,
+      if (mounted && savedPath != null && File(savedPath).existsSync()) {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(
+            builder: (_) => NoteDetailScreen(file: File(savedPath)),
           ),
         );
       }
@@ -282,7 +261,6 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       return await provider.generateEssayMatrix(
         _finalTopic,
         essayType: _essayType,
-        model: _selectedModel,
       );
     } catch (firstError) {
       debugPrint('[Essay] First attempt failed: $firstError — retrying in 5s...');
@@ -290,7 +268,6 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       return await provider.generateEssayMatrix(
         _finalTopic,
         essayType: _essayType,
-        model: _selectedModel,
       );
     }
   }
@@ -305,6 +282,27 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       final file = File('${directory.path}/$filename');
       await file.writeAsString(content);
       debugPrint('[Essay Export] Saved to ${file.absolute.path}');
+
+      // ── 立即同步上传作文到 Supabase 云端数据库 ──
+      try {
+        final bytes = await file.readAsBytes();
+        final hash = md5.convert(bytes).toString();
+        await SupabaseConfig.client.from('archives').insert({
+          'file_hash': hash,
+          'module': 'essay',
+          'title': filename,
+          'content_md': utf8.decode(bytes),
+          'file_size': bytes.length,
+        });
+        await UploadCache.mark(hash);
+        debugPrint('[Essay Supabase Upload OK] $filename');
+      } catch (uploadErr) {
+        debugPrint('[Essay Supabase Upload Error] $uploadErr');
+      }
+
+      // 触发后台同步服务处理任何未同步的笔记
+      FileSyncAgent.instance.syncNow();
+
       return file.absolute.path;
     } catch (e) {
       debugPrint('[Essay Export Error] $e');
@@ -346,7 +344,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
           IconButton(
             icon: const Icon(Icons.history_edu),
             tooltip: "查看历史记录",
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen())),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen(initialModuleFilter: 'essay'))),
           ),
           const SizedBox(width: 8),
         ],
@@ -562,31 +560,6 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
                 child: _buildEssayTypeChip('Argumentative', '📝 议论文', isDark),
               ),
             ],
-          ),
-          const SizedBox(height: 20),
-
-          DropdownButtonFormField<String>(
-            value: _selectedModel,
-            dropdownColor: isDark ? const Color(0xFF1E1E2F) : Colors.white,
-            style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 15),
-            decoration: InputDecoration(
-              labelText: "AI 模型",
-              labelStyle: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: isDark ? Colors.white10 : Colors.black12),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
-              ),
-            ),
-            items: _models.map((m) {
-              return DropdownMenuItem(value: m['value'], child: Text(m['label'] ?? ''));
-            }).toList(),
-            onChanged: (val) {
-              if (val != null) setState(() => _selectedModel = val);
-            },
           ),
           const SizedBox(height: 28),
 
