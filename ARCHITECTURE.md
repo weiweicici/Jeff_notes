@@ -49,7 +49,7 @@ All AI services are bound to **Groq** (`openai/gpt-oss-120b` for chat, `whisper-
 | Translation (Slow Track) | Groq | `openai/gpt-oss-120b` |
 | Translation Fallback | Groq | `openai/gpt-oss-120b` (same instance) |
 | Final Recap | Groq | `openai/gpt-oss-120b` |
-| Essay Generation | Groq | `openai/gpt-oss-120b` |
+| Essay Generation | Gemini | `gemini-2.5-flash` |
 | Reading AI (Quiz/Summary/Translation/Paraphrase/Vocab) | Groq | `openai/gpt-oss-120b` |
 | Grammar AI (Exercise/Question/Correction) | Groq | `openai/gpt-oss-120b` |
 
@@ -66,7 +66,7 @@ All AI services are bound to **Groq** (`openai/gpt-oss-120b` for chat, `whisper-
 | 实时翻译 | Groq | `openai/gpt-oss-120b` |
 | 翻译兜底 | Groq | `openai/gpt-oss-120b` (同一实例) |
 | 最终复盘 (Final Recap) | Groq | `openai/gpt-oss-120b` |
-| 作文生成 | Groq | `openai/gpt-oss-120b` |
+| 作文生成 | Gemini | `gemini-2.5-flash` |
 | 精读 AI (出题/摘要/翻译/转述/生词) | Groq | `openai/gpt-oss-120b` |
 | 语法 AI (出题/问答/纠错) | Groq | `openai/gpt-oss-120b` |
 | 英文 TTS 语音合成 | SiliconFlow (首选) | `FunAudioLLM/CosyVoice2-0.5B` Bella |
@@ -144,9 +144,9 @@ AcademicHubScreen (Home)
 - **46 Preset Topics in 11 Categories**: Transportation & Safety, Technology & Digital, Daily Life & Consumer, School & Study, Work & Career, Media & Entertainment, Health & Lifestyle, Environment & Sustainability, Society & Culture, Family & Relationships, Ethics & Technology Boundaries.
 - **Topic Picker**: `ChoiceChip` grid (`Wrap` layout) displays chinese-only labels for one-glance scanning; category switch reloads the grid instantly.
 - **Essay Type Toggle**: Comparison (Intro → Cost → Happiness → Time → Conclusion) or Argumentative (Intro → Cost → Happiness → Time-based Refutation → Conclusion).
-- **Cost · Time · Happiness Framework**: Every essay is structured around these three concrete angles, replacing vague "advantages/disadvantages" with measurable dimensions.
-- **AI Prompt** (in `RecordingProvider.generateEssayMatrix`): English 2-shot prompt with REGULATORY MATRIX (6 strict constraints) plus full Argumentative and Comparison essay examples. Models follow the shot examples to produce consistent structure, tone, and `==double equals==` transition marking.
-- **Model**: Groq `openai/gpt-oss-120b` (not Qwen). Auto-retry once on failure (5s delay).
+- **Cost · Time · Happiness Framework**: Essays are structured around these three concrete angles, replacing vague "advantages/disadvantages" with measurable dimensions. The flexible skeleton allows 4-5 sentences per paragraph with free ordering of Cost/Happiness/Time across body paragraphs — no rigid template enforcement.
+- **AI Prompt** (in `RecordingProvider.generateEssayMatrix`): Chinese system prompt with simple-vocabulary 大白话 style (避免复杂从句, 用最简单直白的语言说明道理, 像在跟一个初中生说话). Essays follow a skeleton (Topic Sentence → Why → Example → How it relates → Extra) but ordering of the three angles is free.
+- **Model**: Gemini `gemini-2.5-flash` via direct HTTP REST API (replaces former Groq `openai/gpt-oss-120b`). Requires Gemini API Key from Settings page. Auto-retry once on failure (5s delay).
 - **Export**: Auto-saves to Markdown (`Jeff_Essay_{topic}_{timestamp}.md`), clipboard copy, and PDF export via `PdfService`.
 
 ## 6. Event-Driven UI & Auto-Popup
@@ -180,7 +180,7 @@ The UI does not poll for summary completion. Instead, it uses a **Reactive Notif
 | 实时翻译 | Groq | `openai/gpt-oss-120b` | `recording_provider.dart:378-381` |
 | 翻译兜底 | Groq | `openai/gpt-oss-120b` (同一实例) | `recording_provider.dart:381` |
 | 最终复盘 (Final Recap) | Groq | `openai/gpt-oss-120b` | `recording_provider.dart:727` |
-| 作文生成 | Groq | `openai/gpt-oss-120b` | `recording_provider.dart:1043` |
+| 作文生成 | Gemini | `gemini-2.5-flash` | `recording_provider.dart:995-1063` |
 | 精读 AI (出题/摘要/翻译/转述/生词) | Groq | `openai/gpt-oss-120b` | `reading_quiz_service.dart:24` |
 | 语法 AI (出题/问答/纠错) | Groq | `openai/gpt-oss-120b` | `grammar_service.dart:9` |
 | 英文 TTS 语音合成 (首选) | **SiliconFlow** | `FunAudioLLM/CosyVoice2-0.5B` Bella | `tts_service.dart:943-978` |
@@ -620,7 +620,7 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 | 硅基流动 Qwen-72B 做翻译兜底 | Groq `openai/gpt-oss-120b` (同一实例) | 主服务和兜底服务是同一个 Groq 实例 |
 | 硅基流动 Qwen-72B 做 60s 滑动窗口总结 | **未实现** | `_performBatchSummary()` 方法不存在，`isSummary` 字段从未被写入 |
 | 硅基流动 Qwen-72B 做最终复盘 | Groq `openai/gpt-oss-120b` | `generateFinalAcademicReview()` 使用 `_aiService` (Groq) |
-| 作文生成可选 Llama-3.3-70B / Qwen-32B / Qwen-72B | 仅 Groq `openai/gpt-oss-120b` | `generateEssayMatrix()` 只调用 `_groqService!.summarize()` |
+| 作文生成可选 Llama-3.3-70B / Qwen-32B / Qwen-72B | 改为 Gemini `gemini-2.5-flash` REST API | `generateEssayMatrix()` 直接 HTTP 调用 `generativelanguage.googleapis.com`，Settings 中需配置 Gemini Key |
 | 硅基流动 SenseVoiceSmall 做 STT | 代码支持但实际未启用 | 实际 STT 走 Groq Whisper-v3 |
 | FreeTalk 使用硅基流动 Qwen 翻译 | 实际走 Groq `openai/gpt-oss-120b` | `_translateViaSiliconFlow()` 调用的是 `_aiService!.translate()` |
 | 英文 TTS 使用 SiliconFlow 高拟真 AI 音色 | ✅ **正确** | `CosyVoice2-0.5B` Bella 女声，失败后降级 |
