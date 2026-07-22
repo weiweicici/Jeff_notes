@@ -1,0 +1,12 @@
+{
+  "/Users/macmini/jeff_notes/ios/Widget/JeffNotesLiveActivity.swift" : {
+    "abi-baseline-json" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget.abi.json",
+    "const-values" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary.swiftconstvalues",
+    "dependencies" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary.d",
+    "diagnostics" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary.dia",
+    "objc-header" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-Swift.h",
+    "swiftdoc" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget.swiftdoc",
+    "swiftmodule" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget.swiftmodule",
+    "swiftsourceinfo" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget.swiftsourceinfo"
+  }
+}

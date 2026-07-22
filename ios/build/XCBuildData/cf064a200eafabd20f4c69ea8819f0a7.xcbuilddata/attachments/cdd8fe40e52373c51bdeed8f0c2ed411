@@ -1,0 +1,21 @@
+{
+  "" : {
+    "const-values" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary.swiftconstvalues",
+    "dependencies" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary.d",
+    "diagnostics" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary.dia",
+    "emit-module-dependencies" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary-emit-module.d",
+    "emit-module-diagnostics" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary-emit-module.dia",
+    "pch" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary-Bridging-header.pch",
+    "swift-dependencies" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/Widget-primary.swiftdeps"
+  },
+  "/Users/macmini/jeff_notes/ios/Widget/JeffNotesLiveActivity.swift" : {
+    "index-unit-output-path" : "/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/JeffNotesLiveActivity.o",
+    "llvm-bc" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/JeffNotesLiveActivity.bc",
+    "object" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/JeffNotesLiveActivity.o"
+  },
+  "/Users/macmini/jeff_notes/ios/Widget/WidgetBundle.swift" : {
+    "index-unit-output-path" : "/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/WidgetBundle.o",
+    "llvm-bc" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/WidgetBundle.bc",
+    "object" : "/Users/macmini/jeff_notes/ios/build/Runner.build/Release-iphoneos/Widget.build/Objects-normal/arm64/WidgetBundle.o"
+  }
+}

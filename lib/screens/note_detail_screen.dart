@@ -16,7 +16,7 @@ import '../models/vocab_card.dart';
 import '../services/vocab_service.dart';
 import '../services/vocab_extractor_service.dart';
 import 'smart_vocab_screen.dart';
-import '../services/subtitle_artwork_service.dart';
+import '../services/live_activity_service.dart';
 import '../services/wakelock_service.dart';
 import '../main.dart';
 
@@ -41,8 +41,8 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   bool _userIsInteracting = false;
   Timer? _resumeAutoScrollTimer;
   int _lastLockscreenKaraokeIdx = -1;
-  String? _lockscreenArtworkPath;
 
+  bool _liveActivityStarted = false;
   void _onUserInteractionStart() {
     _resumeAutoScrollTimer?.cancel();
     if (!_userIsInteracting) {
@@ -150,6 +150,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   void dispose() {
     _resumeAutoScrollTimer?.cancel();
     TtsService().stop();
+    LiveActivityService.end();
     WakelockService.disable();
     _textController.dispose();
     _karaokeScrollController.dispose();
@@ -704,29 +705,37 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                         if (_lastLockscreenKaraokeIdx != karaokeIdx) {
                           _lastLockscreenKaraokeIdx = karaokeIdx;
 
-                          // 仅在句子发生变化时向 iOS 锁屏/系统控制中心推送新的 MediaItem 描述
+                          // 系统控制中心 Now Playing（精简：只保留标题/艺术家）
                           globalAudioHandler.setPlaybackMetadata(
-                            title: '[${karaokeIdx + 1}/${karaokeParas.length}] $activeSentence',
-                            artist: nextText,
+                            title: '[$activeSentence]',
+                            artist: docTitle,
                             duration: duration,
                             position: position,
                             isPlaying: isPlaying,
-                            artUri: _lockscreenArtworkPath != null ? Uri.file(_lockscreenArtworkPath!) : null,
                           );
 
-                          SubtitleArtworkService.generateCardImage(
-                            docTitle: docTitle,
-                            activeSentence: activeSentence,
-                            upcomingSentences: upcomingSentences,
-                            activeIndex: karaokeIdx + 1,
-                            totalCount: karaokeParas.length,
-                          ).then((imgPath) {
-                            if (imgPath != null && mounted) {
-                              setState(() {
-                                _lockscreenArtworkPath = imgPath;
-                              });
-                            }
-                          });
+                          // Live Activity 锁屏大字字幕
+                          final nextSentence = upcomingSentences.isNotEmpty ? upcomingSentences.first : '';
+                          if (_liveActivityStarted) {
+                            LiveActivityService.update(
+                              activeSentence: activeSentence,
+                              nextSentence: nextSentence,
+                              currentIndex: karaokeIdx + 1,
+                              totalCount: karaokeParas.length,
+                              docTitle: docTitle,
+                              isPlaying: isPlaying,
+                            );
+                          } else {
+                            LiveActivityService.start(
+                              activeSentence: activeSentence,
+                              nextSentence: nextSentence,
+                              currentIndex: karaokeIdx + 1,
+                              totalCount: karaokeParas.length,
+                              docTitle: docTitle,
+                              isPlaying: isPlaying,
+                            );
+                            _liveActivityStarted = true;
+                          }
                         }
 
                         globalAudioHandler.onSkipNext = () {
