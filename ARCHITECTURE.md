@@ -571,6 +571,28 @@ audio_handler.dart (独立守护)
 - iPhone 连接了车载蓝牙但用户选择了扬声器播放 → `getDevices()` 仍返回车载蓝牙 → 错误放行
 - `currentRoute.outputs` 反映 iOS 此刻实际音频输出到哪个物理端口，是最准确的判定依据
 
+#### 12.1.10 AirPods 4 (LE Audio) 兼容性
+
+**问题症状**: AirPods 2（正版/华强北）可以正常播放，AirPods 4（正版 H2 芯片）持续报"未检测到耳机"。
+
+**根因分析**（三层）：
+
+1. **LE Audio 连接协商慢**: AirPods 4 使用 Bluetooth LE Audio (LC3 codec)，与传统 A2DP (SBC/AAC) 走不同的蓝牙协议栈。LE Audio 路由协商比 A2DP 慢约 400-800ms。旧轮询策略（20 × 100ms = 2 秒）在路由建立前就超时退出了。
+
+2. **`.spokenAudio` + `.allowBluetoothA2DP` 语义冲突**: `.spokenAudio` 要求系统用"语音优先低延迟通道"路由，`.allowBluetoothA2DP` 要求"高质量 A2DP 立体声"。iOS 26+ 严格拒绝这个矛盾组合，返回 `-50 kAudio_ParamError`。实际上 `.playback` 类别系统会自动处理 A2DP 路由，无需显式声明。
+
+3. **LE Audio 无公开 API**: iOS 对 LE Audio 采用"透明抽象"设计，无专用端口类型。AirPods 4 在 `currentRoute.outputs` 中的 portType 可能是 `bluetoothA2dp`、`bluetoothHfp`，或根本不出现（协商未完成时）。
+
+**修复方案**（三管齐下）：
+
+| 方案 | 做法 | 目的 |
+|------|------|------|
+| 延长轮询 | 20 × 200ms = 4 秒（原 100ms × 20） | 给 LE Audio 协商留足时间 |
+| 多次路由刷新 | 第 10 次（~2s）、第 15 次（~3s）调用 `overrideOutputAudioPort(.none)` | 强制 iOS 重新评估路由 |
+| portName 兜底 | `portName.contains("AirPods")` / `"Bluetooth"` / `"耳机"` | 绕过端口类型识别盲区 |
+
+**关键原则**: `AVAudioSessionCategoryOptions` 必须用 `.none`。`.playback` 类别下系统自动处理蓝牙路由，传任何 option flag（包括 `allowBluetoothA2DP`）都会在 iOS 26+ 触发 `-50` 参数错误。
+
 ### 12.2 iOS Platform Configuration & Background Playback
 To support background audio playback and system-level lock screen controls (lock screen control center) while maintaining strict safety, the audio session is configured as follows:
 - **AVAudioSessionCategory.playback**: When playing TTS or recorded audio, the session is set to `.playback` mode. This ensures that the system allows playback to continue when the screen is locked or the app is sent to the background.

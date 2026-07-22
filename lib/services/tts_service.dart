@@ -199,6 +199,13 @@ class TtsService extends ChangeNotifier {
         [],
         IosTextToSpeechAudioMode.spokenAudio,
       );
+      // 强制 iOS 重新评估路由，确保耳机被选中而非 stuck 在扬声器
+      if (Platform.isIOS) {
+        try {
+          final avSession = AVAudioSession();
+          await avSession.overrideOutputAudioPort(AVAudioSessionPortOverride.none);
+        } catch (_) {}
+      }
     } catch (e) {
       debugPrint('[TtsService] ensurePlaybackSession error: $e');
     }
@@ -206,6 +213,7 @@ class TtsService extends ChangeNotifier {
 
   StreamSubscription? _devicesSubscription;
   Timer? _headphoneMonitor;
+  String lastRouteDebug = '';
 
   void _startHeadphoneMonitor() {
     _stopHeadphoneMonitor();
@@ -227,12 +235,32 @@ class TtsService extends ChangeNotifier {
     _headphoneMonitor = null;
   }
 
-  /// 检查当前是否有耳机/蓝牙连接（最多重试 3 次，避免 iOS 路由切换延迟）。
+  /// 持续轮询检查耳机连接（每 200ms 查一次，最多 4 秒）。
+  /// 如果前 2 秒仍未检测到耳机，尝试强制 iOS 重新评估路由再继续轮询。
   Future<bool> isHeadphonesConnected() async {
-    for (int i = 0; i < 3; i++) {
+    lastRouteDebug = '';
+    const maxAttempts = 20;
+    for (int i = 0; i < maxAttempts; i++) {
       final connected = await _queryCurrentRoute();
-      if (connected) return true;
-      if (i < 2) await Future.delayed(const Duration(milliseconds: 100));
+      if (connected) {
+        lastRouteDebug = '';
+        return true;
+      }
+      if (i == 10 && Platform.isIOS) {
+        try {
+          final avSession = AVAudioSession();
+          await avSession.overrideOutputAudioPort(AVAudioSessionPortOverride.none);
+        } catch (_) {}
+      }
+      if (i == 15 && Platform.isIOS) {
+        try {
+          final avSession = AVAudioSession();
+          await avSession.overrideOutputAudioPort(AVAudioSessionPortOverride.none);
+        } catch (_) {}
+      }
+      if (i < maxAttempts - 1) {
+        await Future.delayed(const Duration(milliseconds: 200));
+      }
     }
     return false;
   }
@@ -240,49 +268,87 @@ class TtsService extends ChangeNotifier {
   /// 严密检查系统硬件与输出路由（允许耳机/蓝牙/AirPlay输出，坚决禁止扬声器外放）
   Future<bool> _queryCurrentRoute() async {
     try {
+      // 每次查询前重新配置会话，确保不被录音残留的 defaultToSpeaker 干扰
+      final session = await AudioSession.instance;
+      await session.configure(const AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+      ));
+      await session.setActive(true);
+
       // 1. 对 iOS/macOS，直接严密核查系统【当前激活生效的输出端口 currentRoute.outputs】
       if (Platform.isIOS || Platform.isMacOS) {
+        // A. 先用插件查（快速路径）
         final avSession = AVAudioSession();
         final route = await avSession.currentRoute;
         final outputs = route.outputs;
-        debugPrint('[TtsService] iOS active outputs: ${outputs.map((o) => o.portType.name).join(", ")}');
+        final pluginPortNames = outputs.map((o) => o.portType.name).join(", ");
+        debugPrint('[TtsService] plugin currentRoute outputs: $pluginPortNames');
 
-        if (outputs.isEmpty) return false;
-
-        bool hasSpeaker = false;
-        bool hasHeadphone = false;
-
-        for (final output in outputs) {
-          final t = output.portType;
-          if (t == AVAudioSessionPort.builtInSpeaker ||
-              t == AVAudioSessionPort.builtInReceiver) {
-            hasSpeaker = true;
-          } else if (t == AVAudioSessionPort.headphones ||
-                     t == AVAudioSessionPort.bluetoothA2dp ||
-                     t == AVAudioSessionPort.bluetoothLe ||
-                     t == AVAudioSessionPort.bluetoothHfp ||
-                     t == AVAudioSessionPort.airPlay ||
-                     t == AVAudioSessionPort.usbAudio ||
-                     t == AVAudioSessionPort.carAudio) {
-            hasHeadphone = true;
+        if (outputs.isNotEmpty) {
+          for (final output in outputs) {
+            final t = output.portType;
+            final n = output.portName;
+            if (t == AVAudioSessionPort.headphones ||
+                t == AVAudioSessionPort.bluetoothA2dp ||
+                t == AVAudioSessionPort.bluetoothLe ||
+                t == AVAudioSessionPort.bluetoothHfp ||
+                t == AVAudioSessionPort.airPlay ||
+                t == AVAudioSessionPort.usbAudio ||
+                t == AVAudioSessionPort.carAudio ||
+                n.contains('AirPods') ||
+                n.contains('Bluetooth') ||
+                n.contains('耳机')) {
+              lastRouteDebug = '';
+              return true;
+            }
           }
         }
 
-        // 如果当前生效 of 物理输出端口包含扬声器/听筒，哪怕后台勾着蓝牙，也坚决阻断外放！
-        if (hasHeadphone) {
-          return true;
-        }
-
-        if (hasSpeaker) {
-          debugPrint('[TtsService] iOS active route only has speaker — BLOCKED!');
-          return false;
-        }
-
+        // B. 插件的 currentRoute 只显示扬声器，用 getDevices() 兜底查是否有耳机类设备可用
+        try {
+          final devices = await session.getDevices(includeInputs: false);
+          final hasHeadphoneDevice = devices.any((d) =>
+            d.type == AudioDeviceType.wiredHeadset ||
+            d.type == AudioDeviceType.wiredHeadphones ||
+            d.type == AudioDeviceType.bluetoothSco ||
+            d.type == AudioDeviceType.bluetoothA2dp ||
+            d.type == AudioDeviceType.bluetoothLe ||
+            d.type == AudioDeviceType.hearingAid ||
+            d.type == AudioDeviceType.airPlay ||
+            d.type == AudioDeviceType.usbAudio ||
+            d.type == AudioDeviceType.carAudio ||
+            d.name.contains('AirPods') ||
+            d.name.contains('Bluetooth') ||
+            d.name.contains('耳机'));
+          if (hasHeadphoneDevice) {
+            debugPrint('[TtsService] getDevices found headphone — overriding route.');
+            await avSession.overrideOutputAudioPort(AVAudioSessionPortOverride.none);
+            await Future.delayed(const Duration(milliseconds: 200));
+            final retryRoute = await avSession.currentRoute;
+            if (retryRoute.outputs.any((o) =>
+              o.portType == AVAudioSessionPort.headphones ||
+              o.portType == AVAudioSessionPort.bluetoothA2dp ||
+              o.portType == AVAudioSessionPort.bluetoothLe ||
+              o.portType == AVAudioSessionPort.bluetoothHfp ||
+              o.portType == AVAudioSessionPort.airPlay ||
+              o.portType == AVAudioSessionPort.usbAudio ||
+              o.portType == AVAudioSessionPort.carAudio ||
+              o.portName.contains('AirPods') ||
+              o.portName.contains('Bluetooth') ||
+              o.portName.contains('耳机'))) {
+              lastRouteDebug = '';
+              return true;
+            }
+          }
+        } catch (_) {}
+        lastRouteDebug = 'only speaker/receiver: $pluginPortNames';
+        debugPrint('[TtsService] iOS route only has speaker — BLOCKED!');
         return false;
       }
 
-      // 2. Android 硬件检查
-      final session = await AudioSession.instance;
+      // 2. Android 硬件检查（session 已在 iOS 路径前声明）
       final devices = await session.getDevices();
       for (final device in devices) {
         final type = device.type;
@@ -421,7 +487,7 @@ class TtsService extends ChangeNotifier {
     await stopAll();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones");
+    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
 
     final clean = _sanitizeMarkdown(text);
     if (clean.isEmpty) return;
@@ -816,7 +882,7 @@ class TtsService extends ChangeNotifier {
   Future<void> playChinese() async {
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones");
+    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
     WakelockService.enable();
     _currentAudioType = ActiveAudioType.chinese;
     if (_isChineseNativePlaying || (_chineseNativePosition > Duration.zero && _chineseNativeDuration > Duration.zero)) {
@@ -901,7 +967,7 @@ class TtsService extends ChangeNotifier {
     await stopAll();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones");
+    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
 
     WakelockService.enable();
 
@@ -937,7 +1003,7 @@ class TtsService extends ChangeNotifier {
     await stopAll();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones");
+    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
 
     final clean = _sanitizeMarkdown(text);
     if (clean.isEmpty) return;
@@ -1106,47 +1172,81 @@ class TtsService extends ChangeNotifier {
 
   /// 微软 Edge 神经网络播音级英文女声合成 (Jenny / Ava)
   Future<List<int>> _synthesizeWithEdgeNeural(String text) async {
-    final chunks = _splitTextIntoChunks(text, maxChunkSize: 500);
+    final chunks = _splitTextIntoChunks(text, maxChunkSize: 600);
     final allMp3Bytes = <int>[];
 
     for (final chunk in chunks) {
-      final url = Uri.parse("https://eastus.tts.speech.microsoft.com/cognitiveservices/v1");
-      final ssml = "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'><voice name='en-US-JennyNeural'><prosody pitch='+0Hz' rate='+0%'>$chunk</prosody></voice></speak>";
+      bool chunkOk = false;
 
-      final response = await http.post(
-        url,
-        headers: {
-          "Content-Type": "application/ssml+xml",
-          "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
-          "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-        },
-        body: utf8.encode(ssml),
-      ).timeout(const Duration(seconds: 25));
+      // 1. Public Edge TTS Proxy Endpoint 1
+      if (!chunkOk) {
+        try {
+          final url = Uri.parse("https://edge-tts.duti.tech/api/tts");
+          final resp = await http.post(
+            url,
+            headers: {"Content-Type": "application/json"},
+            body: jsonEncode({
+              "text": chunk,
+              "voice": "en-US-JennyNeural",
+            }),
+          ).timeout(const Duration(seconds: 15));
+          if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
+            allMp3Bytes.addAll(resp.bodyBytes);
+            chunkOk = true;
+          }
+        } catch (_) {}
+      }
 
-      if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
-        allMp3Bytes.addAll(response.bodyBytes);
-      } else {
-        // 使用微软官方通用 TTS API 兜底
-        final fallbackUrl = Uri.parse("https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/single/tts?api-key=6A5AA1D4EA63472594685157EF9E74B3");
-        final fallbackResponse = await http.post(
-          fallbackUrl,
-          headers: {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-            "Content-Type": "application/ssml+xml",
-            "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
-          },
-          body: utf8.encode(ssml),
-        ).timeout(const Duration(seconds: 25));
+      // 2. Public Edge TTS Proxy Endpoint 2
+      if (!chunkOk) {
+        try {
+          final url = Uri.parse("https://tts.m8a.net/api/tts");
+          final resp = await http.post(
+            url,
+            headers: {"Content-Type": "application/json"},
+            body: jsonEncode({
+              "text": chunk,
+              "voice": "en-US-JennyNeural",
+            }),
+          ).timeout(const Duration(seconds: 15));
+          if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
+            allMp3Bytes.addAll(resp.bodyBytes);
+            chunkOk = true;
+          }
+        } catch (_) {}
+      }
 
-        if (fallbackResponse.statusCode == 200 && fallbackResponse.bodyBytes.isNotEmpty) {
-          allMp3Bytes.addAll(fallbackResponse.bodyBytes);
-        } else {
-          throw Exception("Edge Neural HTTP ${response.statusCode}");
-        }
+      // 3. 微软官方 Bing TTS API 兜底
+      if (!chunkOk) {
+        try {
+          final fallbackUrl = Uri.parse("https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/single/tts?api-key=6A5AA1D4EA63472594685157EF9E74B3");
+          final fallbackResp = await http.post(
+            fallbackUrl,
+            headers: {
+              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+              "Content-Type": "application/ssml+xml",
+              "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+            },
+            body: utf8.encode(
+              "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
+              "<voice name='en-US-JennyNeural'>"
+              "<prosody pitch='+0Hz' rate='+0%'>$chunk</prosody>"
+              "</voice></speak>",
+            ),
+          ).timeout(const Duration(seconds: 25));
+          if (fallbackResp.statusCode == 200 && fallbackResp.bodyBytes.isNotEmpty) {
+            allMp3Bytes.addAll(fallbackResp.bodyBytes);
+            chunkOk = true;
+          }
+        } catch (_) {}
+      }
+
+      if (!chunkOk) {
+        throw Exception("All Edge English endpoints returned empty");
       }
     }
 
-    if (allMp3Bytes.isEmpty) throw Exception("Edge Neural 返回了空数据");
+    if (allMp3Bytes.isEmpty) throw Exception("Edge Neural English returned empty data");
     return allMp3Bytes;
   }
 
@@ -1349,7 +1449,7 @@ class TtsService extends ChangeNotifier {
   Future<void> playEnglish() async {
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones");
+    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
     _currentAudioType = ActiveAudioType.english;
     await _audioPlayer.play();
     _startHeadphoneMonitor();

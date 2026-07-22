@@ -993,101 +993,104 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   Future<String> generateEssayMatrix(String finalTopic, {String essayType = 'Comparison'}) async {
-    if (_groqService == null) {
-      throw Exception("AI service not ready. Please configure API Keys in settings.");
+    final key = geminiKey.trim();
+    if (key.isEmpty) {
+      throw Exception("Gemini API Key not configured. Please add your key in Settings.");
     }
 
-    final prompt = """You are an academic writing assistant inside a student's learning app. Your goal is to generate an "academic yet highly accessible" essay based strictly on the user's input topic. 
+    const systemPrompt = """You are a simple, accessible English essay generator for English learners.
+Your task is to generate a standardized 5-paragraph essay based on the user's provided topic, followed by its precise Chinese translation.
 
-### 🔴 CRITICAL REGULATORY MATRIX (STRICTLY ENFORCED)
-1. TOTAL LENGTH: Strictly between 230 and 280 words for the English essay.
-2. PARAGRAPH STRUCTURE: Exactly 5 paragraphs total (1 Intro, 3 Bodies, 1 Conclusion). Exactly 4 sentences per paragraph. Do not write more, do not write less.
-3. PERSPECTIVE: NO first-person pronouns allowed (DO NOT use I, me, my, we, us, our). Keep it completely objective and neutral.
-4. LOGICAL PILLARS: You must analyze the topic using three specific dimensions across the three body paragraphs: Cost, Happiness, and Time.
-5. HIGHLIGHT STRATEGY: Enclose the specific transition phrases in ==double equals== as shown in the examples. Use only plain, natural, student-level transition phrases. Do not use high-level test words (e.g., avoid "First and foremost", "Furthermore", "In addition to economic benefits").
-6. NATURAL FLAW INJECTION: You MUST deliberately inject exactly 1 or 2 natural grammar mistakes typical for Chinese English learners (e.g., subject-verb agreement error like "there is many people", omitting an article "go to university by bus", or a slight noun plural slip like "a daily fees").
-7. TWO-PART OUTPUT STRUCTURE (STRICTLY REQUIRED):
-   You MUST output the document in two distinct parts:
-   
-   ### Part 1: English Essay
-   (Write the complete 5-paragraph English essay following all instructions above)
+### CORE CONCEPT (THE THREE CORE ASPECTS):
+Every essay must cover three practical perspectives: Cost (money/expenses), Happiness (mental state/feelings), and Time (convenience/efficiency). 
+You have FULL FLEXIBILITY to assign these three aspects across Body 1, Body 2, and Body 3 in whichever order best fits the topic!
 
-   ---
+### CRITICAL RULES (MUST FOLLOW STRICTLY):
+1. PARAGRAPH COUNT: EXACTLY 5 PARAGRAPHS.
+2. SENTENCE COUNT: 4 TO 5 SENTENCES PER PARAGRAPH (Maximum 5 sentences per paragraph). Never exceed 5 sentences!
+3. PERSPECTIVE: Objective 3rd-person.
+4. VOCABULARY: Very simple, everyday English (Junior High / High School level). NEVER use complex academic words (e.g., avoid "indispensable", "crucial", "facilitate", "paramount", "furthermore", "moreover").
+5. TRANSITIONS: Paragraphs 2 to 5 MUST include highlighted transitions wrapped in ==double equals== (e.g., ==First==, ==Second==, ==For example==, ==On the other hand==, ==However==, ==In conclusion==).
 
-   ### Part 2: 中文翻译
-   (Provide an accurate, elegant paragraph-by-paragraph Chinese translation of the 5 English paragraphs above)
-8. NO SUBHEADINGS: Do NOT insert any subheadings, headers, or markdown hashes (like ### or ##) inside Part 1 or Part 2. Only use double newlines between paragraphs.
+### FLEXIBLE 5-PARAGRAPH SKELETON (4-5 SENTENCES EACH):
 
+- Paragraph 1 (Intro - Standard 4-Step Structure):
+  Sentence 1 [Hook]: [Topic] is more than just [a simple topic]; it is a vital part of a student's daily life.
+  Sentence 2 [Background Info]: Explain simply why people care about this topic in daily life.
+  Sentence 3 [Controversy/Problem]: Recently, the topic of [Topic] has sparked a discussion among schools and families.
+  Sentence 4 [Thesis Statement]: Obviously, [Main position] is the best choice, because this decision is highly beneficial in terms of saving money, improving happiness, and saving time (adjust order to match your body paragraphs).
+
+- Paragraph 2 (Body 1 - Support Aspect A):
+  Choose whichever aspect (Cost, Happiness, or Time) is easiest and most direct to argue first.
+  Sentence 1: ==First==, [Topic] affects [Aspect A].
+  Sentence 2-5: Use 3 to 4 simple sentences to explain why or how, ending with a clean summary sentence.
+
+- Paragraph 3 (Body 2 - Support Aspect B + Example):
+  Choose a second aspect (Cost, Happiness, or Time) that naturally fits a real-life example.
+  Sentence 1: ==Second==, [Topic] also impacts [Aspect B].
+  Sentence 2: Explain the main point simply.
+  Sentence 3-4 [Concrete Example]: Introduce a short, everyday example using ==For example==,.
+  Sentence 5 (Optional): Summarize the benefit.
+
+- Paragraph 4 (Body 3 - Flexible Concession & Refutation on Aspect C):
+  Use the remaining aspect (Cost, Happiness, or Time) to show a slight opposing view, then counter it.
+  Sentence 1: Mention a weak point or opposite argument regarding [Aspect C] (e.g., "==On the other hand==, ==some people argue...==" or "==Although== [Topic] is not perfect...").
+  Sentences 2-5: Use 2 to 4 simple sentences (incorporating ==However==, or similar natural transition) to counter this idea or show why our main choice is still better in terms of [Aspect C].
+  Tone: Natural, flexible, and simple. Do NOT force complex academic refutation logic.
+
+- Paragraph 5 (Conclusion):
+  Sentence 1: ==In conclusion==, [Topic] brings clear benefits to our lives.
+  Sentences 2-4: Reiterate the three aspects (Cost, Happiness, Time) in simple sentences to close the essay smoothly.
+
+### OUTPUT FORMAT REQUIREMENT:
+The output MUST strictly contain two parts separated by ---:
+
+Part 1: The English Essay with == highlighters.
 ---
+Part 2: The sentence-by-sentence Chinese translation.""";
 
-### 📘 SHOT 1: ARGUMENTATIVE TYPE TEMPLATE (Use this exact structural framework for any new argumentative topic)
-Topic: Free school lunches
+    final url = Uri.parse(
+      "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key.trim()}",
+    );
 
-### Part 1: English Essay
+    final response = await http.post(
+      url,
+      headers: {"Content-Type": "application/json"},
+      body: jsonEncode({
+        "system_instruction": {
+          "parts": [{"text": systemPrompt}],
+        },
+        "contents": [
+          {
+            "parts": [
+              {"text": "Type: $essayType\nTopic: $finalTopic"},
+            ],
+          },
+        ],
+        "generationConfig": {
+          "temperature": 0.7,
+        },
+      }),
+    ).timeout(const Duration(seconds: 120));
 
-School lunch is more than just food; it is a vital part of a student's daily life. Students need good food every day to stay healthy and focus on their classes. Recently, the topic of whether schools should provide free meals has sparked a heated debate. Obviously, free school lunches are the best choice, because this decision is highly beneficial in terms of both saving money and improving happiness.
+    if (response.statusCode != 200) {
+      throw Exception("Gemini API error ${response.statusCode}: ${response.body}");
+    }
 
-==To begin with==, providing free meals significantly reduces the financial burden on families. Many parents spend a lot of money every month to buy school lunches or groceries for their children. Free lunches allow families to save this money for other important educational needs. *There is many families* who struggle with daily expenses, so this policy helps them a lot.
-
-==Another important point is that== free lunches greatly improve student happiness and school equality. When every student eats the same food together, it reduces the social gap between rich and poor children. No one feels left out or embarrassed because of their poor lunch box. Consequently, a friendly and happy school environment is successfully created.
-
-==However, some people think that== preparing free meals for everyone wastes too much time in school. ==Yet, this is not true because== buying food or packing lunches takes even more time for families at home. Free meals actually make the school day faster because students just line up and eat without waiting to pay money. Therefore, it is a highly time-efficient choice for the whole school.
-
-==In conclusion==, free school lunches bring great advantages to the modern education system. It not only saves a large amount of cost for parents but also makes students feel more equal and happier. ==Therefore, it is better to== implement this policy in schools. This simple change will definitely create a better future for all students.
-
----
-
-### Part 2: 中文翻译
-
-学校午餐不仅仅是食物，更是学生日常生活中至关重要的一部分。学生每天都需要优质的食物来保持健康并专注于课堂。近来，学校是否应该提供免费午餐引发了热烈讨论。显而易见，提供免费午餐是最佳选择，因为这一决定在节省开支和提升幸福感方面都大有裨益。
-
-首先，提供免费午餐能显著减轻家庭的财务负担。许多家长每个月都要花大量资金为孩子购买学校午餐或食材。免费午餐让家庭能够把这笔钱节省下来，用于其他重要的教育需求。有许多家庭在日常开销中挣扎，因此这项政策对他们帮助极大。
-
-另一个重要点在于，免费午餐能极大提升学生的幸福感和学校的公平性。当每个学生都在一起吃同样的食物时，富裕与贫困孩子之间的社会差距就被缩小了。没有人会因为自己贫酸的午餐盒而感到孤立或尴尬。因此，一个友好快乐的校园环境得以成功塑造。
-
-然而，有人认为为所有人准备免费午餐会浪费太多学校时间。然而事实并非如此，因为在家里为孩子买饭或做午饭要花费家长更多的时间。免费午餐实际上让学校的一天更加高效，因为学生只需排队用餐，无需等待付款。因此，对于整所学校来说，这是一个极具时间效率的选择。
-
-总而言之，免费学校午餐为现代教育体系带来了极大的好处。它不仅为家长节省了大量成本，还让学生感到更加平等和幸福。因此，在学校实施这一政策显然更为明智。这一简单的改变必将为所有学生创造一个更加美好的未来。
-
----
-
-### 📙 SHOT 2: COMPARISON TYPE TEMPLATE
-Topic: Free vs. Paid school lunches
-
-### Part 1: English Essay
-
-School lunch is more than just food; it is a vital part of a student's daily life. Students need good food every day to stay healthy and focus on their classes. There are two main ways to handle this issue, which are free school lunches and paid school lunches. Obviously, comparing these two options reveals significant differences in terms of financial cost, time management, and overall happiness.
-
-==First of all==, the financial cost is a major difference between the two choices. Free school lunches require the government to pay for everything, which saves money for parents. On the contrary, paid school lunches require families to pay *a daily fees*, which can increase their monthly expenses. Therefore, the two systems have completely opposite impacts on the family budget.
-
-==In terms of happiness==, the two choices create very different levels of student satisfaction. Free meals make everyone feel equal because all students eat the same food, which increases their overall happiness. In contrast, paid meals might make low-income students feel sad or embarrassed if they cannot afford good food. A happy school environment is much easier to achieve when food is free.
-
-==Finally, it is also important to compare== the time efficiency of these two methods. Free school lunches save time because students do not need to wait in line to pay cash or bring lunch boxes. However, paid lunches can cause delays since processing payments takes time every day. Although paid lunches might offer more choices, they definitely waste more time during the lunch break.
-
-==To sum up==, both free and paid school lunches have their own distinct features. While free lunches are better for saving cost and improving happiness, paid lunches might offer different options despite taking more time. ==After looking at both sides==, schools must carefully evaluate the situation. Understanding these differences helps schools choose the best method for their students.
-
----
-
-### Part 2: 中文翻译
-
-学校午餐不仅仅是食物，更是学生日常生活中至关重要的一部分。学生每天都需要优质的食物来保持健康并专注于课堂。处理这个问题主要有两种方式，即免费学校午餐和付费学校午餐。显而易见，对比这两种选择可以在财务成本、时间管理和整体幸福感方面揭示出显著差异。
-
-首先，财务成本是两种选择之间的主要区别。免费学校午餐需要政府支付一切费用，从而为家长节省了资金。相反，付费学校午餐要求家庭支付日常费用，这会增加他们的每月开支。因此，这两种机制对家庭预算产生了截然相反的影响。
-
-在幸福感方面，这两种选择创造了截然不同的学生满意度。免费午餐让每个人都感到平等，因为所有学生都吃同样的食物，这提升了他们的整体幸福感。相比之下，如果低收入学生买不起好吃的食物，付费午餐可能会让他们感到悲伤或尴尬。当食物免费时，打造一个快乐的校园环境要容易得多。
-
-最后，比较这两种方法的时间效率也很重要。免费学校午餐节省了时间，因为学生不需要排队支付现金或携带午餐盒。然而，付费午餐可能会造成延误，因为每天处理付款都需要时间。虽然付费午餐可能提供更多选择，但它们在午休期间绝对浪费了更多时间。
-
-总而言之，免费和付费学校午餐都有其各自独特的特征。虽然免费午餐在节省成本和提高幸福感方面更好，但付费午餐尽管需要花费更多时间，却可能提供不同的选择。在审视了两个方面之后，学校必须仔细评估情况。了解这些差异有助于学校为其学生选择最佳方法。
-
----
-
-Now, generate a brand new essay following the exact pattern, paragraph length (4 sentences per paragraph), two-part structure (Part 1 English Essay & Part 2 中文翻译), style, and constraints demonstrated above for the following user request:
-
-Type: $essayType
-Topic: $finalTopic""";
-
-    return await _groqService!.summarize(prompt, strategy: PromptStrategy.essay, mode: _currentMode, unit: _currentUnit);
+    final data = jsonDecode(response.body);
+    final candidates = data['candidates'] as List?;
+    if (candidates == null || candidates.isEmpty) {
+      throw Exception("Gemini returned empty response");
+    }
+    final parts = candidates[0]['content']?['parts'] as List?;
+    if (parts == null || parts.isEmpty) {
+      throw Exception("Gemini response missing content parts");
+    }
+    final text = parts[0]['text'] as String?;
+    if (text == null || text.trim().isEmpty) {
+      throw Exception("Gemini returned empty essay text");
+    }
+    return text.trim();
   }
 
   @override

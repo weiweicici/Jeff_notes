@@ -190,6 +190,7 @@ class OpenAIService {
             {'role': 'user', 'content': text},
           ],
           'temperature': 0.5,
+          'max_tokens': 2048,
         }),
       ).timeout(const Duration(seconds: 120)); // 作文生成 prompt 长，Qwen-72B 需要更多时间
 

@@ -71,13 +71,14 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     return '$minutes:$seconds';
   }
 
-  void _showNoHeadphonesSnackBar(BuildContext context) {
+  void _showNoHeadphonesSnackBar(BuildContext context, {String debug = ''}) {
     if (!context.mounted) return;
+    final msg = debug.isNotEmpty ? '⚠️ 未检测到耳机 ($debug)' : '⚠️ 未检测到耳机，请连接耳机后播放';
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text('⚠️ 未检测到耳机，请连接耳机后播放'),
+      SnackBar(
+        content: Text(msg, style: const TextStyle(fontSize: 13)),
         backgroundColor: Colors.orange,
-        duration: Duration(seconds: 3),
+        duration: const Duration(seconds: 5),
       ),
     );
   }
@@ -449,7 +450,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                     } catch (e) {
                       if (!context.mounted) return;
                       if (e.toString().contains('NoHeadphones')) {
-                        _showNoHeadphonesSnackBar(context);
+                        _showNoHeadphonesSnackBar(context, debug: e.toString());
                       } else {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('播放错误: $e')),
@@ -619,7 +620,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                   } catch (e) {
                     if (!context.mounted) return;
                     if (e.toString().contains('NoHeadphones')) {
-                      _showNoHeadphonesSnackBar(context);
+                      _showNoHeadphonesSnackBar(context, debug: e.toString());
                     } else {
                       ScaffoldMessenger.of(context).showSnackBar(
                         SnackBar(content: Text('播放错误: $e')),
@@ -822,7 +823,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                     } catch (e) {
                       if (!context.mounted) return;
                       if (e.toString().contains('NoHeadphones')) {
-                        _showNoHeadphonesSnackBar(context);
+                        _showNoHeadphonesSnackBar(context, debug: e.toString());
                       } else {
                         ScaffoldMessenger.of(context).showSnackBar(
                           SnackBar(content: Text('播放错误: $e')),

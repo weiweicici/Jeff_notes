@@ -71,9 +71,10 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
     } catch (e) {
       if (context.mounted && e.toString().contains('NoHeadphones')) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('⚠️ 未检测到耳机，请连接耳机后播放发音'),
+          SnackBar(
+            content: Text('⚠️ 未检测到耳机 (${e.toString().replaceAll("Exception: ", "")})', style: const TextStyle(fontSize: 13)),
             backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 5),
           ),
         );
       }

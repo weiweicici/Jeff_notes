@@ -888,10 +888,10 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                                         if (!context.mounted) return;
                                         if (e.toString().contains('NoHeadphones')) {
                                           ScaffoldMessenger.of(context).showSnackBar(
-                                            const SnackBar(
-                                              content: Text('⚠️ 未检测到耳机，请连接耳机后播放'),
+                                            SnackBar(
+                                              content: Text('⚠️ 未检测到耳机 (${e.toString().replaceAll("Exception: ", "")})', style: const TextStyle(fontSize: 13)),
                                               backgroundColor: Colors.orange,
-                                              duration: Duration(seconds: 3),
+                                              duration: const Duration(seconds: 5),
                                             ),
                                           );
                                         }

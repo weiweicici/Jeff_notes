@@ -91,8 +91,94 @@ class _NotesScreenState extends State<NotesScreen> {
     );
   }
 
+  /// 从 MD 全文中提取"中文全文"或"中文翻译"节下的纯文本正文（不含标题和符号）
+  String _extractChineseOnly(String fullText) {
+    final lines = fullText.split('\n');
+    bool inSection = false;
+    final captured = <String>[];
+    for (final line in lines) {
+      final t = line.trim();
+      if (t.contains('中文全文') || t.contains('中文翻译') || t.contains('Part 2')) {
+        inSection = true;
+        continue;
+      }
+      if (inSection && (t.startsWith('### ') || t.startsWith('## ') || t.startsWith('# '))) {
+        final isContinuation = t.contains('中文全文') || t.contains('中文翻译') || t.contains('Part 2') || t.contains('翻译');
+        if (!isContinuation) break;
+        continue;
+      }
+      if (t.startsWith('---') || t.startsWith('===')) continue;
+      if (inSection && t.isNotEmpty) captured.add(t);
+    }
+    if (captured.isNotEmpty) return captured.join('\n\n');
+
+    // 兜底：提取含 >=3 个汉字的行
+    final chineseLines = lines.where((line) {
+      final t = line.trim();
+      if (t.isEmpty || t.startsWith('#') || t.startsWith('**') || t.startsWith('---')) return false;
+      return RegExp(r'[\u4e00-\u9fff\u3400-\u4dbf]').allMatches(t).length >= 3;
+    }).toList();
+    return chineseLines.join('\n\n');
+  }
+
+  /// 从 MD 全文中提取"英文全文"或"English Transcript"节下的纯文本正文（不含标题和符号）
+  String _extractEnglishOnly(String fullText) {
+    final lines = fullText.split('\n');
+    bool inSection = false;
+    final captured = <String>[];
+    for (final line in lines) {
+      final t = line.trim();
+      if (t.contains('英文全文') || t.contains('English Transcript') || t.contains('English Essay') || t.contains('Part 1')) {
+        inSection = true;
+        continue;
+      }
+      if (inSection && (t.startsWith('### ') || t.startsWith('## ') || t.startsWith('# '))) {
+        final isContinuation = t.contains('英文全文') || t.contains('English Transcript') || t.contains('English Essay') || t.contains('Part 1');
+        if (!isContinuation) break;
+        continue;
+      }
+      if (t.startsWith('---') || t.startsWith('===')) continue;
+      if (inSection && t.isNotEmpty) captured.add(t);
+    }
+    if (captured.isNotEmpty) return captured.join('\n\n');
+
+    // 兜底：提取纯英文行（不含汉字）
+    final englishLines = lines.where((line) {
+      final t = line.trim();
+      if (t.isEmpty || t.startsWith('#') || t.startsWith('---')) return false;
+      final cjk = RegExp(r'[\u4e00-\u9fff\u3400-\u4dbf]').allMatches(t).length;
+      return cjk == 0 && t.contains(RegExp(r'[a-zA-Z]'));
+    }).toList();
+    return englishLines.join('\n\n');
+  }
+
   void _showFinalReviewModalWithContent(BuildContext context, String content) {
     final provider = Provider.of<RecordingProvider>(context, listen: false);
+
+    // 从 MD content 中提取出纯中文和纯英文 Script，不包含标题、Markdown 符号等
+    String chineseForTts;
+    String englishForTts;
+
+    if (provider.bilingualTtsText.isNotEmpty) {
+      // 从 provider 拿到结构化的双语文本时，自己拆分
+      final bText = provider.bilingualTtsText;
+      final zhIdx = bText.indexOf('中文全文：');
+      final enIdx = bText.indexOf('英文全文：');
+      if (zhIdx >= 0 && enIdx > zhIdx) {
+        chineseForTts = bText.substring(zhIdx + 4, enIdx).trim();
+        englishForTts = bText.substring(enIdx + 4).trim();
+      } else if (zhIdx >= 0) {
+        chineseForTts = bText.substring(zhIdx + 4).trim();
+        englishForTts = '';
+      } else {
+        chineseForTts = '';
+        englishForTts = bText.trim();
+      }
+    } else {
+      // 兜底：从 MD 原文中按节提取，完全不含标题/符号
+      chineseForTts = _extractChineseOnly(content);
+      englishForTts = _extractEnglishOnly(content);
+    }
     
     showModalBottomSheet(
       context: context,
@@ -162,9 +248,8 @@ class _NotesScreenState extends State<NotesScreen> {
                     ),
                     const SizedBox(height: 8),
                     TtsPlayerBar(
-                      text: provider.bilingualTtsText.isNotEmpty
-                          ? provider.bilingualTtsText
-                          : content,
+                      chineseText: chineseForTts,
+                      englishText: englishForTts,
                       siliconFlowKey: provider.siliconFlowKey,
                     ),
                     const SizedBox(height: 12),
