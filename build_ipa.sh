@@ -1,52 +1,39 @@
 #!/bin/bash
 
-# Jeff Notes 一键打包脚本 (IPA Sideload Version)
-# 功能：清理环境、构建 iOS 工程并封装为可侧载的 .ipa 文件
+# Jeff Notes 一键打包脚本 (IPA with Code Signing)
+# 功能：清理环境、构建 iOS 工程并封装为 .ipa 文件（含 Widget Extension 签名）
+
+set -e
 
 echo "🧹 正在清理旧环境..."
 flutter clean
 flutter pub get
 
-echo "📦 正在构建 iOS Release (no-codesign)..."
-flutter build ios --release --no-codesign
+echo "📦 正在构建 iOS Release (自动签名)..."
+flutter build ios --release
 
-echo "📦 正在构建 Widget Extension (no-codesign)..."
-xcodebuild -project ios/Runner.xcodeproj -target Widget -configuration Release -sdk iphoneos CODE_SIGNING_ALLOWED=NO > /dev/null 2>&1
+echo "📦 正在构建 Widget Extension (自动签名)..."
+xcodebuild -project ios/Runner.xcodeproj -target Widget -configuration Release -sdk iphoneos DEVELOPMENT_TEAM=U78542Q47D > /dev/null 2>&1
 
-# 定义路径
 DATE_STR=$(date +%Y%m%d)
 IPA_NAME="JeffNotes_${DATE_STR}.ipa"
 APP_PATH="build/ios/iphoneos/Runner.app"
 WIDGET_APPEX="ios/build/Release-iphoneos/Widget.appex"
 PAYLOAD_DIR="Payload"
 
-echo "📁 正在执行 IPA 封装逻辑..."
+echo "📁 正在封装 IPA..."
 
-# 检查并清理旧文件
-if [ -d "$PAYLOAD_DIR" ]; then
-    rm -rf "$PAYLOAD_DIR"
-fi
-
-if [ -f "$IPA_NAME" ]; then
-    rm "$IPA_NAME"
-fi
-
-# 创建 Payload 并拷贝 Runner.app
+rm -rf "$PAYLOAD_DIR" "$IPA_NAME"
 mkdir "$PAYLOAD_DIR"
 cp -r "$APP_PATH" "$PAYLOAD_DIR/"
 
-# 嵌入 Widget Extension
 mkdir -p "$PAYLOAD_DIR/Runner.app/PlugIns"
 cp -r "$WIDGET_APPEX" "$PAYLOAD_DIR/Runner.app/PlugIns/"
-echo "   ✅ Widget Extension 已嵌入"
+echo "   ✅ Widget Extension 已嵌入（已签名）"
 
-# 压缩为 IPA
-echo "🤐 正在压缩..."
 zip -qr "$IPA_NAME" "$PAYLOAD_DIR"
-
-# 清理临时文件夹
 rm -rf "$PAYLOAD_DIR"
 
 echo "--------------------------------------------------"
-echo "✅ $IPA_NAME 已生成在项目根目录 (含 Live Activity Widget)"
+echo "✅ $IPA_NAME 已生成（已签名，含 Live Activity Widget）"
 echo "--------------------------------------------------"
