@@ -185,6 +185,12 @@ class RecordingProvider extends ChangeNotifier {
   String? _finalReviewContent;
   bool _isGeneratingFinalReview = false;
   String? _lastExportedPath;
+  // 40秒分段 AI 摘要
+  int _segmentSummaryCounter = 0;
+  final List<String> _segmentTranscriptBuffer = [];
+  final List<String> _segmentSummaries = [];
+  bool _isGeneratingSegmentSummary = false;
+  static const int _kSlicesPerSegment = 8; // 8 * 5s = 40s
   String? _identifiedLectureContext;
   bool _hasRecoveredCache = false;
   String _openRouterKey = '';
@@ -473,6 +479,10 @@ class RecordingProvider extends ChangeNotifier {
       _sessionAudioPaths.clear(); // 清空上次 session 的音频切片路径
       _allNotes.clear();
       _lastTranscript = null;
+      _segmentSummaryCounter = 0;
+      _segmentTranscriptBuffer.clear();
+      _segmentSummaries.clear();
+      _isGeneratingSegmentSummary = false;
 
       _finalReviewContent = null;
       _statusMessage = null;
@@ -514,29 +524,68 @@ class RecordingProvider extends ChangeNotifier {
       });
     }
 
-    // 闲谈模式无摘要故跳过，讲座/讨论模式不弹窗，直接进入 Finalizing 状态
-    _statusMessage = "Finalizing AI tasks...";
-    notifyListeners();
-    await ApiScheduler().untilIdle();
-
-    // 根据模式决定最终输出
+    // 闲谈模式无摘要故跳过
     if (_currentMode == AppMode.freeTalk) {
-      // 闲谈模式：跳过 AI 总结，直接导出纯双语文件
+      _statusMessage = "Finalizing free talk...";
+      notifyListeners();
+      await ApiScheduler().untilIdle();
       await _exportFreeTalkMarkdown();
-    } else {
+      if (_lastExportedPath != null) {
+        _sessionReadyController.add(_lastExportedPath!);
+      }
+      await _resetAudioSessionAfterRecording();
+      return;
+    }
+
+    // 先刷新最后一段未满40秒的缓冲
+    if (_segmentTranscriptBuffer.isNotEmpty) {
+      await _generateSegmentSummary();
+    }
+    // 等待后台正在生成的摘要完成
+    while (_isGeneratingSegmentSummary) {
+      await Future.delayed(const Duration(milliseconds: 100));
+    }
+
+    // ★ 立即拼装分段摘要作为即时展示内容（不等待 AI 全文总结）
+    if (_segmentSummaries.isNotEmpty) {
+      final instantSummary = StringBuffer();
+      instantSummary.writeln("# Instant 40s Segment Summaries");
+      instantSummary.writeln();
+      for (int i = 0; i < _segmentSummaries.length; i++) {
+        instantSummary.writeln("### Segment ${i + 1}");
+        instantSummary.writeln(_segmentSummaries[i]);
+        instantSummary.writeln();
+      }
+      _finalReviewContent = instantSummary.toString();
+      _sessionReadyController.add(_finalReviewContent!);
+    }
+
+    // 后台继续生成完整 AI review（不阻塞弹窗）
+    _statusMessage = "Finalizing full AI review...";
+    notifyListeners();
+    unawaited(_generateFinalReviewInBackground());
+
+    // 修复 Bug 2: 录音结束后重置音频会话，让下次录音可立即开始
+    await _resetAudioSessionAfterRecording();
+  }
+
+  /// 后台任务：生成完整 AI 总结并导出最终 MD 文件（不阻塞弹窗）
+  Future<void> _generateFinalReviewInBackground() async {
+    try {
+      await ApiScheduler().untilIdle();
+
       if (_enableFinalRecap) {
         await generateFinalAcademicReview();
       } else {
         await _exportToMarkdown();
       }
-    }
 
-    if (_lastExportedPath != null) {
-      _sessionReadyController.add(_finalReviewContent ?? _lastExportedPath!);
+      if (_lastExportedPath != null && _finalReviewContent == null) {
+        _sessionReadyController.add(_lastExportedPath!);
+      }
+    } catch (e) {
+      debugPrint("[Background Final Review Error] $e");
     }
-
-    // 修复 Bug 2: 录音结束后重置音频会话，让下次录音可立即开始
-    await _resetAudioSessionAfterRecording();
   }
 
   /// 暂停录音：停止当前切片计时器和录音器，保留所有已有笔记，不做任何导出。
@@ -671,11 +720,53 @@ class RecordingProvider extends ChangeNotifier {
           _saveShadowCache();
         }
         notifyListeners();
+
+        // 每40秒分段 AI 摘要积累
+        if (_currentMode != AppMode.freeTalk) {
+          final transcript = _allNotes[index].transcript;
+          if (_isValidTranscript(transcript)) {
+            _segmentTranscriptBuffer.add(transcript);
+            _segmentSummaryCounter++;
+            if (_segmentSummaryCounter >= _kSlicesPerSegment && !_isGeneratingSegmentSummary) {
+              _segmentSummaryCounter = 0;
+              unawaited(_generateSegmentSummary());
+            }
+          }
+        }
       }
 
 
     } catch (e) {
       debugPrint("Pipeline Error: $e");
+    }
+  }
+
+  /// 对当前积累的 40 秒切片文本生成分段 AI 摘要
+  Future<void> _generateSegmentSummary() async {
+    if (_isGeneratingSegmentSummary) return;
+    if (_segmentTranscriptBuffer.isEmpty) return;
+    if (_aiService == null) return;
+    _isGeneratingSegmentSummary = true;
+
+    try {
+      final material = _segmentTranscriptBuffer.join(" ");
+      _segmentTranscriptBuffer.clear();
+
+      final summary = await _aiService!.summarize(
+        material,
+        strategy: PromptStrategy.recap,
+        mode: _currentMode,
+        unit: _currentUnit,
+      );
+
+      if (summary.isNotEmpty && !summary.startsWith('[')) {
+        _segmentSummaries.add(summary);
+        debugPrint("[40s Segment Summary] ✅ ${summary.substring(0, summary.length.clamp(0, 80))}");
+      }
+    } catch (e) {
+      debugPrint("[40s Segment Summary Error] $e");
+    } finally {
+      _isGeneratingSegmentSummary = false;
     }
   }
 
