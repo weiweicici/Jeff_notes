@@ -52,7 +52,7 @@ class TtsService extends ChangeNotifier {
   }
 
   bool _isChineseSynthesizing = false;
-  double _chineseSpeed = 1.25;
+  double _chineseSpeed = 1.2;
   bool _isChineseNativePlaying = false;
   Duration _chineseNativePosition = Duration.zero;
   Duration _chineseNativeDuration = Duration.zero;
@@ -79,8 +79,8 @@ class TtsService extends ChangeNotifier {
   }
 
   bool _isEnglishSynthesizing = false;
-  double _englishSpeed = 0.8;
-  bool _isLoopMode = false; // 默认：播放1次（单次播放），不再默认无限重复
+  double _englishSpeed = 0.6;
+  bool _isLoopMode = true; // 默认：无限重复播放
   bool get isLoopMode => _isLoopMode;
   bool get isEnglishSynthesizing => _isEnglishSynthesizing;
   bool get isEnglishPlaying => _audioPlayer.playing && _currentAudioType == ActiveAudioType.english;
