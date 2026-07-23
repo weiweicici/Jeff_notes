@@ -16,7 +16,6 @@ import '../models/vocab_card.dart';
 import '../services/vocab_service.dart';
 import '../services/vocab_extractor_service.dart';
 import 'smart_vocab_screen.dart';
-import '../services/live_activity_service.dart';
 import '../services/wakelock_service.dart';
 import '../main.dart';
 
@@ -42,7 +41,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   Timer? _resumeAutoScrollTimer;
   int _lastLockscreenKaraokeIdx = -1;
 
-  bool _liveActivityStarted = false;
+
   void _onUserInteractionStart() {
     _resumeAutoScrollTimer?.cancel();
     if (!_userIsInteracting) {
@@ -150,7 +149,6 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   void dispose() {
     _resumeAutoScrollTimer?.cancel();
     TtsService().stop();
-    LiveActivityService.end();
     WakelockService.disable();
     _textController.dispose();
     _karaokeScrollController.dispose();
@@ -705,7 +703,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                         if (_lastLockscreenKaraokeIdx != karaokeIdx) {
                           _lastLockscreenKaraokeIdx = karaokeIdx;
 
-                          // 系统控制中心 Now Playing（精简：只保留标题/艺术家）
+                          // 系统控制中心 Now Playing
                           globalAudioHandler.setPlaybackMetadata(
                             title: '[$activeSentence]',
                             artist: docTitle,
@@ -713,34 +711,6 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                             position: position,
                             isPlaying: isPlaying,
                           );
-
-                          // Live Activity 锁屏大字字幕
-                          final nextSentence = upcomingSentences.isNotEmpty ? upcomingSentences.first : '';
-                          if (_liveActivityStarted) {
-                            LiveActivityService.update(
-                              activeSentence: activeSentence,
-                              nextSentence: nextSentence,
-                              currentIndex: karaokeIdx + 1,
-                              totalCount: karaokeParas.length,
-                              docTitle: docTitle,
-                              isPlaying: isPlaying,
-                            );
-                          } else {
-                            LiveActivityService.start(
-                              activeSentence: activeSentence,
-                              nextSentence: nextSentence,
-                              currentIndex: karaokeIdx + 1,
-                              totalCount: karaokeParas.length,
-                              docTitle: docTitle,
-                              isPlaying: isPlaying,
-                            ).then((ok) {
-                              if (ok) {
-                                _liveActivityStarted = true;
-                              } else {
-                                debugPrint('[LiveActivity] start failed - check iOS Settings > Face ID & Passcode > Live Activities');
-                              }
-                            });
-                          }
                         }
 
                         globalAudioHandler.onSkipNext = () {
