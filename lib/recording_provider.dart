@@ -546,17 +546,9 @@ class RecordingProvider extends ChangeNotifier {
       await Future.delayed(const Duration(milliseconds: 100));
     }
 
-    // ★ 立即拼装分段摘要作为即时展示内容（不等待 AI 全文总结）
+    // ★ 立即用分段摘要组合成即时总结（不等待完整 AI review）
     if (_segmentSummaries.isNotEmpty) {
-      final instantSummary = StringBuffer();
-      instantSummary.writeln("# Instant 40s Segment Summaries");
-      instantSummary.writeln();
-      for (int i = 0; i < _segmentSummaries.length; i++) {
-        instantSummary.writeln("### Segment ${i + 1}");
-        instantSummary.writeln(_segmentSummaries[i]);
-        instantSummary.writeln();
-      }
-      _finalReviewContent = instantSummary.toString();
+      _finalReviewContent = _segmentSummaries.join("\n\n");
       _sessionReadyController.add(_finalReviewContent!);
     }
 
