@@ -582,6 +582,8 @@ class RecordingProvider extends ChangeNotifier {
 
       if (_lastExportedPath != null && _finalReviewContent == null) {
         _sessionReadyController.add(_lastExportedPath!);
+      } else if (_finalReviewContent != null) {
+        _sessionReadyController.add(_finalReviewContent!);
       }
     } catch (e) {
       debugPrint("[Background Final Review Error] $e");

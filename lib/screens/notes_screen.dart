@@ -49,19 +49,26 @@ class _NotesScreenState extends State<NotesScreen> {
       if (!mounted) return;
 
       final path = provider.lastExportedPath;
-      if (path != null && File(path).existsSync()) {
-        Navigator.pushReplacement(
-          context,
-          MaterialPageRoute(
-            builder: (_) => NoteDetailScreen(file: File(path)),
-          ),
-        );
-      } else {
-        if (provider.currentSessionMode == AppMode.lecture) {
+      // 优先使用 content（分段摘要或 AI review），没有时读取 MD 文件内容
+      if (content.isNotEmpty) {
+        setState(() {
+          _pendingSummaryContent = content;
+        });
+        _showFinalReviewModalWithContent(context, content);
+      } else if (path != null && File(path).existsSync()) {
+        try {
+          final fileContent = File(path).readAsStringSync();
           setState(() {
-            _pendingSummaryContent = content;
+            _pendingSummaryContent = fileContent;
           });
-          _showFinalReviewModalWithContent(context, content);
+          _showFinalReviewModalWithContent(context, fileContent);
+        } catch (_) {
+          Navigator.pushReplacement(
+            context,
+            MaterialPageRoute(
+              builder: (_) => NoteDetailScreen(file: File(path)),
+            ),
+          );
         }
       }
     },
