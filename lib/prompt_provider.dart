@@ -742,36 +742,38 @@ $keyRules
 - 用中文解释，附英文例子对比''';
   }
 
+  static String getWritingRequirement(String partId) => _writingRequirement(partId);
+
   static String _writingRequirement(String partId) {
     switch (partId) {
       case 'part_1':
         return '''- 全文 6-7 句话，其中至少 4 句使用到不同的时态
 - 覆盖范围：一般现在时 / 现在进行时 / 一般过去时 / 过去进行时 / 现在完成时 / 现在完成进行时 / 过去完成时 / 过去完成进行时
-- 至少用到 2 种不同时态，自然融入文章''';
+- 至少用到 2 种不同时态，自然融入''';
       case 'part_2':
         return '''- 全文 6-7 句话，其中至少 4 句使用到将来时态
 - 覆盖范围：will / be going to / 现在进行时表将来 / 将来进行时 / 将来完成时 / 将来完成进行时
-- 至少用到 2 种不同将来表达方式，自然融入文章''';
+- 至少用到 2 种不同将来表达方式，自然融入''';
       case 'part_3':
         return '''- 全文 6-7 句话，其中至少 4 句使用到否定疑问句、反义疑问句或补充表达
 - 覆盖范围：否定疑问句 / 反义疑问句 / So / Too / Neither / Not Either / But 补充表达
-- 至少用到 2 种不同结构，自然融入文章''';
+- 至少用到 2 种不同结构，自然融入''';
       case 'part_4':
         return '''- 全文 6-7 句话，其中至少 4 句使用到动名词、不定式、使役动词或短语动词
 - 覆盖范围：动名词作主语/宾语 / 不定式表目的/作宾语 / 使役动词 make/have/let/help/get / 短语动词
-- 至少用到 2 种不同结构，自然融入文章''';
+- 至少用到 2 种不同结构，自然融入''';
       case 'part_5':
         return '''- 全文 6-7 句话，其中至少 4 句包含形容词从句
 - 覆盖范围：主语关系代词 who/which/that/whose / 宾语关系代词 / where/when 引导的形容词从句
-- 至少用到 2 种不同关系代词或关系副词，自然融入文章''';
+- 至少用到 2 种不同关系代词或关系副词，自然融入''';
       case 'part_6':
         return '''- 全文 6-7 句话，其中至少 4 句使用情态动词或情态动词完成式
 - 覆盖范围：基本情态动词 can/should/must/might / 过去建议 should have / could have / 过去推测 may have / might have / must have
-- 至少用到 2 种不同功能（如能力 + 建议 + 推测 + 过去推测），自然融入文章''';
+- 至少用到 2 种不同功能（如能力 + 建议 + 推测 + 过去推测），自然融入''';
       case 'part_7':
         return '''- 全文 6-7 句话，其中至少 4 句使用被动语态
 - 覆盖范围：各时态被动 / 带情态动词的被动（must be done） / 被动使役（have/get something done）
-- 至少用到 2 种不同结构，自然融入文章''';
+- 至少用到 2 种不同结构，自然融入''';
       case 'part_8':
         return '''- 全文 6-7 句话，其中 4 句使用 if 条件句
 - 覆盖范围：First Conditional / Second Conditional / Third Conditional / I Wish
@@ -780,7 +782,7 @@ $keyRules
       case 'part_9':
         return '''- 全文 6-7 句话，其中至少 4 句使用间接引语或嵌入问句
 - 覆盖范围：say/tell/ask 转述 / 时态回退和时间词变化 / 间接指令/请求/建议 / 间接疑问句 / 嵌入问句
-- 至少用到 2 种不同形式，自然融入文章''';
+- 至少用到 2 种不同形式，自然融入''';
       default:
         return '''- 全文 6-7 句话，其中至少 4 句使用到目标语法结构
 - 自然融入文章，不要生硬堆砌''';
@@ -820,9 +822,10 @@ $keyRules
 
 # 输出要求：
 $requirement
-- 字数 100-130 词
-- 用词水平：初中级（CEFR B1-B2），避免过于复杂的词汇
-- 风格：近口语化、自然流畅
+- 字数 80-120 词
+- 用词：**简单基础词汇**，不要用高级或学术词汇
+- 核心目标：清晰展示语法结构用得是否正确，不是展示写作水平
+- 风格：简单直白，像初中生写的句子
 
 # 输出格式：
 ## 📖 范文
@@ -831,5 +834,52 @@ $requirement
 
 ## 🏷️ 语法标注
 $annotation''';
+  }
+
+  static String getCombinedWritingPrompt(List<String> partIds, List<String> partTitles, List<String> partRequirements) {
+    final combinedReqs = partRequirements.map((r) => r.trim()).join('\n');
+    final partsList = partIds.map((id) {
+      final idx = partIds.indexOf(id);
+      return '${partTitles[idx]} — ${_writingAnnotationHint(id)}';
+    }).join('\n');
+
+    return '''# Role: 英语写作示范教师
+# Task: 根据指定的多个语法章节和主题，写一篇有逻辑、自然流畅的短篇范文。
+# 要求：必须同时使用以下 ${partIds.length} 个语法章节的核心语法结构。
+
+## 目标语法章节:
+$partsList
+
+# 输出要求：
+- 全文 8-12 句话
+- 必须使用到所有 ${partIds.length} 个语法章节的语法结构，每个章节至少用到 1-2 次
+- 字数 100-140 词
+- 用词：**简单基础词汇**，不要用高级或学术词汇
+- 核心目标：清晰展示每个语法结构用得是否正确，不是展示写作水平
+- 风格：简单直白，像初中生写的句子
+
+# 输出格式：
+## 📖 范文
+
+[英文范文正文]
+
+## 🏷️ 语法标注
+- 分别标注每个语法章节对应的句子和说明
+- 格式：[句子片段] — [章节名]: [语法结构说明]''';
+  }
+
+  static String _writingAnnotationHint(String partId) {
+    switch (partId) {
+      case 'part_1': return '时态（一般现在/现在进行/一般过去/现在完成/过去完成等）';
+      case 'part_2': return '将来时态（will/be going to/将来进行/将来完成等）';
+      case 'part_3': return '否定疑问句/反义疑问句/So/Too/Neither/But 补充';
+      case 'part_4': return '动名词/不定式/使役动词/短语动词';
+      case 'part_5': return '形容词从句（who/which/that/whose/where/when）';
+      case 'part_6': return '情态动词/过去建议/过去推测';
+      case 'part_7': return '被动语态/情态动词被动/被动使役';
+      case 'part_8': return '条件句（First/Second/Third/I Wish）';
+      case 'part_9': return '间接引语/嵌入问句/时态回退';
+      default: return '目标语法结构';
+    }
   }
 }

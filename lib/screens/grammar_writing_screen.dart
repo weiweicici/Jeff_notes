@@ -7,9 +7,8 @@ import '../services/grammar_repository.dart';
 import '../widgets/academic_markdown.dart';
 
 class GrammarWritingScreen extends StatefulWidget {
-  final GrammarUnit? unit; // From detail screen: pre-selected
+  final GrammarUnit? unit;
   const GrammarWritingScreen({super.key, this.unit});
-
   @override
   State<GrammarWritingScreen> createState() => _GrammarWritingScreenState();
 }
@@ -17,11 +16,13 @@ class GrammarWritingScreen extends StatefulWidget {
 class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
   List<GrammarPart>? _parts;
   GrammarPart? _selectedPart;
-  GrammarUnit? _selectedUnit;
+  Set<GrammarUnit> _selectedUnits = {};
+  Set<GrammarPart> _selectedParts = {};
   String? _selectedTheme;
   bool _isLoading = false;
   bool _loadingParts = true;
   String _result = '';
+  bool _combinedMode = false;
 
   static const _themes = [
     _ThemeOption(icon: Icons.place, label: '地点', value: 'a place'),
@@ -33,7 +34,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
   void initState() {
     super.initState();
     if (widget.unit != null) {
-      _selectedUnit = widget.unit;
+      _selectedUnits = {widget.unit!};
       _selectedPart = _partContaining(widget.unit!);
     }
     _loadParts();
@@ -56,7 +57,6 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
         if (_selectedPart == null && parts.isNotEmpty) {
           _selectedPart = parts.first;
         }
-        _selectedUnit ??= null;
         _loadingParts = false;
       });
     } catch (_) {
@@ -64,12 +64,37 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
     }
   }
 
+  bool get _canGenerate {
+    if (_selectedTheme == null) return false;
+    if (_combinedMode) return _selectedParts.length >= 2;
+    return _selectedPart != null;
+  }
+
   Future<void> _generate() async {
-    if (_selectedPart == null || _selectedTheme == null) return;
+    if (!_canGenerate) return;
     setState(() { _isLoading = true; _result = ''; });
-    final unit = _selectedUnit ?? _selectedPart!.units.first;
-    final result = await GrammarService.generateWritingSample(unit, _selectedTheme!, partId: _selectedPart!.id);
-    if (mounted) setState(() { _result = result; _isLoading = false; });
+    try {
+      if (_combinedMode) {
+        final parts = _selectedParts.toList();
+        final result = await GrammarService.generateCombinedSample(parts, _selectedTheme!);
+        if (mounted) setState(() { _result = result; _isLoading = false; });
+      } else {
+        final unit = _selectedUnits.isNotEmpty
+            ? _selectedUnits.first
+            : _selectedPart!.units.first;
+        final unitTitles = _selectedUnits.isNotEmpty
+            ? _selectedUnits.map((u) => u.title).join('、')
+            : '';
+        final result = await GrammarService.generateWritingSample(
+          unit, _selectedTheme!,
+          partId: _selectedPart!.id,
+          focusUnits: unitTitles.isNotEmpty ? unitTitles : null,
+        );
+        if (mounted) setState(() { _result = result; _isLoading = false; });
+      }
+    } catch (_) {
+      if (mounted) setState(() { _isLoading = false; });
+    }
   }
 
   @override
@@ -90,6 +115,17 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Mode Toggle
+            SegmentedButton<bool>(
+              segments: const [
+                ButtonSegment(value: false, label: Text('单章练习'), icon: Icon(Icons.article_outlined)),
+                ButtonSegment(value: true, label: Text('综合练习'), icon: Icon(Icons.auto_stories)),
+              ],
+              selected: {_combinedMode},
+              onSelectionChanged: (s) => setState(() => _combinedMode = s.first),
+            ),
+            const SizedBox(height: 24),
+
             if (widget.unit != null) ...[
               Container(
                 width: double.infinity,
@@ -109,68 +145,102 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
               ),
               const SizedBox(height: 24),
             ],
-            Text(
-              '选择章节（Part）',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: isDark ? Colors.white : Colors.black87,
-              ),
-            ),
-            const SizedBox(height: 12),
-            DropdownButtonFormField<GrammarPart>(
-              value: _selectedPart,
-              dropdownColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-              decoration: InputDecoration(
-                labelText: 'Part',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              ),
-              items: _parts?.map((p) => DropdownMenuItem(
-                value: p,
-                child: Text(p.title, overflow: TextOverflow.ellipsis),
-              )).toList() ?? [],
-              onChanged: (p) {
-                if (p != null) setState(() {
-                  _selectedPart = p;
-                  _selectedUnit = p.units.isNotEmpty ? p.units.first : null;
-                });
-              },
-            ),
-            const SizedBox(height: 12),
-            Text(
-              '选择单元（可选）',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white54 : Colors.grey[600],
-              ),
-            ),
-            const SizedBox(height: 4),
-            DropdownButtonFormField<GrammarUnit?>(
-              value: _selectedUnit,
-              hint: Text('不限', style: TextStyle(color: isDark ? Colors.white54 : Colors.grey[600])),
-              dropdownColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
-              decoration: InputDecoration(
-                labelText: 'Unit',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-              ),
-              items: [
-                const DropdownMenuItem<GrammarUnit?>(
-                  value: null,
-                  child: Text('不限'),
+
+            // Part Selection
+            if (_combinedMode) ...[
+              Text(
+                '选择要综合练习的章节',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black87,
                 ),
-                ...?_selectedPart?.units.map((u) => DropdownMenuItem<GrammarUnit?>(
-                  value: u,
-                  child: Text(u.title, overflow: TextOverflow.ellipsis),
-                )),
-              ],
-              onChanged: (u) {
-                setState(() => _selectedUnit = u);
-              },
-            ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                '已选 ${_selectedParts.length} 个章节（至少选 2 个）',
+                style: TextStyle(fontSize: 14, color: isDark ? Colors.white54 : Colors.grey[600]),
+              ),
+              const SizedBox(height: 8),
+              ...?_parts?.map((p) {
+                final selected = _selectedParts.contains(p);
+                return CheckboxListTile(
+                  dense: true,
+                  title: Text(p.title, style: const TextStyle(fontSize: 14)),
+                  value: selected,
+                  onChanged: (v) => setState(() {
+                    if (v == true) {
+                      _selectedParts.add(p);
+                    } else {
+                      _selectedParts.remove(p);
+                    }
+                  }),
+                  activeColor: Colors.green,
+                  controlAffinity: ListTileControlAffinity.leading,
+                );
+              }),
+            ] else ...[
+              Text(
+                '选择章节（Part）',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<GrammarPart>(
+                value: _selectedPart,
+                dropdownColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
+                decoration: InputDecoration(
+                  labelText: 'Part',
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                ),
+                items: _parts?.map((p) => DropdownMenuItem(
+                  value: p,
+                  child: Text(p.title, overflow: TextOverflow.ellipsis),
+                )).toList() ?? [],
+                onChanged: (p) {
+                  if (p != null) setState(() {
+                    _selectedPart = p;
+                    _selectedUnits = {};
+                  });
+                },
+              ),
+              const SizedBox(height: 12),
+              Text(
+                '选择具体单元（可选，不选则不限）',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white54 : Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 4),
+              if (_selectedPart != null)
+                ..._selectedPart!.units.map((u) {
+                  final checked = _selectedUnits.contains(u);
+                  return CheckboxListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(u.title, style: const TextStyle(fontSize: 13)),
+                    value: checked,
+                    onChanged: (v) => setState(() {
+                      if (v == true) {
+                        _selectedUnits.add(u);
+                      } else {
+                        _selectedUnits.remove(u);
+                      }
+                    }),
+                    activeColor: Colors.green,
+                    controlAffinity: ListTileControlAffinity.leading,
+                  );
+                }),
+            ],
             const SizedBox(height: 24),
+
+            // Theme
             Text(
               '选择主题大类',
               style: TextStyle(
@@ -195,9 +265,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
                       Text(t.label),
                     ],
                   ),
-                  onSelected: (v) {
-                    setState(() => _selectedTheme = v ? t.value : null);
-                  },
+                  onSelected: (v) => setState(() => _selectedTheme = v ? t.value : null),
                   selectedColor: Colors.green.withValues(alpha: 0.2),
                   backgroundColor: isDark ? Colors.grey[800] : Colors.grey[100],
                   labelStyle: TextStyle(
@@ -209,16 +277,14 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
               }).toList(),
             ),
             const SizedBox(height: 24),
+
+            // Generate Button
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
-                onPressed: _selectedTheme != null && _selectedUnit != null && !_isLoading
-                  ? _generate : null,
+                onPressed: _canGenerate && !_isLoading ? _generate : null,
                 icon: _isLoading
-                    ? const SizedBox(
-                        width: 18, height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
+                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
                     : const Icon(Icons.auto_awesome, size: 18),
                 label: Text(_isLoading ? '生成中...' : '🚀 生成范文'),
                 style: ElevatedButton.styleFrom(
@@ -229,6 +295,8 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
                 ),
               ),
             ),
+
+            // Result
             if (_result.isNotEmpty) ...[
               const SizedBox(height: 24),
               MarkdownBody(

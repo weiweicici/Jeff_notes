@@ -69,14 +69,37 @@ class GrammarService {
   }
 
   /// 生成写作范文
-  static Future<String> generateWritingSample(GrammarUnit unit, String theme, {String partId = ''}) async {
+  static Future<String> generateWritingSample(
+    GrammarUnit unit, String theme, {
+    String partId = '',
+    String? focusUnits,
+  }) async {
     final prompt = PromptProvider.getGrammarWritingPrompt(
       unit.title,
       unit.chart,
       unit.keyRules,
       partId: partId,
     );
-    final userMsg = '请写一篇关于 "$theme" 的范文，要求使用 "${unit.title}" 的核心语法结构。';
+    final focus = focusUnits != null ? '（仅使用以下单元：$focusUnits）' : '';
+    final userMsg = '请写一篇关于 "$theme" 的范文，要求使用 "${unit.title}" 的核心语法结构$focus。';
+    return await _callGroq(prompt, userMsg) ?? '生成失败';
+  }
+
+  /// 综合写作范文（覆盖多个 Part）
+  static Future<String> generateCombinedSample(
+    List<GrammarPart> parts, String theme,
+  ) async {
+    final partIds = parts.map((p) => p.id).toList();
+    final partTitles = parts.map((p) => p.title).toList();
+    final partRequirements = partIds.map((id) => PromptProvider.getWritingRequirement(id)).toList();
+
+    final prompt = PromptProvider.getCombinedWritingPrompt(
+      partIds,
+      partTitles,
+      partRequirements,
+    );
+    final partsDesc = partTitles.join('、');
+    final userMsg = '请写一篇关于 "$theme" 的范文，必须同时使用以下语法章节的核心语法结构：$partsDesc';
     return await _callGroq(prompt, userMsg) ?? '生成失败';
   }
 }
