@@ -35,6 +35,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
           .from('archives')
           .select('id,title,content_md,created_at,metadata')
           .eq('module', 'reading')
+          .eq('user_id', SupabaseConfig.currentUserId)
           .order('created_at', ascending: false);
       _entries = List<Map<String, dynamic>>.from(data as List);
     } catch (e) {
@@ -167,6 +168,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
             'file_hash': hash,
             'metadata': {'source': 'pathways', 'unit': unit.name, 'unitName': _unitLabel(unit)},
             'file_size': content.length,
+            'user_id': SupabaseConfig.currentUserId,
           })
           .select('id')
           .single();
@@ -203,7 +205,7 @@ class _ReadingScreenState extends State<ReadingScreen> {
 
   Future<void> _deleteEntry(String id) async {
     try {
-      await SupabaseConfig.client.from('archives').delete().eq('id', id);
+      await SupabaseConfig.client.from('archives').delete().eq('id', id).eq('user_id', SupabaseConfig.currentUserId);
       _loadEntries();
     } catch (e) {
       if (mounted) {

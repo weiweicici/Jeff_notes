@@ -55,6 +55,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (t.contains('essay')) return 'essay';
     if (t.contains('freetalk')) return 'freetalk';
     if (t.contains('grammar')) return 'grammar';
+    if (t.contains('exam')) return 'exam';
     if (t.contains('discussion') || t.contains('note')) return 'notes';
     return 'other';
   }
@@ -90,7 +91,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
         final data = await SupabaseConfig.client
             .from('archives')
             .select('id,title,content_md,created_at,module')
-            .or('module.eq.listening,module.eq.freetalk,module.eq.discussion,module.eq.essay')
+            .or('module.eq.listening,module.eq.freetalk,module.eq.discussion,module.eq.essay,module.eq.exam')
+            .eq('user_id', SupabaseConfig.currentUserId)
             .order('created_at', ascending: false);
 
         for (final row in List<Map<String, dynamic>>.from(data as List)) {
@@ -178,6 +180,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       {'id': 'essay', 'label': '📝 短文写作'},
       {'id': 'freetalk', 'label': '🗣️ 自由对话'},
       {'id': 'grammar', 'label': '📚 语法练习'},
+      {'id': 'exam', 'label': '📋 听力考试'},
       {'id': 'notes', 'label': '🎙️ 课堂笔记'},
     ];
 
@@ -268,7 +271,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           }
         }
         if (entry.id != null && entry.id!.isNotEmpty) {
-          await SupabaseConfig.client.from('archives').delete().eq('id', entry.id!);
+          await SupabaseConfig.client.from('archives').delete().eq('id', entry.id!).eq('user_id', SupabaseConfig.currentUserId);
         }
         await _loadEntries();
       } catch (e) {

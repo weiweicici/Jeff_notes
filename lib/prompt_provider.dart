@@ -1,7 +1,7 @@
 import 'models.dart';
 
 class PromptProvider {
-  static String getSystemPrompt(PromptStrategy strategy, AIProvider provider, {AppMode mode = AppMode.lecture, PathwaysUnit unit = PathwaysUnit.none}) {
+  static String getSystemPrompt(PromptStrategy strategy, AIProvider provider, {AppMode mode = AppMode.exam, PathwaysUnit unit = PathwaysUnit.none}) {
     switch (strategy) {
       case PromptStrategy.discovery:
         return getDiscoveryPrompt();
@@ -10,7 +10,7 @@ class PromptProvider {
       case PromptStrategy.essay:
         return "You are a professional academic writing assistant. Follow the user's instructions and format constraints exactly. Generate the output exactly as requested, focusing on high-quality English templates and structured vocabulary notes.";
       default:
-        return mode == AppMode.discussion ? getDiscussionPrompt(unit: unit) : getLecturePrompt(unit: unit);
+        return mode == AppMode.discussion ? getDiscussionPrompt(unit: unit) : mode == AppMode.exam ? getLecturePrompt(unit: unit) : getLecturePrompt(unit: unit);
     }
   }
 
@@ -152,6 +152,65 @@ $injection
     final unitTopic = _getUnitTopic(unit);
     final isUnitSelected = unit != PathwaysUnit.none;
 
+    if (mode == AppMode.exam) {
+      return """# Role
+你是一位精通英语听力的考试辅导专家，正在批改学生的听力听写练习。
+
+# Task
+根据用户提供的原始听写文本（可能包含口语断句错误、语法错误、填充词），执行以下操作：
+
+## Step 1: 修正文本 (Correct the Transcript)
+- 修正语法错误、句子断句、填充词（如 uh, um, you know, like）
+- **绝对禁止**修改以下内容：数字、百分比、年份、人名、地名、统计数据、专业术语
+- 保持原文段落顺序，不需要标记哪些词被修正了
+
+## Step 2: 提取考试要点
+从原文提取所有可能出填空题的考点短语，每个考点给出英文短语 + 中文翻译
+- 对容易被替换/混淆的词，标注 ⚠️辨析：写明易混淆词及原因
+- 对标准答案用 ✅ 标记，提醒不要替换成别的词
+
+## Step 3: 分类填空词汇
+分为两个梯队：
+1. 基础核心词（高频出题）— 原文中最可能直接出填空的关键名词/形容词
+2. 拓展备选词（提升难度可能考查）— 较难或容易被替换考查的词
+
+## Step 4: 考场提醒
+给出 1-2 条考场实战策略，针对填空题最常见的陷阱
+
+# Output Format (严格按此顺序输出，使用中文，不要输出英文原文修正版):
+
+## 一、全文精简总结
+
+**English Summary:**
+[一段流畅英文总结，复述原文核心内容]
+
+**中文总结：**
+[对应中文总结]
+
+## 二、全部潜在考点
+
+[关键短语1] [中文翻译]
+[关键短语2] [中文翻译]
+⚠️辨析：[易混淆词1] (释义) ≠ [易混淆词2] (释义)
+...
+✅ [该空标准答案] (中文翻译)
+⚠️不要自行替换成 [错误替换词]；文中无此单词，容易失分
+
+## 三、填空词汇总库
+
+**基础核心词（高频出题）**
+[word1] (中文), [word2] (中文), [word3] (中文), ...
+
+**拓展备选词（提升难度可能考查）**
+[word1] (中文), [word2] (中文), [word3] (中文), ...
+
+## 四、📌考场提醒
+
+[具体考场策略提醒1]
+[具体考场策略提醒2]
+""";
+    }
+
     if (mode == AppMode.discussion) {
       final unitStrategyBlock = isUnitSelected
           ? '''
@@ -200,45 +259,51 @@ $unitStrategyBlock
 """;
     }
 
-    return """You are an expert EAP (English for Academic Purposes) Exam Coach for EAL students using "Pathways 3: Listening, Speaking, and Critical Thinking Third Edition".
-Based on the provided English and Chinese lecture transcripts, generate a concise MOCK EXAM ANSWER CARD that directly mirrors the Pathways 3 listening test format.
+    return """# Role
+你是一位学术笔记整理专家，擅长将英文听力讲座提炼为结构化复习笔记。
 
-CRITICAL RULES:
-- DO NOT reprint or translate the full transcript.
-- Extract ONLY exact single-sentence quotes from the transcript as evidence.
-- Total output must be under 400 words. Be ruthlessly concise.
-- Output must follow ONLY this two-part structure, nothing else:
+# Task
+根据提供的讲座转录文本，生成一份层级清晰的关键词笔记，供学生快速复习。
 
-## 📝 Part A · 单选题 (Multiple Choice)
+# Output Rules
+1. 中英双语输出：每一条笔记先用英文写，紧接着用中文翻译对照（中文用 `——` 引出）
+   - 例如：**Topic**: No-Buy Year (NBY) —— 不消费年
+   - 例如：1. **Definition**: 1 yr NO buying non-essentials —— 一年不买非必需品
+2. 层级缩进结构：
+   - **主标题**：Topic / Definition（一行，双语）
+   - 要点用数字列表 1. 2. 3.
+   - 细节用 `-`，子细节再缩进一层 `  -`
+   - 例子用 Ex N: 标签
+3. 保留所有数字、百分比、年份、人名、地名、统计值（原样，不改）
+4. 使用简洁笔记风格（关键词/短语为主，非完整句子）
+5. 用符号缩写：→（导致/引出）、\$（钱）、#（数量）、yr（年）、vs（对比）、Sol（解决方案）
+6. 核心术语用 == == 高亮
+7. 原文有因果/对比/流程关系时，必须用 → 串联
 
-Generate exactly 3 multiple-choice questions in this strict order:
-1. **主旨/定义题**: One question testing the core definition or main idea of the topic. Provide options A/B/C/D.
-2. **步骤/流程题**: One question testing a specific STAGE number (e.g., "In the second stage..."). If no clear stages exist, test a key detail instead.
-3. **细节/因果题**: One question testing a specific cause, effect, or data point.
+# Output Format
 
-For EACH question, output in this exact format:
-**Q[N]. [Question text]**
-✅ [Correct option letter]. [Correct answer text]
-❌ [Wrong option letter]. [Wrong answer] ❌ [Wrong option letter]. [Wrong answer] ❌ [Wrong option letter]. [Wrong answer]
-🎯 原文锚句: "[The single most relevant sentence from the transcript]"
+## Topic & Definition
+**Topic**: ==[核心英文术语]== —— [一句话中文定义]
 
----
+## Main Points
+[N个主要论点，按演讲逻辑组织]
+1. **[论点1]**：[英文说明] —— [中文说明]
+   - [子要点/细节] —— [中文]
+     - [数据/例子支撑] —— [中文]
+   - [更多细节...] —— [中文]
+2. **[论点2]**：[...] —— [...]
 
-## 📝 Part B · 案例填空 (Summary Fill-in-the-blank)
+## Key Examples & Data
+Ex 1: [例子名称] —— [中文名]
+  - 数据：[关键统计]
+  - 细节：[描述] —— [中文]
+  - 影响/方案：[结果或解决措施] —— [中文]
 
-Identify the main CASE STUDY or EXAMPLE discussed in the lecture. Write a 3-4 sentence summary paragraph of that case with exactly 5 blanks (①②③④⑤) replacing key content words.
-Then, below the paragraph, list the answers:
-① [答案词] — 原文: "[exact sentence from transcript containing this word]"
-② [答案词] — 原文: "[exact sentence]"
-③ [答案词] — 原文: "[exact sentence]"
-④ [答案词] — 原文: "[exact sentence]"
-⑤ [答案词] — 原文: "[exact sentence]"
+Ex 2: [...]
+  - ...
 
-If there is no clear case study, replace Part B with:
-## 📝 Part B · 步骤排序 (Stage Ordering)
-List all identified stages in correct order as: Stage 1 → Stage 2 → Stage 3 → ...
-With each stage's answer word and its anchor sentence.
-""";
+## Summary / Takeaway
+[一句话核心结论或教授号召] —— [中文]""";
   }
 
   static String _getUnitName(PathwaysUnit unit) {
@@ -675,5 +740,96 @@ $keyRules
 - 如果没有错误，也要说明"句子正确"
 - 每个错误都要解释"为什么错"
 - 用中文解释，附英文例子对比''';
+  }
+
+  static String _writingRequirement(String partId) {
+    switch (partId) {
+      case 'part_1':
+        return '''- 全文 6-7 句话，其中至少 4 句使用到不同的时态
+- 覆盖范围：一般现在时 / 现在进行时 / 一般过去时 / 过去进行时 / 现在完成时 / 现在完成进行时 / 过去完成时 / 过去完成进行时
+- 至少用到 2 种不同时态，自然融入文章''';
+      case 'part_2':
+        return '''- 全文 6-7 句话，其中至少 4 句使用到将来时态
+- 覆盖范围：will / be going to / 现在进行时表将来 / 将来进行时 / 将来完成时 / 将来完成进行时
+- 至少用到 2 种不同将来表达方式，自然融入文章''';
+      case 'part_3':
+        return '''- 全文 6-7 句话，其中至少 4 句使用到否定疑问句、反义疑问句或补充表达
+- 覆盖范围：否定疑问句 / 反义疑问句 / So / Too / Neither / Not Either / But 补充表达
+- 至少用到 2 种不同结构，自然融入文章''';
+      case 'part_4':
+        return '''- 全文 6-7 句话，其中至少 4 句使用到动名词、不定式、使役动词或短语动词
+- 覆盖范围：动名词作主语/宾语 / 不定式表目的/作宾语 / 使役动词 make/have/let/help/get / 短语动词
+- 至少用到 2 种不同结构，自然融入文章''';
+      case 'part_5':
+        return '''- 全文 6-7 句话，其中至少 4 句包含形容词从句
+- 覆盖范围：主语关系代词 who/which/that/whose / 宾语关系代词 / where/when 引导的形容词从句
+- 至少用到 2 种不同关系代词或关系副词，自然融入文章''';
+      case 'part_6':
+        return '''- 全文 6-7 句话，其中至少 4 句使用情态动词或情态动词完成式
+- 覆盖范围：基本情态动词 can/should/must/might / 过去建议 should have / could have / 过去推测 may have / might have / must have
+- 至少用到 2 种不同功能（如能力 + 建议 + 推测 + 过去推测），自然融入文章''';
+      case 'part_7':
+        return '''- 全文 6-7 句话，其中至少 4 句使用被动语态
+- 覆盖范围：各时态被动 / 带情态动词的被动（must be done） / 被动使役（have/get something done）
+- 至少用到 2 种不同结构，自然融入文章''';
+      case 'part_8':
+        return '''- 全文 6-7 句话，其中 4 句使用 if 条件句
+- 覆盖范围：First Conditional / Second Conditional / Third Conditional / I Wish
+- 4 个条件句至少用到 2 种不同类型，不要求全部类型都用上
+- 条件句要自然融入文章逻辑中，不要生硬堆砌''';
+      case 'part_9':
+        return '''- 全文 6-7 句话，其中至少 4 句使用间接引语或嵌入问句
+- 覆盖范围：say/tell/ask 转述 / 时态回退和时间词变化 / 间接指令/请求/建议 / 间接疑问句 / 嵌入问句
+- 至少用到 2 种不同形式，自然融入文章''';
+      default:
+        return '''- 全文 6-7 句话，其中至少 4 句使用到目标语法结构
+- 自然融入文章，不要生硬堆砌''';
+    }
+  }
+
+  static String _annotationFormat(String partId) {
+    switch (partId) {
+      case 'part_8':
+        return '''- 标注范文中每个条件句的类型（如 First Conditional、Second Conditional、I Wish 等）和简要说明
+- 格式：[句子片段] — [条件句类型]: [说明]''';
+      case 'part_7':
+        return '''- 标注范文中每个被动语态的结构类型（如一般现在被动、情态动词被动、被动使役等）和说明
+- 格式：[句子片段] — [被动结构]: [说明]''';
+      case 'part_6':
+        return '''- 标注范文中每个情态动词的功能类型（如能力/建议/推测/过去推测等）和说明
+- 格式：[句子片段] — [情态功能]: [说明]''';
+      default:
+        return '''- 标注范文中每个语法结构出现的句子和简要说明
+- 格式：[句子片段] — [语法结构说明]''';
+    }
+  }
+
+  static String getGrammarWritingPrompt(String unitTitle, String chart, String keyRules, {String partId = ''}) {
+    final requirement = _writingRequirement(partId);
+    final annotation = _annotationFormat(partId);
+    return '''# Role: 英语写作示范教师
+# Task: 根据指定的语法点和主题，写一篇有逻辑、自然流畅的短篇范文。
+
+## 当前语法单元: $unitTitle
+
+## 语法表:
+$chart
+
+## 核心规则:
+$keyRules
+
+# 输出要求：
+$requirement
+- 字数 100-130 词
+- 用词水平：初中级（CEFR B1-B2），避免过于复杂的词汇
+- 风格：近口语化、自然流畅
+
+# 输出格式：
+## 📖 范文
+
+[英文范文正文]
+
+## 🏷️ 语法标注
+$annotation''';
   }
 }

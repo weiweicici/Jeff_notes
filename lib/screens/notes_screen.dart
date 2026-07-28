@@ -186,28 +186,106 @@ class _NotesScreenState extends State<NotesScreen> {
       chineseForTts = _extractChineseOnly(content);
       englishForTts = _extractEnglishOnly(content);
     }
-    
+
+    Timer? scrollTimer;
+    Timer? resumeTimer;
+    bool isAutoScrolling = true;
+    bool _timerStarted = false;
+    bool _playerExpanded = false;
+    Timer? _playerAutoHideTimer;
+
+    Timer _startScrollTimer(ScrollController controller, {required void Function(void Function()) setModalState}) {
+      final maxScroll = controller.position.maxScrollExtent;
+      if (maxScroll <= 0) return Timer(Duration.zero, () {});
+      const ticksPerScreen = 60 * 1000 ~/ 50; // 1200 ticks @ 50ms = 60s per viewport
+      final increment = controller.position.viewportDimension / ticksPerScreen;
+      return Timer.periodic(const Duration(milliseconds: 50), (timer) {
+        if (!controller.hasClients) { timer.cancel(); return; }
+        final currentScroll = controller.position.pixels;
+        if (currentScroll >= maxScroll) {
+          controller.jumpTo(0);
+          return;
+        }
+        controller.jumpTo((currentScroll + increment).clamp(0.0, maxScroll));
+      });
+    }
+
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
-      builder: (context) => DraggableScrollableSheet(
-        initialChildSize: 0.9,
-        maxChildSize: 0.95,
-        minChildSize: 0.5,
-        builder: (context, scrollController) => Container(
-          decoration: BoxDecoration(
-            color: Theme.of(context).scaffoldBackgroundColor,
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
-          ),
-          child: Column(
-            children: [
-              Container(
-                width: 40,
-                height: 4,
-                margin: const EdgeInsets.symmetric(vertical: 12),
-                decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+      builder: (context) => StatefulBuilder(
+        builder: (context, setModalState) => DraggableScrollableSheet(
+          initialChildSize: 0.9,
+          maxChildSize: 0.95,
+          minChildSize: 0.5,
+          builder: (context, scrollController) {
+            if (!_timerStarted && scrollController.hasClients) {
+              _timerStarted = true;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                scrollTimer = _startScrollTimer(scrollController, setModalState: setModalState);
+              });
+            }
+
+            return Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
               ),
+              child: Column(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 4,
+                    margin: const EdgeInsets.symmetric(vertical: 12),
+                    decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
+                  ),
+            GestureDetector(
+              onTap: () {
+                setModalState(() {
+                  isAutoScrolling = !isAutoScrolling;
+                  if (isAutoScrolling) {
+                    resumeTimer?.cancel();
+                scrollTimer = _startScrollTimer(scrollController, setModalState: setModalState);
+                  } else {
+                    scrollTimer?.cancel();
+                    scrollTimer = null;
+                    resumeTimer = Timer(const Duration(seconds: 20), () {
+                      setModalState(() {
+                        isAutoScrolling = true;
+                scrollTimer = _startScrollTimer(scrollController, setModalState: setModalState);
+                      });
+                    });
+                  }
+                });
+              },
+              child: Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                color: isAutoScrolling
+                    ? Colors.blue.withOpacity(0.08)
+                    : Colors.orange.withOpacity(0.08),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(
+                      isAutoScrolling ? Icons.keyboard_double_arrow_down : Icons.pause_circle_outline,
+                      size: 14,
+                      color: isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      isAutoScrolling ? '⏬ 自动滚屏中 · 点击暂停' : '⏸ 已暂停 · 20秒后自动恢复',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           if (provider.identifiedLectureContext != null)
             Container(
               width: double.infinity,
@@ -231,57 +309,104 @@ class _NotesScreenState extends State<NotesScreen> {
 
           Expanded(
             child: ListView(
-                  controller: scrollController,
-                  padding: const EdgeInsets.all(24),
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          provider.currentSessionMode == AppMode.lecture ? 'ACADEMIC RECAP' : 'DISCUSSION SUMMARY', 
-                          style: TextStyle(
-                            fontSize: 12, 
-                            fontWeight: FontWeight.w900, 
-                            letterSpacing: 2, 
-                            color: provider.currentSessionMode == AppMode.lecture ? Colors.blueAccent : Colors.deepPurpleAccent
-                          )
+                controller: scrollController,
+                padding: const EdgeInsets.all(24),
+                children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            provider.currentSessionMode == AppMode.discussion ? 'DISCUSSION SUMMARY' : provider.currentSessionMode == AppMode.exam ? 'EXAM RECAP' : 'ACADEMIC RECAP', 
+                            style: TextStyle(
+                              fontSize: 12, 
+                              fontWeight: FontWeight.w900, 
+                              letterSpacing: 2, 
+                              color: provider.currentSessionMode == AppMode.discussion ? Colors.deepPurpleAccent : Colors.blueAccent
+                            )
+                          ),
+                          Row(
+                            children: [
+                              IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+            GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onTap: () {
+                          setModalState(() {
+                            _playerExpanded = !_playerExpanded;
+                            if (_playerExpanded) {
+                              _playerAutoHideTimer?.cancel();
+                              _playerAutoHideTimer = Timer(const Duration(seconds: 10), () {
+                                setModalState(() => _playerExpanded = false);
+                              });
+                            } else {
+                              _playerAutoHideTimer?.cancel();
+                            }
+                          });
+                        },
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                          decoration: BoxDecoration(
+                            color: Colors.grey.withOpacity(0.06),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _playerExpanded ? Icons.expand_less : Icons.expand_more,
+                                size: 16,
+                                color: Colors.grey[600],
+                              ),
+                              const SizedBox(width: 6),
+                              const Icon(Icons.headphones, size: 14, color: Colors.blueAccent),
+                              const SizedBox(width: 6),
+                              Text(
+                                _playerExpanded ? '点击收起播放器' : '🎧 TTS 播放器',
+                                style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500),
+                              ),
+                            ],
+                          ),
                         ),
-                        Row(
-                          children: [
-                            IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
-                          ],
+                      ),
+                      if (_playerExpanded) ...[
+                        const SizedBox(height: 8),
+                        TtsPlayerBar(
+                          chineseText: chineseForTts,
+                          englishText: englishForTts,
+                          siliconFlowKey: provider.siliconFlowKey,
                         ),
                       ],
-                    ),
-                    const SizedBox(height: 8),
-                    TtsPlayerBar(
-                      chineseText: chineseForTts,
-                      englishText: englishForTts,
-                      siliconFlowKey: provider.siliconFlowKey,
-                    ),
-                    const SizedBox(height: 12),
-                    MarkdownBody(
-                      data: content,
-                      softLineBreak: true,
-                      styleSheet: getAcademicMarkdownStyle(context),
-                      selectable: true,
-                      extensionSet: md.ExtensionSet(
-                        [const md.FencedCodeBlockSyntax()],
-                        [md.EmojiSyntax(), HighlightSyntax()],
+                      const SizedBox(height: 12),
+                      MarkdownBody(
+                        data: content,
+                        softLineBreak: true,
+                        styleSheet: getAcademicMarkdownStyle(context),
+                        selectable: false,
+                        extensionSet: md.ExtensionSet(
+                          [const md.FencedCodeBlockSyntax()],
+                          [md.EmojiSyntax(), HighlightSyntax()],
+                        ),
+                        builders: {
+                          'highlight': HighlightBuilder(context),
+                        },
                       ),
-                      builders: {
-                        'highlight': HighlightBuilder(context),
-                      },
-                    ),
-                    const SizedBox(height: 40),
-                  ],
-                ),
-              ),
-            ],
-          ),
+                      const SizedBox(height: 40),
+                    ],
+                  ),
+            ),
+          ],
         ),
-      ),
-    ).whenComplete(() {
+      );
+    },
+  ),
+  ),
+).whenComplete(() {
+      scrollTimer?.cancel();
+      resumeTimer?.cancel();
+      _playerAutoHideTimer?.cancel();
       TtsService().stop();
     });
   }
@@ -355,7 +480,7 @@ class _NotesScreenState extends State<NotesScreen> {
             ),
           ),
           IconButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen(initialModuleFilter: 'notes'))),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen())),
             icon: const Icon(Icons.history_edu),
           ),
           IconButton(
@@ -367,7 +492,7 @@ class _NotesScreenState extends State<NotesScreen> {
       ),
       body: Column(
         children: [
-          if (_pendingSummaryContent != null && provider.currentSessionMode == AppMode.lecture)
+          if (_pendingSummaryContent != null && provider.currentSessionMode != AppMode.discussion && provider.currentSessionMode != AppMode.freeTalk)
             GestureDetector(
               onTap: () {
                 final content = _pendingSummaryContent!;
@@ -382,16 +507,16 @@ class _NotesScreenState extends State<NotesScreen> {
                 padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
-                    colors: provider.currentSessionMode == AppMode.lecture
-                        ? [Colors.blueAccent, Colors.blue]
-                        : [Colors.deepPurpleAccent, Colors.deepPurple],
+                    colors: provider.currentSessionMode == AppMode.discussion
+                        ? [Colors.deepPurpleAccent, Colors.deepPurple]
+                        : [Colors.blueAccent, Colors.blue],
                   ),
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: (provider.currentSessionMode == AppMode.lecture
-                              ? Colors.blueAccent
-                              : Colors.deepPurpleAccent)
+                      color: (provider.currentSessionMode == AppMode.discussion
+                              ? Colors.deepPurpleAccent
+                              : Colors.blueAccent)
                           .withOpacity(0.3),
                       offset: const Offset(0, 4),
                       blurRadius: 10,
@@ -401,7 +526,7 @@ class _NotesScreenState extends State<NotesScreen> {
                 child: Row(
                   children: [
                     Icon(
-                      provider.currentSessionMode == AppMode.lecture ? Icons.school : Icons.forum,
+                      provider.currentSessionMode == AppMode.discussion ? Icons.forum : Icons.school,
                       color: Colors.white,
                       size: 20,
                     ),
@@ -449,7 +574,7 @@ class _NotesScreenState extends State<NotesScreen> {
             builder: (context, summaries, _) {
               if (summaries.isEmpty) return const SizedBox.shrink();
               final latestSummary = summaries.first; 
-              final isLecture = provider.currentSessionMode == AppMode.lecture;
+              final isAcademic = provider.currentSessionMode != AppMode.discussion && provider.currentSessionMode != AppMode.freeTalk;
               final isExpanded = _isSummaryPanelExpanded;
 
               return AnimatedContainer(
@@ -483,17 +608,17 @@ class _NotesScreenState extends State<NotesScreen> {
                             Row(
                               children: [
                                 Icon(
-                                  isLecture ? Icons.school : Icons.forum, 
+                                  isAcademic ? Icons.school : Icons.forum, 
                                   size: 14, 
-                                  color: isLecture ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200]
+                                  color: isAcademic ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200]
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
-                                  isLecture ? 'LATEST ACADEMIC INSIGHT' : 'DISCUSSION SNAPSHOT', 
+                                  isAcademic ? 'LATEST ACADEMIC INSIGHT' : 'DISCUSSION SNAPSHOT', 
                                   style: TextStyle(
                                     fontSize: 10, 
                                     fontWeight: FontWeight.w900, 
-                                    color: isLecture ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200], 
+                                    color: isAcademic ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200], 
                                     letterSpacing: 1.5
                                   )
                                 ),
@@ -518,7 +643,7 @@ class _NotesScreenState extends State<NotesScreen> {
                             styleSheet: getAcademicMarkdownStyle(context).copyWith(
                               p: const TextStyle(fontSize: 14, height: 1.3),
                               strong: TextStyle(
-                                color: isLecture ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200],
+                                color: isAcademic ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200],
                                 fontWeight: FontWeight.w900,
                                 fontSize: 14,
                               ),
@@ -576,7 +701,7 @@ class _NotesScreenState extends State<NotesScreen> {
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (context) => const HistoryScreen(initialModuleFilter: 'notes')),
+                              MaterialPageRoute(builder: (context) => const HistoryScreen()),
                             );
                           },
                         ),
@@ -769,11 +894,13 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               items: AppMode.values.map((m) => DropdownMenuItem(
                 value: m,
                 child: Text(
-                  m == AppMode.lecture
-                      ? '🎓 Academic Lecture'
-                      : m == AppMode.discussion
-                          ? '👥 Group Discussion'
-                          : 'Free Talk',
+                  m == AppMode.exam
+                      ? '📝 Exam Listening'
+                      : m == AppMode.lecture
+                          ? '🎓 Academic Lecture'
+                          : m == AppMode.discussion
+                              ? '👥 Group Discussion'
+                              : 'Free Talk',
                 ),
               )).toList(),
               onChanged: (val) { if (val != null) setState(() => _tempMode = val); },

@@ -2028,316 +2028,162 @@ A: Why does he order fast food? B: **To save** time.
       units: [
         GrammarUnit(
           id: 'unit_17',
-          title: 'Unit 17: The Passive: Overview',
-          outcomes: '''• Recognize when to use the passive and when to mention the agent (识别何时用被动语态、何时提及动作执行者)
-• Use the passive with different tenses (在不同时态中使用被动语态)
-• Identify specific information in a magazine article about geography (识别地理杂志文章中的具体信息)
-• Discuss and interpret international proverbs (讨论并诠释国际谚语)
-• Write an essay about a familiar country (写一篇关于熟悉国家的短文)''',
-          chart: '''## THE PASSIVE — 被动语态
+          title: 'Unit 17: Passive Overview — 被动语态概览',
+          outcomes: '''## Passive Overview
+**主动：** 关注"谁做"（执行者）
+**被动：** 关注"被做"（承受者）
 
-| 时态 | 主动语态 | 被动语态 |
+**结构：** be + 过去分词（be 随时态变化）''',
+          chart: '''## Passive — 结构
+
+| 时态 | 主动 | 被动 |
 |---|---|---|
-| **Simple Present** | Millions of people **buy** it. | It **is bought** by millions. |
-| **Simple Past** | Someone **published** it in 1888. | It **was published** in 1888. |
-| **Present Perfect** | They **have reached** their goal. | Their goal **has been reached**. |
-| **Present Progressive** | People **are reading** it. | It **is being read** by many. |
-| **Past Progressive** | People **were reading** it. | It **was being read** by many. |
-| **Future (will)** | They **will publish** it. | It **will be published**. |
-| **Future (going to)** | They **are going to publish** it. | It **is going to be published**. |
+| 一般现在 | Someone **buys** it. | It **is bought**. |
+| 一般过去 | Someone **published** it. | It **was published**. |
+| 现在完成 | They **have reached** it. | It **has been reached**. |
+| 现在进行 | People **are reading** it. | It **is being read**. |
+| 过去进行 | People **were reading** it. | It **was being read**. |
+| 将来 | They **will publish** it. | It **will be published**. |
 
-### 被动语态结构
-| 主语 | Be (not) | 过去分词 | (By + 宾语) |
+| 主语 | be (not) | 过去分词 | (by + sb) |
 |---|---|---|---|
-| It | **is (not)** | **bought** | by millions. |
-| It | **was (not)** | **published** | |
-| Their goal | **has (not) been** | **reached** | |
+| It | **is** | **bought** | by millions. |
+| It | **was not** | **published** | |
+| Their goal | **has been** | **reached** | |''',
+          chineseGuide: '''## Passive — 中文解析
 
-### Yes/No Questions
-| Be/Have | 主语 | (Been +) 过去分词 |
-|---|---|---|
-| **Was** | it | **sold** in Japan? |
-| **Has** | it | **been sold**? |''',
-          chineseGuide: '''## 中文对比解析
+**主动 vs 被动 — 关注点不同**
+- 主动关注**谁做的**：Millions of people read the magazine.
+- 被动关注**被做了什么**：The magazine is read by millions.
 
-### 主动 vs 被动 — 关注点不同
-- **主动句**关注动作的**执行者**：Millions of people read the magazine.（焦点是读者）
-- **被动句**关注动作的**承受者**：The magazine is read by millions.（焦点是杂志）
+**何时用被动？**
+1. 执行者不重要/不清楚 → My wallet **was stolen**.
+2. 想让承受者成为焦点 → Einstein **is known** worldwide.
+3. 学术/正式写作 → The experiment **was conducted** in 2020.
 
-### 什么时候用被动？
-1. 动作执行者**不重要、不清楚或很明显**
-   > My wallet **was stolen**.（不知道谁偷的）
-   > Rice **is grown** in China.（谁种的不重要）
-2. 想让动作承受者成为**话题焦点**
-   > Einstein **is known** all over the world.
-3. 正式写作/学术文章中常用被动
-   > The experiment **was conducted** in 2020.
-
-### 被动语态的构成
-**Be + 过去分词** — Be 随时态变化：
-- is done（一般现在）/ was done（一般过去）/ has been done（现在完成）
-- is being done（现在进行）/ was being done（过去进行）
-- will be done（将来）/ is going to be done（将来）
-
-### 何时加 By + 宾语？
-- 动作执行者**有新信息**时才加 by
-- 如果执行者很明显或无关紧要，不加 by
-
-### 中文翻译技巧
-英语被动经常翻译为中文的"被"、"由"、"受"、"为…所"或直接用主动句：
-- It is bought by millions → 它被数百万人购买
-- The class is taught by Mr. Lee → 这门课由李老师教
-- She was raised by her grandmother → 她由奶奶抚养长大''',
+**By + 执行者**
+只有执行者是新信息时才加 by，否则省略。''',
           keyRules: '''## 核心规则
 
-### 1️⃣ 构成
-- **be + 过去分词**
-- Be 动词反映时态变化
-
-### 2️⃣ 何时用被动
-- 执行者不明确/不重要
-- 想让承受者成为话题焦点
-- 学术/正式写作
-
-### 3️⃣ By 短语
-- 只有执行者是新信息时才加 by
-- 不重要或明显时省略
-
-### 4️⃣ 时态覆盖
-- 所有时态都有对应的被动形式
-- 完成时：has/have/had been + 过去分词
-- 进行时：be being + 过去分词
-- 将来时：will be + 过去分词''',
+- **结构**：be + 过去分词（be 随时态变化）
+- **何时用被动**：执行者不明确 / 想突出承受者 / 学术写作
+- **By 短语**：只有执行者是新信息时才加
+- **各时态被动**：完成时 → been done / 进行时 → being done / 将来时 → will be done''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| The book **wrote** in 1888. | The book **was written** in 1888. | 被动要用 be + 过去分词 |
-| It **is wrote** by millions. | It **is written** by millions. | 过去分词不规则的不能加 -ed |
-| The car **was been** repaired. | The car **was repaired** / **has been repaired**. | 不要同时用 was 和 been |''',
+| The book **wrote** in 1888. | The book **was written** in 1888. | 被动用 be + 过去分词 |
+| It **is wrote** by millions. | It **is written** by millions. | write 的过去分词是 written |
+| The car **was been** repaired. | The car **was repaired**. | 不要同时用 was + been |''',
           vocabulary: '''| 词汇 | 词性 | 中文 |
-|---|---|---|
+|---|---|---|---|---|
 | passive | n./adj. | 被动（的）|
 | agent | n. | 执行者，施动者 |
 | action | n. | 动作 |
-| receive | v. | 接受，承受 |
-| focus | n. | 焦点，重点 |
-| publish | v. | 出版 |
-| conduct | v. | 实施，进行 |
-| recognize | v. | 认可，识别 |''',
+| focus | n. | 焦点，重点 |''',
         ),
-        GrammarUnit(
+                GrammarUnit(
           id: 'unit_18',
-          title: 'Unit 18: The Passive with Modals & Similar Expressions',
-          outcomes: '''• Express certainty, ability, possibility, impossibility, advice, or necessity with passive modals (用被动情态动词表达确定性、能力、可能性等)
-• Identify key information in a social science article (识别社会科学文章中的关键信息)
-• Discuss rules for group living in close quarters (讨论密集居住的规则)
-• Write about the ideal school for diplomacy (描写理想的外交学校)''',
-          chart: '''## PASSIVE WITH MODALS — 带情态动词的被动语态
+          title: 'Unit 18: Passive with Modals — 带情态动词的被动',
+          outcomes: '''## Passive with Modals
+**结构：** 情态动词 + be + 过去分词
 
-### 陈述句
-| 情态动词/类似表达 | + be | + 过去分词 |
+用被动情态动词表达：必须 / 应该 / 能够 / 将会 / 可能被做''',
+          chart: '''## Passive with Modals — 结构
+
+| 功能 | 结构 | 例句 |
 |---|---|---|
-| will (not) | be | made |
-| should (not) | be | solved |
-| must (not) | be | completed |
-| can (not) | be | found |
-| might (not) | be | delivered |
-| had better (not) | be | done |
-| ought to | be | done |
-| have to / has (got) to | be | done |
-| doesn't have to | be | done |
-| is (not) going to | be | done |
+| 必须 | must be done | The rules **must be followed**. |
+| 应该 | should / ought to be done | This **should be solved** now. |
+| 能够 | can be done | It **can be found** online. |
+| 将会 | will be done | It **will be delivered** tomorrow. |
+| 可能 | might be done | It **might be delayed**. |
+| 最好 | had better be done | You **had better be registered**. |
+| 必须（have to）| have to be done | It **has to be finished** today. |''',
+          chineseGuide: '''## Passive with Modals — 中文解析
 
-### Yes/No 问句
-| Modal | 主语 | be + 过去分词 |
-|---|---|---|
-| **Must** | the decision | **be made** today? |
-| **Should** | the problem | **be solved** now? |
-| **Will** | the package | **be delivered** tomorrow? |
-| **Does** | it | **have to be done** today? |
+**结构：情态动词 + be + 过去分词**
+> Active: You **must follow** the rules.
+> Passive: The rules **must be followed**.
 
-### 简短回答
-| 问句 | 肯定 | 否定 |
-|---|---|---|
-| Must it be done? | Yes, it **must**. | No, it **needn't / doesn't have to**. |
-| Should it be done? | Yes, it **should**. | No, it **shouldn't**. |
-| Will it be done? | Yes, it **will**. | No, it **won't**. |
-| Can it be fixed? | Yes, it **can**. | No, it **can't**. |
-| Does it have to be done? | Yes, it **does**. | No, it **doesn't**. |
+**否定**
+- should not / must not / can't + be done
+- doesn't have to be done（不必）
 
-### 否定形式
-- The decision **should not be made** yet.
-- This **doesn't have to be done** today.
-- It **can't be fixed** easily.
-
-### 例句
-- The decision **must be made** quickly.
-- The problem **should be solved** immediately.
-- The package **will be delivered** tomorrow.
-- This **can't be done** without proper tools.
-- The rules **have to be followed**.''',
-          chineseGuide: '''## 中文对比解析
-
-### 结构：情态动词 + be + 过去分词
-跟普通被动一样，只是在 be 前面加上情态动词：
-> **Active**: You **must follow** the rules.
-> **Passive**: The rules **must be followed**.
-
-### 按功能分类
-
-| 功能 | 情态动词被动 | 例句 |
-|---|---|---|
-| **确定性**（必须/一定） | must / must not / have to | The rules **must be followed**. |
-| **建议**（应该） | should / ought to / had better | This **should be solved** now. |
-| **能力/可能性**（能/可以） | can / can't / could | It **can be found** online. |
-| **将来** | will / be going to | The package **will be delivered** tomorrow. |
-| **推测**（可能） | might / may | It **might be delivered** later. |
-
-> **had better** = 最好（表强烈建议）：You **had better be registered** before the deadline.
-> **ought to** = 应该（与 should 同义，稍正式）：This **ought to be done** carefully.
-
-### Have to / Be going to 的被动
-- You **have to be registered** before the deadline.
-- The work **is going to be finished** soon.
-
-### 否定形式
-- should not be done / can't be fixed / must not be done
-- doesn't have to be done（不是 mustn't be done 表"不必"）
-
-### By + 施动者
-如果想说动作是谁做的，用 **by**：
-> The decision **must be made by** the committee today.
-> This problem **should be solved by** the engineering team.
-
-### 学术写作提示
-- 被动 + 情态动词在学术写作中比日常对话更常见
-- 用于描述规则、流程、客观必要性''',
+**问句**
+- 情态动词提前：**Must** it be done today?
+- Have to 用 do 提问：**Does** it have to be done?''',
           keyRules: '''## 核心规则
 
-### 1️⃣ 结构
-- 情态动词 + **be** + 过去分词
-- have to / be going to + **be** + 过去分词
-
-### 2️⃣ 功能分类
-- 确定性：must be done（必须）
-- 建议：should / ought to / had better be done（应该/最好）
-- 能力/可能：can be done（能够）
-- 将来：will be done（将会）
-- 推测：might be done（可能）
-
-### 3️⃣ Had better
-- 表强烈建议：had better + be + 过去分词
-- 否定：had better not be done
-
-### 4️⃣ 问句
-- 情态动词提前：Must it be done?
-- Have to 用 do 提问：Does it have to be done?
-
-### 5️⃣ 回答
-- Must 的否定回答用 needn't 或 don't have to
-- 其他情态动词直接用情态词回答（Yes, it should. / No, it can't.）''',
+- **结构**：情态动词 + **be** + 过去分词
+- **Must** 否定回答用 needn't / don't have to
+- **Had better**：had better + be + 过去分词（否定：had better not be done）
+- **Have to** 用 do 协助提问''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| It **must done** today. | It **must be done** today. | 情态动词后漏了 be |
-| They **should finished** by now. | It **should be finished** by now. | 被动语态必须用 be + 过去分词 |''',
+| It **must done** today. | It **must be done** today. | 漏了 be |
+| They **should finished** by now. | It **should be finished** by now. | 被动必须用 be + 过去分词 |''',
           vocabulary: '''| 词汇 | 词性 | 中文 |
-|---|---|---|
+|---|---|---|---|---|
 | modal | n. | 情态动词 |
 | certainty | n. | 确定性 |
 | possibility | n. | 可能性 |
-| necessity | n. | 必要性 |
-| regulation | n. | 规定 |
-| complete | v. | 完成 |
-| deliver | v. | 递送 |''',
+| necessity | n. | 必要性 |''',
         ),
         GrammarUnit(
           id: 'unit_19',
-          title: 'Unit 19: The Passive Causative (Have/Get Something Done)',
-          outcomes: '''• Describe services that people have done for them by others, using the passive causative (用被动使役描述让别人为自己做的事)
-• Identify key information in an article about beauty (识别关于美容文章中的关键信息)
-• Discuss preparations for a trip to another country (讨论出国旅行的准备工作)
-• Write about preparations for an upcoming event (描写即将到来的活动的准备工作)''',
-          chart: '''## PASSIVE CAUSATIVE — 被动使役
+          title: 'Unit 19: Passive Causative — 被动使役',
+          outcomes: '''## Passive Causative
+**让别人帮你做某事**
 
-| 结构 | 例句 |
-|---|---|
-| **have** + 宾语 + **过去分词** | I **had** my hair **cut** yesterday. |
-| **get** + 宾语 + **过去分词** | I **got** my car **fixed** last week. |
+**结构：** have / get + 宾语 + 过去分词''',
+          chart: '''## Passive Causative — 结构
 
-### 各种时态
-| 时态 | Have | Get |
+| 结构 | 含义 | 例句 |
 |---|---|---|
-| Simple Present | She **has** her hair **cut** monthly. | She **gets** her hair **cut** monthly. |
-| Simple Past | I **had** my car **repaired**. | I **got** my car **repaired**. |
-| Present Progressive | She **is having** her house **painted**. | She **is getting** her house **painted**. |
-| Future | She **will have** her hair **done**. | She **will get** her hair **done**. |
-| Present Perfect | She **has had** her hair **cut**. | She **has gotten** her hair **cut**. |''',
-          chineseGuide: '''## 中文对比解析
+| have + 宾语 + 过去分词 | 让别人做（中性）| I **had** my hair **cut**. |
+| get + 宾语 + 过去分词 | 让别人做（口语）| I **got** my car **fixed**. |
 
-### 基本含义："让别人做"
-被动使役表达**让别人（通常是专业人士）帮你做某事**：
-> I **had my hair cut**. = I asked a barber to cut my hair.（不是自己剪的）
-> I **got my car fixed**. = I asked a mechanic to fix my car.（不是自己修的）
+| 时态 | have | get |
+|---|---|---|
+| 一般现在 | She **has** her hair **cut** monthly. | She **gets** her hair **cut** monthly. |
+| 一般过去 | I **had** my car **repaired**. | I **got** my car **repaired**. |
+| 现在进行 | She **is having** her house **painted**. | She **is getting** her house **painted**. |
+| 将来 | She **will have** her hair **done**. | She **will get** her hair **done**. |
+| 现在完成 | She **has had** her hair **cut**. | She **has gotten** her hair **cut**. |''',
+          chineseGuide: '''## Passive Causative — 中文解析
 
-### Have vs Get — 语气区别
-- **have something done**：中性，陈述事实
-  > I **had** my oil **changed** last week.
-- **get something done**：更口语化，有时带"设法完成"的意思
-  > I finally **got** my computer **repaired**.
+**基本含义："让别人做"**
+> I **had my hair cut**. = 让理发师剪的（不是自己剪）
+> I **got my car fixed**. = 让修理工修的（不是自己修）
 
-### 各种时态示例
-> I **have** my teeth **checked** every year.（一般现在）
-> She **is having** her wedding dress **made**.（现在进行）
-> We **had** our house **painted** last summer.（一般过去）
-> We **will have** the invitations **printed** by Friday.（将来）
+**Have vs Get 语气区别**
+- **have**：中性陈述事实
+- **get**：口语化，"设法完成"
 
-### 与普通使役（Unit 10）的区别
-- Unit 10 使役：**have someone do** — 让某人做某事（主动）
-  > I **had** the mechanic **fix** my car.（我让修理工修车）
-- Unit 19 被动使役：**have something done** — 让某事被做（被动）
-  > I **had** my car **fixed**.（我让人修了我的车）
-
-### 与动名词 / 不定式 / 情态动词连用
-被动使役可以和动名词、不定式、情态动词组合：
-> **I love having** my hair **done**.（动名词）
-> **I want to get** it **colored**.（不定式）
-> **I can get** the oil **changed** tomorrow.（情态动词）
-> **You should have** the tires **checked**.（情态动词）
-
-### 常规被动 vs 被动使役
-- 常规被动强调动作被做（不限主语）：The car was fixed.
-- 被动使役强调主语安排别人做：I had the car fixed.（我安排的）
-- 被动使役在日常对话中更常见，常规被动在写作中更常见''',
+**vs 普通使役（Unit 10）**
+- Unit 10: **have + 人 + do** → I had the mechanic fix my car.（让某人做）
+- Unit 19: **have + 物 + done** → I had my car fixed.（让某事被做）''',
           keyRules: '''## 核心规则
 
-### 1️⃣ 结构
-- have / get + 宾语 + 过去分词
-- 表示"让别人帮你做某事"
-
-### 2️⃣ Have vs Get
-- have：中性
-- get：口语化，"设法完成"
-
-### 3️⃣ Have someone do vs Have something done
-- Unit 10: have + person + base form → 让某人做
-- Unit 19: have + thing + past participle → 让某事被做''',
+- **结构**：have / get + 宾语 + 过去分词
+- **含义**：让别人帮你做某事
+- **Have**：中性 / **Get**：口语化
+- **vs Unit 10**：have + 人 + do（让某人做）vs have + 物 + done（让某事被做）''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| I **had cut my hair**. | I **had my hair cut**. | had cut = 自己剪的；had my hair cut = 让别人剪的 |
-| I **got repaired my car**. | I **got my car repaired**. | 宾语（car）要放在过去分词前面 |
-| She **had** her dress **made** by a tailor. | ✅ 正确 | 可以加 by 执行者 |''',
+| I **had cut my hair**. | I **had my hair cut**. | had cut = 自己剪的；had hair cut = 让别人剪的 |
+| I **got repaired my car**. | I **got my car repaired**. | 宾语要放在过去分词前面 |''',
           vocabulary: '''| 词汇 | 词性 | 中文 |
-|---|---|---|
+|---|---|---|---|---|
 | causative | adj. | 使役的 |
 | service | n. | 服务 |
 | repair | v./n. | 修理 |
-| prepare | v. | 准备 |
-| appointment | n. | 预约 |
 | professional | n. | 专业人士 |''',
         ),
       ],
@@ -2348,376 +2194,209 @@ A: Why does he order fast food? B: **To save** time.
       units: [
         GrammarUnit(
           id: 'unit_20',
-          title: 'Unit 20: Present Real Conditional Sentences',
-          outcomes: '''• Describe present real conditions and results that are certain, possible, advisable, or necessary (描述确定、可能、可取或必要的现在真实条件和结果)
-• Express instructions, commands, or invitations that depend on a condition (表达依赖于某个条件的指令或邀请)
-• Identify specific information in an article about shopping online (识别关于网购文章中的具体信息)
-• Discuss different types of shopping (讨论不同类型的购物)
-• Write about things to do in one's city or town (描写所在城市可以做的事)''',
-          chart: '''## PRESENT REAL CONDITIONAL — 现在真实条件句
+          title: 'Unit 20: First Conditional — 条件句 1',
+          outcomes: '''## First Conditional
+**If + 一般现在时，will + 动词原形**
+将来很有可能发生｜真实时态，不用 were
 
-| If 从句（条件）| 结果从句 |
-|---|---|
-| **If** I shop online, | I **save** time. |
-| **If** the mall is closed, | I **can** shop online. |
-| **If** I don't like it, | I **return** it. |
+**Eg.** If it rains tomorrow, we will stay home.''',
+          chart: '''## First Conditional — 结构
 
-### 结构
-| If 从句（现在时）| 结果从句（现在时 / 情态动词）|
-|---|---|
-| If it's a holiday, | the store is closed. |
-| If you use a credit card, | it's faster. |
-| If Bill shops online, | he spends a lot. |
-| If I surf the Web, | I use Google. |
-| If I'm surfing the Web, | I use Google. |
+| If 从句 | 结果从句 | 含义 |
+|---|---|---|
+| If + 一般现在时 | will + 动词原形 | 将来很有可能发生 |
 
-### 问句
-| 疑问类型 | 例句 |
-|---|---|
-| Yes/No | Do you save time **if** you shop online? |
-| Wh- | What happens **if** I don't like it? |
-| 简短回答 | Yes, I do. / No, I can't. |
+**Eg.**
+> If it rains tomorrow, we will stay home.
+> If you study hard, you will pass the exam.
+> If she calls me, I will tell her.''',
+          chineseGuide: '''## First Conditional — 中文解析
 
-### 用法
-- **一般真理**：If you heat ice, it melts.
-- **习惯性动作**：If Bill shops online, he spends a lot.
-- **情态动词结果**：If the mall is closed, I **can** shop online. / you **should** check online. / you **must** be careful. / I **might** find a better price.''',
-          chineseGuide: '''## 中文对比解析
+**If + 一般现在时，will + 动词原形**
+表示将来**很有可能发生**的事情。
 
-### 现在真实条件句 — "如果…，就…"
-表示**每次**条件发生，结果都**一定**发生：
-> If it's a holiday, the store is closed.
-> 如果是节假日，商店就关门。（每次假期都这样）
+- If 从句用一般现在时（不用将来时）
+- 这是**真实时态**，不用 were
+- 结果从句用 will + 动词原形
 
-### 三个主要用法
-1. **一般真理**（客观事实，always true）
-   > If you heat ice, it melts.
-2. **习惯性动作**（每次条件满足都做同样的事）
-   > If Bill shops online, he spends a lot of money.
-3. **带情态动词的结果**（可能性、建议、必要性等）
-   > If the mall is closed, I **can** shop online.
-   > If you want to save money, you **should** compare prices.
-
-### Even if — "即使"
-表示结果是出人意料的：
-> **Even if** it's a holiday, this store stays open.
-
-### If 从句的位置
-- If 从句在前 → 加逗号：**If** it's a holiday, the store is closed.
-- If 从句在后 → 不加逗号：The store is closed **if** it's a holiday.
-
-### 祈使句作结果从句 — 指令/建议/邀请
-结果从句也可以用祈使句（命令、建议、邀请等）：
-> **If** you change your mind, **call** the company.（指令）
-> **If** you get home very late, **don't make** noise.（禁止）
-> **If** you want to come along, **meet us** at noon.（邀请）
-> **If** you don't like the gift, **then** you can return it.（then 强调结果）
-
-### When / Whenever 代替 If
-在现在真实条件句中，可以用 when 或 whenever 代替 if：
-- **when** 表一般真理（每次条件为真时都发生）
-  > **When** you heat ice, it melts.（= If you heat ice...）
-  > **When** she shops online, she uses her credit card.
-- **whenever** 表习惯（每次发生都做同样的事）
-  > **Whenever** Bill shops online, he spends too much.
-- 当两个动作同时发生，两个从句都可以用现在进行时
-  > **When** I'm surfing the Web, I'm using Google.
-  > **When** I surf the Web, I use Google.''',
+> If it rains tomorrow, we will stay home.
+> 如果明天下雨，我们就待在家。''',
           keyRules: '''## 核心规则
 
-### 1️⃣ 结构
-- If 从句：**simple present** / present progressive
-- 结果从句：**simple present** 或 **modal + base form**
-
-### 2️⃣ 三大用途
-- 一般真理（always true）
-- 习惯（always happens）
-- 带情态动词（可能/应该/必须）
-
-### 3️⃣ 祈使句结果从句
-- 指令：If you change your mind, call us.
-- 禁止：If you get home late, don't make noise.
-- 邀请：If you want to come along, meet us at noon.
-
-### 4️⃣ When / Whenever 代替 If
-- when = 一般真理：When you heat ice, it melts.
-- whenever = 习惯：Whenever Bill shops online, he spends too much.
-
-### 5️⃣ 标点
-- If 从句在前 → 逗号
-- If 从句在后 → 无逗号
-
-### 6️⃣ Even if
-- 表示"即使"，结果出人意料''',
+- If 从句：**一般现在时**
+- 结果从句：**will + 动词原形**
+- 含义：将来很有可能发生
+- 真实时态，不用 were''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| If it **will be** a holiday, the store is closed. | If it **is** a holiday, the store is closed. | 条件从句用一般现在时，不用将来时 |
-| If I **will shop** online, I save time. | If I **shop** online, I save time. | if 从句不用 will |''',
+| If it **will rain** tomorrow, we will stay home. | If it **rains** tomorrow, we will stay home. | if 从句用一般现在时，不用 will |
+| If I **were** free, I will come. | If I **am** free, I will come. | 真实条件句用 am，不用 were |''',
           vocabulary: '''| 词汇 | 词性 | 中文 |
-|---|---|---|
-| conditional | n./adj. | 条件（的）|
+|---|---|---|---|
+| conditional | adj. | 条件的 |
 | real condition | n. | 真实条件 |
-| result | n. | 结果 |
-| general truth | n. | 一般真理 |
-| habit | n. | 习惯 |''',
+| likely | adj. | 可能的 |''',
         ),
         GrammarUnit(
           id: 'unit_21',
-          title: 'Unit 21: Future Real Conditional Sentences',
-          outcomes: '''• Describe future real conditions and results (描述将来的真实条件和结果)
-• Identify specific information in a magazine article (识别杂志文章中的具体信息)
-• Discuss common problems and possible solutions (讨论常见问题及可能的解决方案)
-• Discuss superstitions, giving opinions (讨论迷信，表达观点)
-• Write a speech about what one will do if elected (写一篇当选后的演讲稿)''',
-          chart: '''## FUTURE REAL CONDITIONAL — 将来真实条件句
+          title: 'Unit 21: Second Conditional — 条件句 2',
+          outcomes: '''## Second Conditional
+**If + 一般过去时，would/could + 动词原形**
+与现在、将来事实相反（虚拟）
+be 动词一律用 were（考试标准写法）
 
-| If 从句（现在时）| 结果从句（将来时）|
-|---|---|
-| **If** I **don't feel** better, | I **won't go** to work. |
-| **If** you **need** help, | I **can help** you. |
-| **If** she **studies**, | she **will pass** the test. |
+**Eg.** If I were you, I would wait.
+**Eg.** If it were warmer, we could go out.''',
+          chart: '''## Second Conditional — 结构
 
-### 结构
-| If 从句 | 结果从句 |
-|---|---|
-| simple present / present progressive | **will** + base form / **be going to** / **modal** |
-| If I **don't feel** better tomorrow, | I **won't go** to work. |
-| If you **need** help, | I **can** help you. |
-
-### 与现在真实条件句的区别
-|  | 现在真实条件句 | 将来真实条件句 |
+| If 从句 | 结果从句 | 含义 |
 |---|---|---|
-| If 从句 | simple present | simple present |
-| 结果从句 | simple present | **will / be going to / modal** |
-| 含义 | 每次都这样 | 将来某一次会这样 |
+| If + 一般过去时 | would/could + 动词原形 | 与现在/将来事实相反 |
 
-> If it rains, I stay home.（习惯：每次下雨都待在家）
-> If it rains tomorrow, I **will** stay home.（将来：明天如果下雨就待在家）''',
-          chineseGuide: '''## 中文对比解析
+**Eg.**
+> If I were you, I would wait.
+> If it were warmer, we could go out.
+> If she knew the answer, she would tell us.''',
+          chineseGuide: '''## Second Conditional — 中文解析
 
-### 将来真实条件句 — "如果…了，将会…"
-与现在真实条件句的区别在**结果从句**：
-- 现在真实：If it rains, I **stay** home.（习惯——每次都这样）
-- 将来真实：If it rains tomorrow, I **will stay** home.（将来——明天如果下雨就待在家）
+**If + 一般过去时，would/could + 动词原形**
+表示与现在或将来事实**相反**（虚拟语气）。
 
-### If 从句仍然用一般现在时
-即使谈论将来的事，if 从句**仍然用现在时**，结果从句用将来时：
-> If I **don't feel** better tomorrow, I **won't go** to work.
-> If you **study** hard, you **will pass** the exam.
-> ❌ ~~If I will feel better, I will go...~~
+- be 动词一律用 **were**（考试标准写法）
+- If I **were** you, ...（不是 was）
+- If it **were** warmer, ...
 
-### If 从句也可以用现在进行时
-> If you **are looking** for a job, you **will find** one.
+> If I were you, I would wait.
+> 如果我是你，我会等。（事实：我不是你）
 
-### 结果从句的情态动词
-结果从句也可以用情态动词表达可能性、能力、建议等：
-> If you **need** help, I **can** help you.（能力）
-> If the price **is** right, I **might buy** it.（可能性）
-> If you **want** to apply, you **should** submit it by Friday.（建议）''',
+> If it were warmer, we could go out.
+> 如果天气暖和一点，我们就能出去了。（事实：天气不暖和）''',
           keyRules: '''## 核心规则
 
-### 1️⃣ 结构
-- If 从句：simple present / present progressive
-- 结果从句：**will / be going to / modal** + base form
-
-### 2️⃣ If 从句不用将来时
-- ❌ If I **will feel** better...
-- ✅ If I **feel** better...
-
-### 3️⃣ 与现在真实条件句的区别
-- 现在真实：结果从句用 simple present（习惯）
-- 将来真实：结果从句用 will / be going to（将来的事）''',
+- If 从句：**一般过去时**
+- 结果从句：**would/could + 动词原形**
+- 含义：与现在/将来事实相反（虚拟）
+- be 动词一律用 **were**（标准写法）''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| If I **will feel** better, I will go. | If I **feel** better, I will go. | if 从句不用 will |
-| If it **rains** tomorrow, I **stay** home.（想表达"明天会"）| If it rains tomorrow, I **will stay** home. | 将来真实条件句的结果从句用 will |''',
+| If I **was** you, I would wait. | If I **were** you, I would wait. | 虚拟语气中一律用 were |
+| If I **would have** time, I would help. | If I **had** time, I would help. | if 从句用过去时，不用 would |''',
           vocabulary: '''| 词汇 | 词性 | 中文 |
-|---|---|---|
-| future real | adj. | 将来真实的 |
-| superstition | n. | 迷信 |
-| solution | n. | 解决方案 |
-| speech | n. | 演讲 |
-| elect | v. | 选举 |''',
+|---|---|---|---|
+| unreal | adj. | 虚拟的，不真实的 |
+| hypothetical | adj. | 假设的 |
+| imagine | v. | 想象 |''',
         ),
         GrammarUnit(
           id: 'unit_22',
-          title: 'Unit 22: Present & Future Unreal Conditional & Wishes',
-          outcomes: '''• Describe present or future unreal conditions and results (描述现在或将来的虚拟条件和结果)
-• Give advice with **If I were you** (用 If I were you 提建议)
-• Express wishes about the present or the future (表达现在或将来的愿望)
-• Identify key details in a fairy tale (识别童话故事中的关键细节)
-• Write about a wish one has for oneself or society (描写一个对自己或社会的愿望)''',
-          chart: '''## PRESENT & FUTURE UNREAL CONDITIONAL — 现在/将来虚拟条件句
+          title: 'Unit 22: Third Conditional — 条件句 3',
+          outcomes: '''## Third Conditional
+**If + had done，would/could + have done**
+与过去事实相反，假想、遗憾
 
-| If 从句（过去时）| 结果从句（would/could + base form）|
-|---|---|
-| If I **had** a million dollars, | I **would travel** around the world. |
-| If she **knew** the answer, | she **would tell** us. |
-| If I **were** you, | I **would** accept the offer. |
+**Eg.** If I had studied harder, I would have passed.''',
+          chart: '''## Third Conditional — 结构
 
-### 结构
-| If 从句 | 结果从句 |
-|---|---|
-| **simple past** / **were** | **would** / **could** / **might** + base form |
-| If I **had** more time, | I **would learn** another language. |
-| If she **were** here, | she **could help** us. |
-
-### Wishes — 愿望
-| 结构 | 含义 | 例句 |
+| If 从句 | 结果从句 | 含义 |
 |---|---|---|
-| **wish** + simple past | 对现在的愿望 | I **wish** I **had** more free time. |
-| **wish** + could | 对将来的愿望 | I **wish** I **could travel** more. |
-| **If only** + simple past | 加强版愿望 | **If only** I **knew** the answer! |''',
-          chineseGuide: '''## 中文对比解析
+| If + had done | would/could + have done | 与过去事实相反 |
 
-### 虚拟条件句 — "如果…的话，就会…"（但事实并非如此）
+**Eg.**
+> If I had studied harder, I would have passed.
+> If she had left earlier, she wouldn't have missed the bus.
+> If we had known, we could have helped.''',
+          chineseGuide: '''## Third Conditional — 中文解析
 
-| 类型 | If 从句 | 结果从句 | 事实 |
-|---|---|---|---|
-| 现在虚拟 | past tense | would + base | 与现在相反 |
-| 将来虚拟 | past tense | would + base | 将来不太可能 |
-| 建议 | If I **were** you | would + base | 给对方提建议 |
+**If + had done，would/could + have done**
+表示与过去事实**相反**，表达假想或遗憾。
 
-> **If I had a million dollars**, I **would travel** around the world.
-> 事实：我没有一百万美金。（与现在相反）
+> If I had studied harder, I would have passed.
+> 如果我当时更努力学习，我就考过了。
+> （事实：我没努力学，也没考过）
 
-> **If I were you**, I **would** accept the offer.
-> 事实：我不是你。（用于给别人建议）
-
-### Were 的用法
-在虚拟条件句中，**所有人称都用 were**（不用 was）：
-> If I **were** you...（不是 If I was you）
-> If she **were** here...（不是 If she was here）
-
-### Wish — "但愿…"
-- **对现在**：wish + **过去时** → I wish I **had** more free time.（事实：我没有）
-- **对将来**：wish + **could** → I wish I **could travel** more.（事实：我不能）
-- **If only** 是更强烈的 wish：**If only** I **knew** the answer!
-
-### 真实条件 vs 虚拟条件
-> If I **have** time, I **will** help you.（真实：有可能有时间）
-> If I **had** time, I **would** help you.（虚拟：但我现在没时间）''',
+> If she had left earlier, she wouldn't have missed the bus.
+> 如果她早点走，就不会错过公交车了。
+> （事实：她没早点走，错过了）''',
           keyRules: '''## 核心规则
 
-### 1️⃣ 虚拟条件句结构
-- If 从句：**simple past**（be → **were**）
-- 结果从句：**would / could / might** + base form
-
-### 2️⃣ 含义
-- 与现在/将来事实相反
-- 用于提建议：If I were you, I would...
-
-### 3️⃣ Wish
-- wish + past tense：对现在的愿望
-- wish + could：对将来的愿望
-- If only：更强烈的愿望
-
-### 4️⃣ 真实 vs 虚拟
-- 真实：If + present → will（可能发生）
-- 虚拟：If + past → would（与事实相反）''',
+- If 从句：**had + 过去分词**
+- 结果从句：**would/could + have + 过去分词**
+- 含义：与过去事实相反（假想、遗憾）
+- if 从句不用 would：❌ If I would have known...''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| If I **was** you... | If I **were** you... | 虚拟语气中所有人称用 were |
-| If I **would have** time, I would help. | If I **had** time, I would help. | if 从句不用 would，用过去时 |
-| I wish I **am** rich. | I wish I **were** rich. | wish 后跟过去时（虚拟）|''',
+| If I **would have known**, I would have told you. | If I **had known**, I would have told you. | if 从句用 had + 过去分词 |
+| If she had left earlier, she **wouldn't miss** the bus. | If she had left earlier, she **wouldn't have missed** the bus. | 结果从句用 would have + 过去分词 |''',
           vocabulary: '''| 词汇 | 词性 | 中文 |
-|---|---|---|
-| unreal | adj. | 不真实的，虚拟的 |
-| wish | n./v. | 愿望，希望 |
-| hypothetical | adj. | 假设的 |
-| impossible | adj. | 不可能的 |
-| fairy tale | n. | 童话 |''',
+|---|---|---|---|
+| regret | n./v. | 后悔 |
+| suppose | v. | 假设 |
+| outcome | n. | 结果 |''',
         ),
         GrammarUnit(
           id: 'unit_23',
-          title: 'Unit 23: Past Unreal Conditional Sentences',
-          outcomes: '''• Describe past unreal conditions and results (描述过去的虚拟条件和结果)
-• Express regret about things that happened or didn't happen in the past (表达对过去事情的后悔)
-• Extract specific information from an article (从文章中提取具体信息)
-• Speculate about past events or hypothetical situations (推测过去事件或假设情况)
-• Write about an event that changed one's life (描写改变人生的事件)''',
-          chart: '''## PAST UNREAL CONDITIONAL — 过去虚拟条件句
+          title: 'Unit 23: I Wish — 愿望与遗憾',
+          outcomes: '''## I Wish
 
-| If 从句（had + 过去分词）| 结果从句（would/could + have + 过去分词）|
-|---|---|
-| If I **had studied** harder, | I **would have passed** the exam. |
-| If she **had left** earlier, | she **wouldn't have missed** the bus. |
-| If they **had invited** me, | I **would have gone**. |
-| If he **had been** careful, | he **wouldn't have made** that mistake. |
+### 1️⃣ 希望改变现在现状
+**wish + 过去式（be动词 → were）**
 
-### 结构
-| If 从句 | 结果从句 |
-|---|---|
-| **had + 过去分词** | **would / could / might + have + 过去分词** |
-| If I **had known**, | I **would have told** you. |
-| If we **had left** earlier, | we **could have caught** the train. |
-| If she **had tried**, | she **might have succeeded**. |''',
-          chineseGuide: '''## 中文对比解析
+**Eg.** I wish I were in Alberta.
+**Eg.** I wish I lived nearby.
 
-### 过去虚拟条件句 — "如果当时…了，就会…"（但事实没发生）
-表达对过去的**后悔**或**假设**，与已发生的事实相反。
+### 2️⃣ 后悔过去发生的事
+**wish + had done**
 
-> **If I had studied harder**, I **would have passed** the exam.
-> 事实：我没有努力学习，也没通过考试。（对过去的后悔）
+**Eg.** I wish I had left earlier.''',
+          chart: '''## I Wish — 结构
 
-> **If she had left earlier**, she **wouldn't have missed** the bus.
-> 事实：她没早点走，错过了公交车。
+| 结构 | 含义 | 例句 |
+|---|---|---|
+| wish + 过去式 | 希望改变现在现状 | I wish I **lived** nearby. |
+| wish + were | be 动词固定用 were | I wish I **were** in Alberta. |
+| wish + had done | 后悔过去发生的事 | I wish I **had left** earlier. |''',
+          chineseGuide: '''## I Wish — 中文解析
 
-### If 从句 — had + 过去分词
-不管主语是 I / you / he / she，都用 **had**：
-> If I **had known**... / If she **had been** careful...
-> ❌ ~~If I would have known...~~
+### 1️⃣ 希望改变现在现状
+**wish + 过去式**（be 动词 → **were**）
 
-### 结果从句 — would / could / might + have + 过去分词
-> I **would have told** you.（一定会的）
-> We **could have caught** the train.（本可以）
-> She **might have succeeded**.（可能会）
+表达对**现在**情况的愿望，与事实相反。
 
-### 四种条件句对比总结
-| 类型 | If 从句 | 结果从句 | 含义 |
-|---|---|---|---|
-| 现在真实 | present | present | 习惯/真理 |
-| 将来真实 | present | **will** + base | 将来可能 |
-| 现在虚拟 | **past (were)** | **would** + base | 与现在相反 |
-| 过去虚拟 | **had + p.p.** | **would have + p.p.** | 与过去相反 |''',
+> I wish I were in Alberta.
+> 我真希望我现在在阿尔伯塔。（事实：我不在）
+
+> I wish I lived nearby.
+> 我真希望我住得近。（事实：我住得远）
+
+### 2️⃣ 后悔过去发生的事
+**wish + had done**
+
+表达对**过去**事情的后悔。
+
+> I wish I had left earlier.
+> 我真希望我当时早点走。（事实：我走晚了）''',
           keyRules: '''## 核心规则
 
-### 1️⃣ 结构
-- If 从句：**had + 过去分词**
-- 结果从句：**would / could / might + have + 过去分词**
-
-### 2️⃣ 含义
-- 与过去事实相反
-- 表达后悔："要是当时…就好了"
-
-### 3️⃣ If 从句不用 would
-- ❌ If I **would have known**...
-- ✅ If I **had known**...
-
-### 4️⃣ 四种条件句总结
-- 现在真实：If + present → present
-- 将来真实：If + present → will
-- 现在虚拟：If + past → would + base
-- 过去虚拟：If + had → would have + p.p.''',
+- **希望改变现在**：wish + **过去式**（be → were）
+- **后悔过去**：wish + **had done**''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| If I **would have known**, I would have told you. | If I **had known**, I would have told you. | if 从句用 had + p.p.，不用 would have |
-| If she **had been** careful, she **wouldn't make** that mistake. | If she had been careful, she **wouldn't have made** that mistake. | 过去虚拟的结果从句用 would have + p.p. |''',
+| I wish I **am** in Alberta. | I wish I **were** in Alberta. | wish 后跟过去时（虚拟）|
+| I wish I **was** there. | I wish I **were** there. | be 动词一律用 were |
+| I wish I **have left** earlier. | I wish I **had left** earlier. | 后悔过去用 had + 过去分词 |''',
           vocabulary: '''| 词汇 | 词性 | 中文 |
-|---|---|---|
+|---|---|---|---|
+| wish | n./v. | 愿望，希望 |
 | regret | n./v. | 后悔 |
-| alternate history | n. | 替代历史，假设的历史 |
-| hypothetical | adj. | 假设的 |
-| chance | n. | 机会 |
-| outcome | n. | 结果 |''',
+| hopefully | adv. | 有希望地 |''',
         ),
       ],
     ),

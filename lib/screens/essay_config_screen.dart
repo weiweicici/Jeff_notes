@@ -293,6 +293,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
           'title': filename,
           'content_md': utf8.decode(bytes),
           'file_size': bytes.length,
+          'user_id': SupabaseConfig.currentUserId,
         });
         await UploadCache.mark(hash);
         debugPrint('[Essay Supabase Upload OK] $filename');

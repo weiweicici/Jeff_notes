@@ -4,6 +4,7 @@ import 'package:markdown/markdown.dart' as md;
 import '../models.dart';
 import '../services/grammar_service.dart';
 import '../widgets/academic_markdown.dart';
+import 'grammar_writing_screen.dart';
 
 class GrammarDetailScreen extends StatefulWidget {
   final GrammarUnit unit;
@@ -161,6 +162,21 @@ class _GrammarDetailScreenState extends State<GrammarDetailScreen> {
             // Outcomes
             _sectionHeader('🎯 学习目标', isDark),
             _markdownBlock(unit.outcomes, isDark),
+            const SizedBox(height: 12),
+            _actionButton(
+              icon: Icons.edit,
+              label: '✍️ 写作练习',
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => GrammarWritingScreen(unit: widget.unit),
+                  ),
+                );
+              },
+              color: Colors.green,
+              isDark: isDark,
+            ),
             const SizedBox(height: 24),
 
             // Grammar Chart

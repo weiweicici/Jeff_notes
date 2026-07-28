@@ -6,10 +6,24 @@ class SupabaseConfig {
 
   static SupabaseClient get client => Supabase.instance.client;
 
+  static String get currentUserId =>
+      client.auth.currentUser?.id ?? (throw StateError('Not authenticated to Supabase'));
+
   static Future<void> init() async {
     await Supabase.initialize(
       url: url,
       anonKey: anonKey,
     );
+  }
+
+  static Future<void> signInAnonymously() async {
+    try {
+      final response = await client.auth.signInAnonymously();
+      // ignore: avoid_print
+      print('[Supabase Auth] Signed in as: ${response.session?.user.id}');
+    } catch (e) {
+      // ignore: avoid_print
+      print('[Supabase Auth] Anonymous sign-in failed: $e');
+    }
   }
 }

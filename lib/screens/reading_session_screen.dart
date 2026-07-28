@@ -78,6 +78,7 @@ class _ReadingSessionScreenState extends State<ReadingSessionScreen> {
         'file_hash': md5.convert(utf8.encode('${contentMd}_${DateTime.now().microsecondsSinceEpoch}')).toString(),
         'metadata': {'pageCount': pageCount, 'source': 'pdf'},
         'file_size': contentMd.length,
+        'user_id': SupabaseConfig.currentUserId,
       });
     } catch (e) {
       if (!mounted) return;
@@ -122,6 +123,7 @@ class _ReadingSessionScreenState extends State<ReadingSessionScreen> {
         'file_hash': md5.convert(utf8.encode('${contentMd}_${DateTime.now().microsecondsSinceEpoch}')).toString(),
         'metadata': {'pageCount': _images.length},
         'file_size': contentMd.length,
+        'user_id': SupabaseConfig.currentUserId,
       });
     } catch (e) {
       if (!mounted) return;

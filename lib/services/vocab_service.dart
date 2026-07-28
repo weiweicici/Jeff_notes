@@ -88,6 +88,7 @@ class VocabService extends ChangeNotifier {
         'title': 'VocabCard: ${card.wordOrPhrase}',
         'content_md': jsonEncode(card.toJson()),
         'file_size': card.wordOrPhrase.length,
+        'user_id': SupabaseConfig.currentUserId,
       });
       debugPrint('[Vocab Cloud Upload OK] ${card.wordOrPhrase}');
     } catch (e) {
@@ -100,7 +101,8 @@ class VocabService extends ChangeNotifier {
       final data = await SupabaseConfig.client
           .from('archives')
           .select('content_md')
-          .eq('module', 'vocab');
+          .eq('module', 'vocab')
+          .eq('user_id', SupabaseConfig.currentUserId);
       for (final row in List<Map<String, dynamic>>.from(data as List)) {
         final contentStr = row['content_md'] as String?;
         if (contentStr != null && contentStr.isNotEmpty) {

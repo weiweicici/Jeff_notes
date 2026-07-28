@@ -161,7 +161,7 @@ class RecordingProvider extends ChangeNotifier {
   bool _isDarkMode = false;
   bool _enableFinalRecap = false;
   bool _enableLectureDiscovery = false;
-  AppMode _currentMode = AppMode.lecture;  // 新增模式
+  AppMode _currentMode = AppMode.exam;
   PathwaysUnit _currentUnit = PathwaysUnit.none;
   
   final Map<AIProvider, String> _apiKeys = {
@@ -332,7 +332,7 @@ class RecordingProvider extends ChangeNotifier {
     _isDarkMode = prefs.getBool('is_dark_mode') ?? false;
     _enableFinalRecap = prefs.getBool('enableFinalRecap') ?? false;
     _enableLectureDiscovery = prefs.getBool('enableLectureDiscovery') ?? false;
-    final modeIndex = prefs.getInt('app_mode') ?? 0;
+    final modeIndex = prefs.getInt('app_mode') ?? AppMode.exam.index;
     _currentMode = AppMode.values[modeIndex];
     _currentUnit = PathwaysUnit.values[prefs.getInt('current_unit') ?? 0];
     final pIndex = prefs.getInt('selected_provider') ?? 0;
@@ -552,7 +552,10 @@ class RecordingProvider extends ChangeNotifier {
       _sessionReadyController.add(_finalReviewContent!);
     }
 
-    // 后台继续生成完整 AI review（不阻塞弹窗）
+    // 立即导出 MD 文件（含分段摘要），确保存档立即可见
+    await _exportToMarkdown();
+
+    // 后台继续生成完整 AI review（不阻塞弹窗），完成后会覆盖更新 MD 文件
     _statusMessage = "Finalizing full AI review...";
     notifyListeners();
     unawaited(_generateFinalReviewInBackground());
@@ -568,8 +571,9 @@ class RecordingProvider extends ChangeNotifier {
 
       if (_enableFinalRecap) {
         await generateFinalAcademicReview();
+        // generateFinalAcademicReview 的 finally 中已调用 _exportToMarkdown，覆盖更新
       } else {
-        await _exportToMarkdown();
+        // _exportToMarkdown 已在 stopRecording() 中同步执行，无需重复
       }
 
       if (_lastExportedPath != null && _finalReviewContent == null) {
@@ -927,7 +931,8 @@ class RecordingProvider extends ChangeNotifier {
       final now = DateTime.now();
       final dateStr = DateFormat('yyyyMMdd_HHmm').format(now);
       final isDiscussion = _currentMode == AppMode.discussion;
-      final prefix = isDiscussion ? "Jeff_Discussion" : "Jeff_Notes";
+      final isExam = _currentMode == AppMode.exam;
+      final prefix = isDiscussion ? "Jeff_Discussion" : isExam ? "Jeff_Exam" : "Jeff_Notes";
       final filename = "${prefix}_$dateStr.md";
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$filename');
@@ -938,6 +943,10 @@ class RecordingProvider extends ChangeNotifier {
         sb.writeln("# Group Discussion Session");
         sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
         sb.writeln("**Context:** ${_identifiedLectureContext ?? 'Group Discussion'}");
+      } else if (isExam) {
+        sb.writeln("# Exam Listening Session");
+        sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
+        sb.writeln("**Context:** ${_identifiedLectureContext ?? 'Exam Listening'}");
       } else {
         sb.writeln("# Academic Lecture Session");
         sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
@@ -945,12 +954,28 @@ class RecordingProvider extends ChangeNotifier {
       }
       sb.writeln();
 
-      // ── Part 1: Full Script（放在最前，方便课上快速查阅原文）────────
+      // ── Part 1: AI Review ──────────────────────────────────
+      if (_finalReviewContent != null && _finalReviewContent!.isNotEmpty) {
+        sb.writeln("---");
+        sb.writeln();
+      if (isDiscussion) {
+        sb.writeln("## Part 1 · AI Discussion Recap");
+      } else if (isExam) {
+        sb.writeln("## Part 1 · Exam Answer Card");
+      } else {
+        sb.writeln("## Part 1 · AI Academic Review");
+      }
+        sb.writeln();
+        sb.writeln(_finalReviewContent);
+        sb.writeln();
+      }
+
+      // ── Part 2: Full Script ────────────────────────────────
       final transcripts = _allNotes.where((n) => !n.isSummary).toList();
       if (transcripts.isNotEmpty) {
         sb.writeln("---");
         sb.writeln();
-        sb.writeln("## Part 1 · Full Script");
+        sb.writeln("## Part 2 · Full Script");
         sb.writeln();
 
         final List<String> chineseSegments = [];
@@ -984,38 +1009,6 @@ class RecordingProvider extends ChangeNotifier {
         sb.writeln();
       }
 
-      // ── Part 2: AI Review（原 Part 1）────────────────────────────
-      if (_finalReviewContent != null && _finalReviewContent!.isNotEmpty) {
-        sb.writeln("---");
-        sb.writeln();
-        if (isDiscussion) {
-          sb.writeln("## Part 2 · AI Discussion Recap");
-        } else {
-          sb.writeln("## Part 2 · AI Academic Review");
-        }
-        sb.writeln();
-        sb.writeln(_finalReviewContent);
-        sb.writeln();
-      }
-
-      // ── Part 3: Block Summaries（原 Part 2）──────────────────────
-      final summaries = _allNotes.where((n) => n.isSummary).toList();
-      if (summaries.isNotEmpty) {
-        sb.writeln("---");
-        sb.writeln();
-        if (isDiscussion) {
-          sb.writeln("## Part 3 · Discussion Block Summaries");
-        } else {
-          sb.writeln("## Part 3 · 60s Block Summaries");
-        }
-        sb.writeln();
-        for (int i = 0; i < summaries.length; i++) {
-          sb.writeln("### Block ${i + 1}");
-          sb.writeln(summaries[i].summary);
-          sb.writeln();
-        }
-      }
-
 
       await file.writeAsString(sb.toString());
       debugPrint("\x1B[32m[Export OK] ${file.absolute.path}\x1B[0m");
@@ -1027,7 +1020,7 @@ class RecordingProvider extends ChangeNotifier {
         await _stitchSessionAudioFiles(_sessionAudioPaths, wavPath);
       }
 
-      final module = isDiscussion ? 'discussion' : 'listening';
+      final module = isDiscussion ? 'discussion' : isExam ? 'exam' : 'listening';
       _uploadToSupabase(file, module);
       _lastExportedPath = file.absolute.path;
       notifyListeners();
@@ -1070,6 +1063,7 @@ class RecordingProvider extends ChangeNotifier {
         'title': title,
         'content_md': utf8.decode(bytes),
         'file_size': bytes.length,
+        'user_id': SupabaseConfig.currentUserId,
       });
       debugPrint('[Supabase Upload OK] $title ($module)');
     } catch (e) {

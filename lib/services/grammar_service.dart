@@ -67,4 +67,16 @@ class GrammarService {
     final prompt = PromptProvider.getGrammarCorrectionPrompt();
     return await _callGroq(prompt, sentence) ?? '请求失败';
   }
+
+  /// 生成写作范文
+  static Future<String> generateWritingSample(GrammarUnit unit, String theme, {String partId = ''}) async {
+    final prompt = PromptProvider.getGrammarWritingPrompt(
+      unit.title,
+      unit.chart,
+      unit.keyRules,
+      partId: partId,
+    );
+    final userMsg = '请写一篇关于 "$theme" 的范文，要求使用 "${unit.title}" 的核心语法结构。';
+    return await _callGroq(prompt, userMsg) ?? '生成失败';
+  }
 }

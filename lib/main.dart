@@ -14,6 +14,7 @@ late MyAudioHandler globalAudioHandler;
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await SupabaseConfig.init();
+  await SupabaseConfig.signInAnonymously();
   GrammarRepository.setHardcodedProvider(() => GrammarContent.parts);
 
   globalAudioHandler = await AudioService.init(

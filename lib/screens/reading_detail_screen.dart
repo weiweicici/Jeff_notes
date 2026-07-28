@@ -318,7 +318,7 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
   }
 
   Future<void> _delete() async {
-    await SupabaseConfig.client.from('archives').delete().eq('id', widget.id);
+    await SupabaseConfig.client.from('archives').delete().eq('id', widget.id).eq('user_id', SupabaseConfig.currentUserId);
     if (mounted) Navigator.pop(context);
   }
 
@@ -344,7 +344,7 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
               ),
             );
             if (newTitle != null && newTitle.isNotEmpty) {
-              await SupabaseConfig.client.from('archives').update({'title': newTitle}).eq('id', widget.id);
+              await SupabaseConfig.client.from('archives').update({'title': newTitle}).eq('id', widget.id).eq('user_id', SupabaseConfig.currentUserId);
               if (mounted) setState(() => _title = newTitle);
             }
           },

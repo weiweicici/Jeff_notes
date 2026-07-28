@@ -30,146 +30,82 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   bool _isExporting = false;
   final GlobalKey _pdfButtonKey = GlobalKey();
   final _textController = TextEditingController();
-  final _karaokeScrollController = ScrollController();
-  final List<GlobalKey> _paragraphKeys = [];
-  int _lastActiveIndex = -1;
+  final _scrollController = ScrollController();
   String? _lastLoadedContent;
   String? _chineseOnlyText;
   String? _englishOnlyText;
-  bool _showRendered = true; // true = MarkdownBody（可见高亮），false = TextField（原始文字）
-  bool _userIsInteracting = false;
-  Timer? _resumeAutoScrollTimer;
-  int _lastLockscreenKaraokeIdx = -1;
+  bool _showRendered = true;
+
+  Timer? _autoScrollTimer;
+  Timer? _autoScrollPauseResumeTimer;
+  bool _isAutoScrolling = true;
+  bool _autoScrollTimerStarted = false;
+  bool _playerExpanded = false;
+  Timer? _playerAutoHideTimer;
+  Offset? _tapDownPos;
 
 
-  void _onUserInteractionStart() {
-    _resumeAutoScrollTimer?.cancel();
-    if (!_userIsInteracting) {
-      _userIsInteracting = true;
-    }
+  void _stopAutoScrollTimer() {
+    _autoScrollTimer?.cancel();
+    _autoScrollTimer = null;
   }
 
-  void _onUserInteractionEnd() {
-    _resumeAutoScrollTimer?.cancel();
-    _resumeAutoScrollTimer = Timer(const Duration(milliseconds: 3500), () {
-      if (mounted) {
-        setState(() {
-          _userIsInteracting = false;
+  void _toggleAutoScroll() {
+    setState(() {
+      _isAutoScrolling = !_isAutoScrolling;
+      if (_isAutoScrolling) {
+        _autoScrollPauseResumeTimer?.cancel();
+        _startAutoScrollTimer();
+      } else {
+        _stopAutoScrollTimer();
+        _autoScrollPauseResumeTimer?.cancel();
+        _autoScrollPauseResumeTimer = Timer(const Duration(seconds: 20), () {
+          if (mounted) setState(() { _isAutoScrolling = true; _startAutoScrollTimer(); });
         });
-        _scrollToActiveParagraph();
       }
     });
   }
 
-  void _scrollToActiveParagraph() {
-    if (_userIsInteracting) return;
-    if (_lastActiveIndex >= 0 && _lastActiveIndex < _paragraphKeys.length) {
-      final keyContext = _paragraphKeys[_lastActiveIndex].currentContext;
-      if (keyContext != null) {
-        Scrollable.ensureVisible(
-          keyContext,
-          duration: const Duration(milliseconds: 400),
-          curve: Curves.easeInOut,
-          alignment: 0.3,
-        );
-      }
-    }
+  void _onTapAnywhere(Offset position) {
+    if (_tapDownPos == null) return;
+    final dist = (position - _tapDownPos!).distance;
+    _tapDownPos = null;
+    if (dist < 10.0) _toggleAutoScroll();
   }
 
-  void _updateParagraphKeys(int count) {
-    if (_paragraphKeys.length != count) {
-      _paragraphKeys.clear();
-      for (int i = 0; i < count; i++) {
-        _paragraphKeys.add(GlobalKey());
-      }
+  void _startAutoScrollTimer() {
+    if (!_scrollController.hasClients) {
+      Future.delayed(const Duration(milliseconds: 200), () {
+        if (mounted) _startAutoScrollTimer();
+      });
+      return;
     }
-  }
-
-  /// 将一段文本按句子切分为卡拉OK展示单元。
-  /// 支持中文（。！？）和英文（. ! ?)句尾，每个展示单元最多 maxLen 个字符。
-  /// 如果文本足够短则直接返回原内容。
-  List<String> _splitIntoSentences(String text, {int maxLen = 120}) {
-    final trimmed = text.trim();
-    if (trimmed.isEmpty) return [];
-    if (trimmed.length <= maxLen) return [trimmed];
-
-    // 中文句尾切分：保留切分符
-    final hasChinese = RegExp(r'[\u4e00-\u9fff]').hasMatch(trimmed);
-    final splitter = hasChinese
-        ? RegExp(r'(?<=[\u3002\uff01\uff1f\u2026])')
-        : RegExp(r'(?<=[.!?])\s+');
-
-    final rawSentences = trimmed.split(splitter)
-        .map((s) => s.trim())
-        .where((s) => s.isNotEmpty)
-        .toList();
-
-    if (rawSentences.length <= 1) return [trimmed]; // 没有句尾符号，原文返回
-
-    // 将句子分组：每组长度不超过 maxLen
-    final chunks = <String>[];
-    var buf = '';
-    for (final sentence in rawSentences) {
-      if (buf.isEmpty) {
-        buf = sentence;
-      } else if ((buf + sentence).length <= maxLen) {
-        buf += sentence; // 中文直接拼，英文加空格
-      } else {
-        chunks.add(buf);
-        buf = sentence;
+    final maxScroll = _scrollController.position.maxScrollExtent;
+    if (maxScroll <= 0) return;
+    const ticksPerScreen = 60 * 1000 ~/ 50;
+    final increment = _scrollController.position.viewportDimension / ticksPerScreen;
+    _stopAutoScrollTimer();
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
+      if (!_scrollController.hasClients) { timer.cancel(); return; }
+      final currentScroll = _scrollController.position.pixels;
+      if (currentScroll >= maxScroll) {
+        _scrollController.jumpTo(0);
+        return;
       }
-    }
-    if (buf.isNotEmpty) chunks.add(buf);
-    return chunks.isEmpty ? [trimmed] : chunks;
-  }
-
-  /// 根据微软 Neural TTS 发音特性与标点停顿估算语音朗读权重时长。
-  /// 微软 Edge Neural TTS 会在句尾标点 (。！？.!?) 停顿 ~600ms，在句中逗号 (，；:) 停顿 ~300ms。
-  /// 给予标点符号权重可精确补齐朗读与自然停顿时间，彻底解决字幕提前 1.5 秒跳下一个卡片的问题。
-  double _getSpeechWeight(String text) {
-    double w = 0.0;
-    for (int i = 0; i < text.length; i++) {
-      final char = text[i];
-      if (RegExp(r'[。！？!?…\n]').hasMatch(char)) {
-        w += 6.0; // 句尾标点/换行：相当于约 600ms 自然停顿
-      } else if (RegExp(r'[，；：,;:]').hasMatch(char)) {
-        w += 3.0; // 句中逗号/分号：相当于约 300ms 停顿
-      } else if (RegExp(r'[\u4e00-\u9fff]').hasMatch(char)) {
-        w += 1.0; // 单个汉字发音基准
-      } else if (RegExp(r'[a-zA-Z0-9]').hasMatch(char)) {
-        w += 0.4; // 英文字母发音基准
-      } else {
-        w += 0.5;
-      }
-    }
-    return w > 0 ? w : 1.0;
+      _scrollController.jumpTo((currentScroll + increment).clamp(0.0, maxScroll));
+    });
   }
 
   @override
   void dispose() {
-    _resumeAutoScrollTimer?.cancel();
+    _stopAutoScrollTimer();
+    _autoScrollPauseResumeTimer?.cancel();
+    _playerAutoHideTimer?.cancel();
     TtsService().stop();
     WakelockService.disable();
     _textController.dispose();
-    _karaokeScrollController.dispose();
+    _scrollController.dispose();
     super.dispose();
-  }
-
-  /// 提取 MD 文件中的纯中文部分，供 TTS 播放。
-  void _seekToSentenceIndex(int targetIdx, List<String> karaokeParas, Duration duration, double totalWeight, bool isChineseMode) {
-    if (targetIdx < 0 || targetIdx >= karaokeParas.length || duration.inMilliseconds <= 0 || totalWeight <= 0) return;
-    double cumulativeBefore = 0.0;
-    for (int i = 0; i < targetIdx; i++) {
-      cumulativeBefore += _getSpeechWeight(karaokeParas[i]);
-    }
-    final targetPosMs = (cumulativeBefore / totalWeight * duration.inMilliseconds).round();
-    final targetPos = Duration(milliseconds: targetPosMs);
-    final tts = TtsService();
-    if (isChineseMode) {
-      tts.seekChinese(targetPos);
-    } else {
-      globalAudioHandler.seek(targetPos);
-    }
   }
 
   /// 策略 1：逐行解析——找到 '### 中文全文' 后开始收集，遇到下一个 ### 或 ## 标题时停止。
@@ -254,8 +190,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
 
       if (trimmed.contains('英文全文') ||
           trimmed.contains('English Transcript') ||
-          trimmed.contains('English Essay') ||
-          trimmed.contains('Part 1')) {
+          trimmed.contains('English Essay')) {
         inEnglishSection = true;
         continue;
       }
@@ -267,8 +202,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
         final isContinuationHeader =
             trimmed.contains('英文全文') ||
             trimmed.contains('English Transcript') ||
-            trimmed.contains('English Essay') ||
-            trimmed.contains('Part 1');
+            trimmed.contains('English Essay');
         if (!isContinuationHeader) break;
         continue;
       }
@@ -580,7 +514,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                   if (await wavFile.exists()) {
                     await wavFile.delete();
                   }
-                  await SupabaseConfig.client.from('archives').delete().eq('title', title);
+                  await SupabaseConfig.client.from('archives').delete().eq('title', title).eq('user_id', SupabaseConfig.currentUserId);
                   if (context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
                       const SnackBar(content: Text('✅ 笔记已完全删除')),
@@ -608,378 +542,167 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
             _englishOnlyText = _extractEnglishOnly(currentContent);
             _lastLoadedContent = currentContent;
           }
+          final allParagraphs = currentContent
+              .split(RegExp(r'\n{2,}'))
+              .map((p) => p.trim())
+              .where((p) => p.isNotEmpty)
+              .toList();
+
+          if (!_autoScrollTimerStarted) {
+            _autoScrollTimerStarted = true;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted && _scrollController.hasClients) _startAutoScrollTimer();
+            });
+          }
 
           final wavFile = File(widget.file.path.replaceAll('.md', '.wav'));
           final hasWav = wavFile.existsSync();
 
           return Column(
             children: [
-              TtsPlayerBar(
-                chineseText: _chineseOnlyText ?? '',
-                englishText: _englishOnlyText ?? '',
-                recordedAudioPath: hasWav ? wavFile.path : null,
-                siliconFlowKey: context.read<RecordingProvider>().siliconFlowKey,
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _playerExpanded = !_playerExpanded;
+                    if (_playerExpanded) {
+                      _playerAutoHideTimer?.cancel();
+                      _playerAutoHideTimer = Timer(const Duration(seconds: 10), () {
+                        if (mounted) setState(() => _playerExpanded = false);
+                      });
+                    } else {
+                      _playerAutoHideTimer?.cancel();
+                    }
+                  });
+                },
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  decoration: BoxDecoration(
+                    color: Colors.grey.withOpacity(0.06),
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(
+                        _playerExpanded ? Icons.expand_less : Icons.expand_more,
+                        size: 16,
+                        color: Colors.grey[600],
+                      ),
+                      const SizedBox(width: 6),
+                      const Icon(Icons.headphones, size: 14, color: Colors.blueAccent),
+                      const SizedBox(width: 6),
+                      Text(
+                        _playerExpanded ? '点击收起播放器' : '🎧 TTS 播放器',
+                        style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              if (_playerExpanded) ...[
+                const SizedBox(height: 8),
+                TtsPlayerBar(
+                  chineseText: _chineseOnlyText ?? '',
+                  englishText: _englishOnlyText ?? '',
+                  recordedAudioPath: hasWav ? wavFile.path : null,
+                  siliconFlowKey: context.read<RecordingProvider>().siliconFlowKey,
+                ),
+              ],
+              GestureDetector(
+                onTap: () {
+                  setState(() {
+                    _isAutoScrolling = !_isAutoScrolling;
+                    if (_isAutoScrolling) {
+                      _autoScrollPauseResumeTimer?.cancel();
+                      _startAutoScrollTimer();
+                    } else {
+                      _stopAutoScrollTimer();
+                      _autoScrollPauseResumeTimer?.cancel();
+                      _autoScrollPauseResumeTimer = Timer(const Duration(seconds: 20), () {
+                        if (mounted) setState(() { _isAutoScrolling = true; _startAutoScrollTimer(); });
+                      });
+                    }
+                  });
+                },
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  color: _isAutoScrolling
+                      ? Colors.blue.withOpacity(0.08)
+                      : Colors.orange.withOpacity(0.08),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Icon(
+                        _isAutoScrolling ? Icons.keyboard_double_arrow_down : Icons.pause_circle_outline,
+                        size: 14,
+                        color: _isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _isAutoScrolling ? '⏬ 自动滚屏中 · 点击暂停' : '⏸ 已暂停 · 20秒后自动恢复',
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: _isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
               ),
               Expanded(
-                child: ListenableBuilder(
-                  listenable: TtsService(),
-                  builder: (context, _) => StreamBuilder<Duration>(
-                  stream: TtsService().englishPositionStream,
-                  builder: (context, posSnap) {
-                    final tts = TtsService();
-                    final isDark = Theme.of(context).brightness == Brightness.dark;
-
-                    // 决定当前朗读的文本源和 seek 方法
-                    final isChineseMode = tts.currentAudioType == ActiveAudioType.chinese;
-                    final isEnglishMode = tts.currentAudioType == ActiveAudioType.english ||
-                                         tts.currentAudioType == ActiveAudioType.recorded;
-
-                    // 根据当前播放类型决定高亮用哪段文本
-                    String displayText;
-                    if (isChineseMode && _chineseOnlyText != null && _chineseOnlyText!.isNotEmpty) {
-                      displayText = _chineseOnlyText!;
-                    } else if (isEnglishMode && _englishOnlyText != null && _englishOnlyText!.isNotEmpty) {
-                      displayText = _englishOnlyText!;
-                    } else {
-                      displayText = ''; // 未播放时不做卡拉OK高亮
-                    }
-
-                    // 计算卡拉OK句子切片（仅对抽取出的纯中/英文做句子切分，用于定位当前播放进度）
-                    final List<String> karaokeParas = displayText.isNotEmpty
-                        ? displayText
-                            .split(RegExp(r'\n\n+'))
-                            .where((p) => p.trim().isNotEmpty)
-                            .expand((p) => _splitIntoSentences(p))
-                            .toList()
-                        : [];
-
-                    // 全文段落（渲染用）—— 只按 \n\n 切分，绝不做句子级切分
-                    // 保持原始 Markdown 格式完整，避免切断 **粗体** / ### 标题 等语法造成乱码
-                    final allText = _textController.text;
-                    final allParagraphs = allText
-                        .split(RegExp(r'\n\n+'))
-                        .where((p) => p.trim().isNotEmpty)
-                        .toList();
-
-                    _updateParagraphKeys(allParagraphs.length);
-
-                    final position = tts.currentPosition;
-                    final duration = tts.currentDuration ?? Duration.zero;
-                    final isPlaying = tts.isPlaying;
-
-                    // 归一化函数：折叠所有空白为单空格，便于跨换行格式匹配
-                    String normalize(String s) => s.trim().replaceAll(RegExp(r'\s+'), ' ');
-
-                    // 按语音发音特性与标点停顿加权定位当前句子：
-                    // 精确估算微软 Neural TTS 句尾停顿(600ms)与句中逗号停顿(300ms)，消除提前 1.5 秒跳下句的偏差
-                    int activeIndex = -1;
-                    if (isPlaying && duration.inMilliseconds > 0 && karaokeParas.isNotEmpty) {
-                      final ratio = (position.inMilliseconds / duration.inMilliseconds).clamp(0.0, 1.0);
-                      final totalWeight = karaokeParas.fold<double>(0.0, (sum, p) => sum + _getSpeechWeight(p));
-
-                      int karaokeIdx = karaokeParas.length - 1;
-                      if (totalWeight > 0) {
-                        final targetWeight = ratio * totalWeight;
-                        double cumulative = 0.0;
-                        for (int i = 0; i < karaokeParas.length; i++) {
-                          cumulative += _getSpeechWeight(karaokeParas[i]);
-                          if (targetWeight <= cumulative) {
-                            karaokeIdx = i;
-                            break;
-                          }
-                        }
-                      }
-
-                      // 更新 iOS 锁屏/系统控制中心 字幕卡片与按键逻辑
-                      if (karaokeIdx >= 0 && karaokeIdx < karaokeParas.length) {
-                        final activeSentence = karaokeParas[karaokeIdx];
-                        final upcomingSentences = karaokeParas.sublist(
-                          (karaokeIdx + 1).clamp(0, karaokeParas.length),
-                          (karaokeIdx + 3).clamp(0, karaokeParas.length),
-                        );
-                        final docTitle = widget.file.path.split('/').last;
-                        final nextText = upcomingSentences.isNotEmpty ? '▶ 下句: ${upcomingSentences.first}' : 'Jeff Notes Academic';
-
-                        if (_lastLockscreenKaraokeIdx != karaokeIdx) {
-                          _lastLockscreenKaraokeIdx = karaokeIdx;
-
-                          // 系统控制中心 Now Playing
-                          globalAudioHandler.setPlaybackMetadata(
-                            title: '[$activeSentence]',
-                            artist: docTitle,
-                            duration: duration,
-                            position: position,
-                            isPlaying: isPlaying,
-                          );
-                        }
-
-                        globalAudioHandler.onSkipNext = () {
-                          if (karaokeIdx < karaokeParas.length - 1) {
-                            _seekToSentenceIndex(karaokeIdx + 1, karaokeParas, duration, totalWeight, isChineseMode);
-                          }
-                        };
-                        globalAudioHandler.onSkipPrevious = () {
-                          if (karaokeIdx > 0) {
-                            _seekToSentenceIndex(karaokeIdx - 1, karaokeParas, duration, totalWeight, isChineseMode);
-                          }
-                        };
-                      }
-
-                      // 用包含关系（contains）在全文段落中找到含有当前句子的段落
-                      final activeKaraNorm = normalize(karaokeParas[karaokeIdx]);
-                      final foundIdx = allParagraphs.indexWhere(
-                        (p) => normalize(p).contains(activeKaraNorm),
-                      );
-                      activeIndex = foundIdx >= 0 ? foundIdx : -1;
-                    }
-
-
-                    // 自动随朗读平滑滚动屏幕（仅在用户未手动滑动/触摸屏幕时跟随）
-                    if (activeIndex >= 0) {
-                      final indexChanged = activeIndex != _lastActiveIndex;
-                      _lastActiveIndex = activeIndex;
-                      if (!_userIsInteracting && (indexChanged || activeIndex >= 0)) {
-                        WidgetsBinding.instance.addPostFrameCallback((_) {
-                          _scrollToActiveParagraph();
-                        });
-                      }
-                    }
-
-                    return _showRendered
-                        ? NotificationListener<ScrollNotification>(
-                            onNotification: (notification) {
-                              if (notification is ScrollStartNotification && notification.dragDetails != null) {
-                                _onUserInteractionStart();
-                              } else if (notification is ScrollEndNotification) {
-                                _onUserInteractionEnd();
-                              }
-                              return false;
-                            },
-                            child: Listener(
-                              onPointerDown: (_) => _onUserInteractionStart(),
-                              onPointerUp: (_) => _onUserInteractionEnd(),
-                              child: ListView.builder(
-                                controller: _karaokeScrollController,
-                                padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
-                                itemCount: allParagraphs.length,
-                                itemBuilder: (context, index) {
-                              final paragraph = allParagraphs[index];
-                              final isActive = index == activeIndex;
-                              final itemKey = _paragraphKeys[index];
-
-                              return Container(
-                                key: itemKey,
-                                child: GestureDetector(
-                                  behavior: HitTestBehavior.opaque,
-                                  onLongPress: () {
-                                    Clipboard.setData(ClipboardData(text: paragraph));
-                                    if (context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                          content: Text('📋 已复制当前段落文字到剪贴板'),
-                                          duration: Duration(seconds: 2),
-                                        ),
-                                      );
-                                    }
-                                  },
-                                  onTap: () async {
-                                    // 点击任意句子：自动定位该句子并确保开启播放
-                                    _lastActiveIndex = index;
-                                    _scrollToActiveParagraph();
-
-                                    final List<String> seekParas = (() {
-                                      if (tts.currentAudioType == ActiveAudioType.chinese &&
-                                          _chineseOnlyText != null &&
-                                          _chineseOnlyText!.isNotEmpty) {
-                                        return _chineseOnlyText!
-                                            .split(RegExp(r'\n\n+'))
-                                            .where((p) => p.trim().isNotEmpty)
-                                            .expand((p) => _splitIntoSentences(p))
-                                            .toList();
-                                      } else if ((tts.currentAudioType == ActiveAudioType.english ||
-                                                  tts.currentAudioType == ActiveAudioType.recorded) &&
-                                          _englishOnlyText != null &&
-                                          _englishOnlyText!.isNotEmpty) {
-                                        return _englishOnlyText!
-                                            .split(RegExp(r'\n\n+'))
-                                            .where((p) => p.trim().isNotEmpty)
-                                            .expand((p) => _splitIntoSentences(p))
-                                            .toList();
-                                      }
-                                      return <String>[];
-                                    })();
-
-                                    final clickedNorm = normalize(paragraph);
-                                    int seekIdx = seekParas.indexWhere((p) => normalize(p).contains(clickedNorm) || clickedNorm.contains(normalize(p)));
-                                    if (seekIdx < 0) {
-                                      final allRatio = allParagraphs.length > 1 ? index / (allParagraphs.length - 1) : 0.0;
-                                      seekIdx = (allRatio * (seekParas.length - 1)).round().clamp(0, seekParas.isEmpty ? 0 : seekParas.length - 1);
-                                    }
-
-                                    final totalDur = tts.currentDuration;
-                                    if (totalDur != null && totalDur.inMilliseconds > 0 && seekParas.isNotEmpty) {
-                                      final totalWeight = seekParas.fold<double>(0.0, (sum, p) => sum + _getSpeechWeight(p));
-                                      double currentCumulative = 0.0;
-                                      for (int i = 0; i < seekIdx; i++) {
-                                        currentCumulative += _getSpeechWeight(seekParas[i]);
-                                      }
-                                      final targetRatio = totalWeight > 0 ? (currentCumulative / totalWeight).clamp(0.0, 1.0) : 0.0;
-                                      final targetMs = (targetRatio * totalDur.inMilliseconds).round();
-                                      final targetPos = Duration(milliseconds: targetMs);
-                                      if (tts.currentAudioType == ActiveAudioType.chinese) {
-                                        await tts.seekChinese(targetPos);
-                                        if (!tts.isPlaying) await tts.playChinese();
-                                      } else {
-                                        await tts.seekEnglish(targetPos);
-                                        if (!tts.isPlaying) await tts.playEnglish();
-                                      }
-                                    } else {
-                                      // 若当前未开启播放，点击任意句子自动开启朗读并秒跳到该位置
-                                      final isChineseMode = tts.currentAudioType == ActiveAudioType.chinese;
-                                      try {
-                                        final provider = context.read<RecordingProvider>();
-                                        if (isChineseMode && _chineseOnlyText != null && _chineseOnlyText!.isNotEmpty) {
-                                          await tts.speakChinese(
-                                            _chineseOnlyText!,
-                                            geminiKey: provider.geminiKey,
-                                            siliconFlowKey: provider.siliconFlowKey,
-                                          );
-                                        } else if (_englishOnlyText != null && _englishOnlyText!.isNotEmpty) {
-                                          await tts.speakEnglish(
-                                            _englishOnlyText!,
-                                            geminiKey: provider.geminiKey,
-                                            siliconFlowKey: provider.siliconFlowKey,
-                                          );
-                                        }
-                                        await Future.delayed(const Duration(milliseconds: 500));
-                                        final newDur = tts.currentDuration;
-                                        if (newDur != null && newDur.inMilliseconds > 0) {
-                                          final totalWeight = seekParas.fold<double>(0.0, (sum, p) => sum + _getSpeechWeight(p));
-                                          double currentCumulative = 0.0;
-                                          for (int i = 0; i < seekIdx; i++) {
-                                            currentCumulative += _getSpeechWeight(seekParas[i]);
-                                          }
-                                          final targetRatio = totalWeight > 0 ? (currentCumulative / totalWeight).clamp(0.0, 1.0) : 0.0;
-                                          final targetMs = (targetRatio * newDur.inMilliseconds).round();
-                                          final targetPos = Duration(milliseconds: targetMs);
-                                          if (isChineseMode) {
-                                            await tts.seekChinese(targetPos);
-                                          } else {
-                                            await tts.seekEnglish(targetPos);
-                                          }
-                                        }
-                                      } catch (e) {
-                                        if (!context.mounted) return;
-                                        if (e.toString().contains('NoHeadphones')) {
-                                          ScaffoldMessenger.of(context).showSnackBar(
-                                            SnackBar(
-                                              content: Text('⚠️ 未检测到耳机 (${e.toString().replaceAll("Exception: ", "")})', style: const TextStyle(fontSize: 13)),
-                                              backgroundColor: Colors.orange,
-                                              duration: const Duration(seconds: 5),
-                                            ),
-                                          );
-                                        }
-                                      }
-                                    }
-                                  },
-                                  child: AnimatedContainer(
-                                    duration: const Duration(milliseconds: 300),
-                                    margin: const EdgeInsets.symmetric(vertical: 6),
-                                    padding: EdgeInsets.all(isActive ? 14 : 6),
-                                    decoration: BoxDecoration(
-                                      color: isActive
-                                          ? (isDark
-                                              ? const Color(0xFF2A2A40)
-                                              : const Color(0xFFEBF3FE))
-                                          : Colors.transparent,
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: isActive
-                                            ? Colors.blueAccent
-                                            : Colors.transparent,
-                                        width: isActive ? 1.5 : 0,
-                                      ),
-                                      boxShadow: isActive
-                                        ? [
-                                            BoxShadow(
-                                              color: Colors.blueAccent.withOpacity(0.15),
-                                              blurRadius: 8,
-                                              offset: const Offset(0, 2),
-                                            ),
-                                          ]
-                                        : [],
-                                    ),
-                                    child: Column(
-                                      crossAxisAlignment: CrossAxisAlignment.start,
-                                      children: [
-                                        if (isActive)
-                                          Padding(
-                                            padding: const EdgeInsets.only(bottom: 6),
-                                            child: Row(
-                                              children: [
-                                                const Icon(Icons.record_voice_over_rounded, size: 14, color: Colors.blueAccent),
-                                                const SizedBox(width: 6),
-                                                Text(
-                                                  '🎤 卡拉OK 实时歌词字幕同步',
-                                                  style: TextStyle(
-                                                    fontSize: 10,
-                                                    fontWeight: FontWeight.bold,
-                                                    color: isDark ? Colors.cyanAccent : Colors.blueAccent,
-                                                  ),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        MarkdownBody(
-                                          data: paragraph,
-                                          selectable: false,
-                                          softLineBreak: true,
-                                          styleSheet: MarkdownStyleSheet.fromTheme(Theme.of(context)).copyWith(
-                                            p: TextStyle(
-                                              fontFamily: 'Menlo',
-                                              fontSize: isActive ? 16 : 15,
-                                              height: 1.6,
-                                              fontWeight: isActive ? FontWeight.w600 : FontWeight.normal,
-                                              color: isActive
-                                                  ? (isDark ? Colors.white : Colors.black87)
-                                                  : (isDark ? Colors.white70 : Colors.black87),
-                                            ),
-                                            h1: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, height: 1.8),
-                                            h2: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, height: 1.8),
-                                            h3: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, height: 1.8),
-                                          ),
-                                          extensionSet: md.ExtensionSet(
-                                            [const md.FencedCodeBlockSyntax()],
-                                            [md.EmojiSyntax(), HighlightSyntax()],
-                                          ),
-                                          builders: {'highlight': HighlightBuilder(context)},
-                                        ),
-                                      ],
-                                    ),
+                child: _showRendered
+                    ? Listener(
+                        onPointerDown: (event) { _tapDownPos = event.position; },
+                        onPointerUp: (event) { _onTapAnywhere(event.position); },
+                        child: ListView.builder(
+                          controller: _scrollController,
+                          padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
+                          itemCount: allParagraphs.length,
+                          itemBuilder: (context, index) {
+                            final paragraph = allParagraphs[index];
+                            return Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 6),
+                              child: GestureDetector(
+                                behavior: HitTestBehavior.opaque,
+                                onLongPress: () {
+                                  Clipboard.setData(ClipboardData(text: paragraph));
+                                  if (context.mounted) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(content: Text('📋 已复制当前段落文字到剪贴板'), duration: Duration(seconds: 2)),
+                                    );
+                                  }
+                                },
+                                child: MarkdownBody(
+                                  data: paragraph,
+                                  selectable: false,
+                                  softLineBreak: true,
+                                  styleSheet: getAcademicMarkdownStyle(context),
+                                  extensionSet: md.ExtensionSet(
+                                    [const md.FencedCodeBlockSyntax()],
+                                    [md.EmojiSyntax(), HighlightSyntax()],
                                   ),
+                                  builders: {'highlight': HighlightBuilder(context)},
                                 ),
-                              );
-                            },
-                          ),
+                              ),
+                            );
+                          },
                         ),
                       )
                     : SingleChildScrollView(
-                            padding: const EdgeInsets.fromLTRB(24, 12, 24, 48),
-                            child: TextField(
-                              controller: _textController,
-                              readOnly: true,
-                              maxLines: null,
-                              style: const TextStyle(fontFamily: 'Menlo', fontSize: 15, height: 1.6),
-                              decoration: const InputDecoration(
-                                border: InputBorder.none,
-                                isDense: true,
-                                contentPadding: EdgeInsets.zero,
-                              ),
-                            ),
-                          );
-                   },
-                  ),
-                ),
+                        padding: const EdgeInsets.fromLTRB(24, 12, 24, 48),
+                        child: TextField(
+                          controller: _textController,
+                          readOnly: true,
+                          maxLines: null,
+                          style: const TextStyle(fontFamily: 'Menlo', fontSize: 15, height: 1.6),
+                          decoration: const InputDecoration(
+                            border: InputBorder.none,
+                            isDense: true,
+                            contentPadding: EdgeInsets.zero,
+                          ),
+                        ),
+                      ),
               ),
             ],
           );

@@ -59,6 +59,7 @@ class FileSyncAgent {
             'title': title,
             'content_md': utf8.decode(bytes),
             'file_size': bytes.length,
+            'user_id': SupabaseConfig.currentUserId,
           });
 
           await UploadCache.mark(hash);
@@ -81,6 +82,7 @@ class FileSyncAgent {
     if (name.contains('discussion')) return 'discussion';
     if (name.contains('freetalk')) return 'freetalk';
     if (name.contains('reading')) return 'reading';
+    if (name.contains('exam')) return 'exam';
     return 'listening';
   }
 }
