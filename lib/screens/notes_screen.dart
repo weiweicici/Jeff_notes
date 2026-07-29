@@ -193,6 +193,7 @@ class _NotesScreenState extends State<NotesScreen> {
     bool _timerStarted = false;
     bool _playerExpanded = false;
     Timer? _playerAutoHideTimer;
+    Offset? _tapDownPos;
 
     Timer _startScrollTimer(ScrollController controller, {required void Function(void Function()) setModalState}) {
       final maxScroll = controller.position.maxScrollExtent;
@@ -207,6 +208,26 @@ class _NotesScreenState extends State<NotesScreen> {
           return;
         }
         controller.jumpTo((currentScroll + increment).clamp(0.0, maxScroll));
+      });
+    }
+
+    void _toggleAutoScrollVia(Offset downPos, Offset upPos, ScrollController ctrl, void Function(void Function()) sms) {
+      if ((upPos - downPos).distance > 10.0) return;
+      sms(() {
+        isAutoScrolling = !isAutoScrolling;
+        if (isAutoScrolling) {
+          resumeTimer?.cancel();
+          scrollTimer = _startScrollTimer(ctrl, setModalState: sms);
+        } else {
+          scrollTimer?.cancel();
+          scrollTimer = null;
+          resumeTimer = Timer(Duration(seconds: provider.autoScrollPauseDuration), () {
+            sms(() {
+              isAutoScrolling = true;
+              scrollTimer = _startScrollTimer(ctrl, setModalState: sms);
+            });
+          });
+        }
       });
     }
 
@@ -241,23 +262,9 @@ class _NotesScreenState extends State<NotesScreen> {
                     decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
                   ),
             GestureDetector(
+              behavior: HitTestBehavior.opaque,
               onTap: () {
-                setModalState(() {
-                  isAutoScrolling = !isAutoScrolling;
-                  if (isAutoScrolling) {
-                    resumeTimer?.cancel();
-                scrollTimer = _startScrollTimer(scrollController, setModalState: setModalState);
-                  } else {
-                    scrollTimer?.cancel();
-                    scrollTimer = null;
-                    resumeTimer = Timer(Duration(seconds: provider.autoScrollPauseDuration), () {
-                      setModalState(() {
-                        isAutoScrolling = true;
-                scrollTimer = _startScrollTimer(scrollController, setModalState: setModalState);
-                      });
-                    });
-                  }
-                });
+                _toggleAutoScrollVia(const Offset(0, 0), const Offset(0, 0), scrollController, setModalState);
               },
               child: Container(
                 width: double.infinity,
@@ -308,7 +315,14 @@ class _NotesScreenState extends State<NotesScreen> {
             ),
 
           Expanded(
-            child: ListView(
+            child: Listener(
+              onPointerDown: (event) { _tapDownPos = event.position; },
+              onPointerUp: (event) {
+                if (_tapDownPos != null) {
+                  _toggleAutoScrollVia(_tapDownPos!, event.position, scrollController, setModalState);
+                }
+              },
+              child: ListView(
                 controller: scrollController,
                 padding: const EdgeInsets.all(24),
                 children: [
@@ -397,6 +411,7 @@ class _NotesScreenState extends State<NotesScreen> {
                     ],
                   ),
             ),
+          ),
           ],
         ),
       );

@@ -1120,7 +1120,44 @@ class TtsService extends ChangeNotifier {
         }
       }
 
-      // 3. 若配置了 SiliconFlow Key，备用尝试 24kHz 播音级女声 Bella
+      // 3. 三级兜底：iOS 原生离线语音（秒播 · 零延迟 · 零成本 · 不断网保障）
+      if (synthesizedBytes == null || synthesizedBytes.isEmpty) {
+        try {
+          debugPrint("[TtsService] Fallback to iOS Native Speech (3rd tier)...");
+          _currentAudioType = ActiveAudioType.english;
+          await _flutterTts.stop();
+          await _flutterTts.setLanguage("en-US");
+          await _flutterTts.setSpeechRate(_englishSpeed * 0.5);
+          await _flutterTts.setPitch(1.0);
+          final voices = await _flutterTts.getVoices;
+          if (voices != null && voices is List) {
+            for (final voice in voices) {
+              if (voice is Map) {
+                final name = voice["name"]?.toString() ?? "";
+                final locale = voice["locale"]?.toString() ?? "";
+                if (locale.contains("en-US") &&
+                    (name.contains("Samantha") || name.contains("Ava") || name.contains("Karen") || name.contains("Allison"))) {
+                  await _flutterTts.setVoice({"name": name, "locale": locale});
+                  break;
+                }
+              }
+            }
+          }
+          await _flutterTts.speak(clean);
+          globalAudioHandler.setPlaybackMetadata(
+            title: _formatLockscreenTitle(clean),
+            artist: 'English · iOS Native Voice',
+          );
+          _startHeadphoneMonitor();
+          _isEnglishSynthesizing = false;
+          notifyListeners();
+          return;
+        } catch (iosErr) {
+          debugPrint("[TtsService] iOS Native failed: $iosErr");
+        }
+      }
+
+      // 4. 若配置了 SiliconFlow Key，备用尝试 24kHz 播音级女声 Bella
       if ((synthesizedBytes == null || synthesizedBytes.isEmpty) && effectiveSiliconKey.isNotEmpty) {
         try {
           debugPrint("[TtsService] Synthesizing audio via SiliconFlow Bella Female Voice...");
@@ -1130,7 +1167,7 @@ class TtsService extends ChangeNotifier {
         }
       }
 
-      // 4. 若配置了 Gemini Key，备用尝试 Google 官方播音女声
+      // 5. 若配置了 Gemini Key，备用尝试 Google 官方播音女声
       if ((synthesizedBytes == null || synthesizedBytes.isEmpty) && effectiveGeminiKey.isNotEmpty) {
         try {
           debugPrint("[TtsService] Synthesizing audio via Google API...");
@@ -1161,11 +1198,10 @@ class TtsService extends ChangeNotifier {
         throw Exception("All online neural TTS endpoints returned empty");
       }
     } catch (e) {
-      debugPrint("[TtsService] All online neural TTS failed ($e). Fallback to iOS Native Speech.");
+      debugPrint("[TtsService] All remaining TTS failed ($e). Last resort: iOS Native Speech.");
       _isEnglishSynthesizing = false;
       notifyListeners();
 
-      // 4. 终极离线兜底：使用 iPhone 芯片内置的 iOS 原生英文女声（保障断网/无信号时 100% 依然可播放）
       _currentAudioType = ActiveAudioType.english;
       await _flutterTts.stop();
       await _flutterTts.setLanguage("en-US");

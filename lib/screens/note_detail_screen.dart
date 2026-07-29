@@ -613,6 +613,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                 ),
               ],
               GestureDetector(
+                behavior: HitTestBehavior.opaque,
                 onTap: () {
                   final pause = _autoScrollPauseSeconds;
                   setState(() {
