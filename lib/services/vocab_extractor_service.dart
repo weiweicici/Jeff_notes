@@ -6,6 +6,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../models/vocab_card.dart';
 
 class VocabExtractorService {
+  static const String _geminiModel = 'gemini-2.5-flash';
+
   static Future<List<VocabCard>> extractFromText(
     String fullText, {
     required String sourceTitle,
@@ -13,10 +15,7 @@ class VocabExtractorService {
     if (fullText.trim().isEmpty) return [];
 
     final prefs = await SharedPreferences.getInstance();
-    final apiKey = prefs.getString('api_key_groq') ?? prefs.getString('api_key_siliconflow') ?? '';
-    if (apiKey.isEmpty) {
-      throw Exception('请先在设置页面配置 API Key');
-    }
+    final geminiKey = prefs.getString('api_key_gemini') ?? '';
 
     final prompt = """You are an expert English linguist and academic exam coach. Analyze the following text and extract 4 to 6 key items consisting of:
 1. High-frequency academic vocabulary words or collocations/phrases.
@@ -46,12 +45,58 @@ JSON schema:
 Text to analyze:
 $fullText""";
 
+    // Try Gemini first
+    if (geminiKey.isNotEmpty) {
+      try {
+        final url = Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/models/$_geminiModel:generateContent?key=$geminiKey',
+        );
+        final response = await http.post(
+          url,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'system_instruction': {'parts': [{'text': 'You are an academic English flashcard generator. Output JSON array only.'}]},
+            'contents': [{'parts': [{'text': prompt}]}],
+            'generationConfig': {'temperature': 0.3},
+          }),
+        ).timeout(const Duration(seconds: 45));
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final candidates = data['candidates'] as List?;
+          if (candidates != null && candidates.isNotEmpty) {
+            final parts = candidates[0]['content']?['parts'] as List?;
+            if (parts != null && parts.isNotEmpty) {
+              var text = parts[0]['text'] as String?;
+              if (text != null) {
+                text = text.trim();
+                if (text.startsWith('```')) {
+                  text = text.replaceAll(RegExp(r'^```(json)?\n?'), '').replaceAll(RegExp(r'\n?```$'), '').trim();
+                }
+                final jsonList = jsonDecode(text) as List;
+                return _parseVocabCards(jsonList, sourceTitle);
+              }
+            }
+          }
+        }
+        debugPrint('[VocabExtractor] Gemini failed (${response.statusCode}), falling back to Groq...');
+      } catch (e) {
+        debugPrint('[VocabExtractor] Gemini exception: $e, falling back to Groq...');
+      }
+    }
+
+    // Fallback: Groq
+    final groqKey = prefs.getString('api_key_groq') ?? prefs.getString('api_key_siliconflow') ?? '';
+    if (groqKey.isEmpty) {
+      throw Exception('请先在设置页面配置 API Key');
+    }
+
     try {
       final response = await http
           .post(
             Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
             headers: {
-              'Authorization': 'Bearer $apiKey',
+              'Authorization': 'Bearer $groqKey',
               'Content-Type': 'application/json',
             },
             body: jsonEncode({
@@ -77,27 +122,30 @@ $fullText""";
       }
 
       final jsonList = jsonDecode(responseText) as List;
-      final results = <VocabCard>[];
-      final now = DateTime.now();
-
-      for (int i = 0; i < jsonList.length; i++) {
-        final item = jsonList[i] as Map<String, dynamic>;
-        results.add(VocabCard(
-          id: '${now.millisecondsSinceEpoch}_$i',
-          wordOrPhrase: item['wordOrPhrase'] as String? ?? '',
-          phonetic: item['phonetic'] as String?,
-          definition: item['definition'] as String? ?? '',
-          exampleSentence: item['exampleSentence'] as String? ?? '',
-          exampleTranslation: item['exampleTranslation'] as String? ?? '',
-          grammarBreakdown: item['grammarBreakdown'] as String? ?? '',
-          sourceTitle: sourceTitle,
-          createdAt: now,
-        ));
-      }
-      return results;
+      return _parseVocabCards(jsonList, sourceTitle);
     } catch (e) {
       debugPrint('[VocabExtractor Error] $e');
       rethrow;
     }
+  }
+
+  static List<VocabCard> _parseVocabCards(List jsonList, String sourceTitle) {
+    final results = <VocabCard>[];
+    final now = DateTime.now();
+    for (int i = 0; i < jsonList.length; i++) {
+      final item = jsonList[i] as Map<String, dynamic>;
+      results.add(VocabCard(
+        id: '${now.millisecondsSinceEpoch}_$i',
+        wordOrPhrase: item['wordOrPhrase'] as String? ?? '',
+        phonetic: item['phonetic'] as String?,
+        definition: item['definition'] as String? ?? '',
+        exampleSentence: item['exampleSentence'] as String? ?? '',
+        exampleTranslation: item['exampleTranslation'] as String? ?? '',
+        grammarBreakdown: item['grammarBreakdown'] as String? ?? '',
+        sourceTitle: sourceTitle,
+        createdAt: now,
+      ));
+    }
+    return results;
   }
 }

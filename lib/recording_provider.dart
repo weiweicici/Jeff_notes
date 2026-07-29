@@ -645,6 +645,14 @@ class RecordingProvider extends ChangeNotifier {
 
   /// FreeTalk 翻译（使用硅基流动 Qwen）
   Future<String> _translateFreeTalk(String englishText) async {
+    // Try Gemini first
+    final geminiResult = await _callGemini(
+      'You are a professional translator. Translate the following English text to Chinese. Output ONLY the Chinese translation, no explanations.',
+      englishText,
+    );
+    if (geminiResult != null && geminiResult.isNotEmpty && !geminiResult.startsWith('[')) return geminiResult;
+
+    // Fallback: Groq
     try {
       final result = await _translateViaSiliconFlow(englishText)
           .timeout(const Duration(seconds: 10));
@@ -748,6 +756,40 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   /// 对当前积累的 40 秒切片文本生成分段 AI 摘要
+  /// Gemini 通用调用（用于 Groq 兜底）
+  Future<String?> _callGemini(String systemPrompt, String userMessage) async {
+    final key = _apiKeys[AIProvider.gemini] ?? '';
+    if (key.isEmpty) return null;
+    try {
+      final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$key',
+      );
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'system_instruction': {'parts': [{'text': systemPrompt}]},
+          'contents': [{'parts': [{'text': userMessage}]}],
+          'generationConfig': {'temperature': 0.5},
+        }),
+      ).timeout(const Duration(seconds: 60));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final candidates = data['candidates'] as List?;
+        if (candidates != null && candidates.isNotEmpty) {
+          final parts = candidates[0]['content']?['parts'] as List?;
+          if (parts != null && parts.isNotEmpty) {
+            final text = parts[0]['text'] as String?;
+            if (text != null && text.trim().isNotEmpty) return text.trim();
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[Gemini Fallback] Error: $e');
+    }
+    return null;
+  }
+
   Future<void> _generateSegmentSummary() async {
     if (_isGeneratingSegmentSummary) return;
     if (_segmentTranscriptBuffer.isEmpty) return;
@@ -758,14 +800,23 @@ class RecordingProvider extends ChangeNotifier {
       final material = _segmentTranscriptBuffer.join(" ");
       _segmentTranscriptBuffer.clear();
 
-      final summary = await _aiService!.summarize(
-        material,
-        strategy: PromptStrategy.recap,
-        mode: _currentMode,
-        unit: _currentUnit,
-      );
+      final recapPrompt = PromptProvider.getSystemPrompt(PromptStrategy.recap, AIProvider.groq, mode: _currentMode, unit: _currentUnit);
 
-      if (summary.isNotEmpty && !summary.startsWith('[')) {
+      String? summary;
+      // Try Groq first
+      try {
+        summary = await _aiService!.summarize(
+          material,
+          strategy: PromptStrategy.recap,
+          mode: _currentMode,
+          unit: _currentUnit,
+        );
+      } catch (e) {
+        debugPrint("[40s Segment Summary] Groq failed, trying Gemini: $e");
+        summary = await _callGemini(recapPrompt, material);
+      }
+
+      if (summary != null && summary.isNotEmpty && !summary.startsWith('[')) {
         _segmentSummaries.add(summary);
         debugPrint("[40s Segment Summary] ✅ ${summary.substring(0, summary.length.clamp(0, 80))}");
       }
@@ -824,13 +875,18 @@ class RecordingProvider extends ChangeNotifier {
         if (material.isEmpty) {
           _finalReviewContent = "Not enough material.";
         } else {
+          final recapPrompt = PromptProvider.getSystemPrompt(PromptStrategy.recap, AIProvider.groq, mode: _currentMode, unit: _currentUnit);
           try {
             final recap = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
             _finalReviewContent = recap;
           } catch (mainError) {
-            debugPrint("[Final Academic Review] Main service failed, trying fallback: $mainError");
-            if (_fallbackTranslationService != null) {
+            debugPrint("[Final Academic Review] Main service failed, trying Gemini: $mainError");
+            final geminiRecap = await _callGemini(recapPrompt, material);
+            if (geminiRecap != null) {
+              _finalReviewContent = geminiRecap;
+            } else if (_fallbackTranslationService != null) {
               try {
+                debugPrint("[Final Academic Review] Gemini also failed, trying Groq fallback...");
                 final recap = await _fallbackTranslationService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
                 _finalReviewContent = recap;
               } catch (fallbackError) {

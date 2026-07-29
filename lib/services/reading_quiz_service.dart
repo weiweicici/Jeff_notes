@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/pathways_content.dart';
@@ -7,17 +8,55 @@ import '../models.dart';
 import '../prompt_provider.dart';
 
 class ReadingQuizService {
-  static Future<String> _callGroq(String systemPrompt, {String userMessage = '请生成'}) async {
+  static const String _geminiModel = 'gemini-2.5-flash';
+
+  static Future<String> _callAI(String systemPrompt, {String userMessage = '请生成'}) async {
     final prefs = await SharedPreferences.getInstance();
-    final apiKey = prefs.getString('api_key_groq') ?? '';
-    if (apiKey.isEmpty) return '[AI 服务未配置，请在设置中填写 API Key]';
+
+    // Try Gemini first
+    final geminiKey = prefs.getString('api_key_gemini') ?? '';
+    if (geminiKey.isNotEmpty) {
+      try {
+        final url = Uri.parse(
+          'https://generativelanguage.googleapis.com/v1beta/models/$_geminiModel:generateContent?key=$geminiKey',
+        );
+        final response = await http.post(
+          url,
+          headers: {'Content-Type': 'application/json'},
+          body: jsonEncode({
+            'system_instruction': {'parts': [{'text': systemPrompt}]},
+            'contents': [{'parts': [{'text': userMessage}]}],
+            'generationConfig': {'temperature': 0.5},
+          }),
+        ).timeout(const Duration(seconds: 60));
+
+        if (response.statusCode == 200) {
+          final data = jsonDecode(response.body);
+          final candidates = data['candidates'] as List?;
+          if (candidates != null && candidates.isNotEmpty) {
+            final parts = candidates[0]['content']?['parts'] as List?;
+            if (parts != null && parts.isNotEmpty) {
+              final text = parts[0]['text'] as String?;
+              if (text != null && text.trim().isNotEmpty) return text.trim();
+            }
+          }
+        }
+        debugPrint('[ReadingQuiz] Gemini failed (${response.statusCode}), falling back to Groq...');
+      } catch (e) {
+        debugPrint('[ReadingQuiz] Gemini exception: $e, falling back to Groq...');
+      }
+    }
+
+    // Fallback: Groq
+    final groqKey = prefs.getString('api_key_groq') ?? '';
+    if (groqKey.isEmpty) return '[AI 服务未配置，请在设置中填写 API Key]';
 
     try {
       final response = await http
           .post(
             Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
             headers: {
-              'Authorization': 'Bearer $apiKey',
+              'Authorization': 'Bearer $groqKey',
               'Content-Type': 'application/json',
             },
             body: jsonEncode({
@@ -44,22 +83,22 @@ class ReadingQuizService {
   }
 
   static Future<String> generateQuiz(String text) =>
-      _callGroq(PromptProvider.getReadingQuizPrompt(), userMessage: text);
+      _callAI(PromptProvider.getReadingQuizPrompt(), userMessage: text);
 
   static Future<String> getSummary(String text) =>
-      _callGroq(PromptProvider.getReadingSummaryPrompt(), userMessage: text);
+      _callAI(PromptProvider.getReadingSummaryPrompt(), userMessage: text);
 
   static Future<String> getTranslation(String text) =>
-      _callGroq(PromptProvider.getReadingTranslationPrompt(), userMessage: text);
+      _callAI(PromptProvider.getReadingTranslationPrompt(), userMessage: text);
 
   static Future<String> getParaphrase(String text) =>
-      _callGroq(PromptProvider.getReadingParaphrasePrompt(), userMessage: text);
+      _callAI(PromptProvider.getReadingParaphrasePrompt(), userMessage: text);
 
   static Future<String> getVocabulary(String text) =>
-      _callGroq(PromptProvider.getReadingVocabularyPrompt(), userMessage: text);
+      _callAI(PromptProvider.getReadingVocabularyPrompt(), userMessage: text);
 
   static Future<String> getPathwaysContent(PathwaysUnit unit) =>
-      _callGroq(PromptProvider.getPathwaysUnitPrompt(unit));
+      _callAI(PromptProvider.getPathwaysUnitPrompt(unit));
 
   /// 优先返回内置本地数据，无本地数据时返回 null
   static PathwaysUnitData? getPathwaysLocalContent(PathwaysUnit unit) =>
