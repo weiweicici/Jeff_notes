@@ -88,11 +88,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
       ).toList();
 
       try {
-        final data = await SupabaseConfig.client
+        var userId = '';
+        try { userId = SupabaseConfig.currentUserId; } catch (_) {}
+        var query = SupabaseConfig.client
             .from('archives')
-            .select('id,title,content_md,created_at,module')
+            .select('id,title,content_md,created_at,module');
+        if (userId.isNotEmpty) {
+          query = query.eq('user_id', userId);
+        }
+        final data = await query
             .or('module.eq.listening,module.eq.freetalk,module.eq.discussion,module.eq.essay,module.eq.exam,module.eq.grammar,module.eq.reading')
-            .eq('user_id', SupabaseConfig.currentUserId)
             .order('created_at', ascending: false);
 
         for (final row in List<Map<String, dynamic>>.from(data as List)) {

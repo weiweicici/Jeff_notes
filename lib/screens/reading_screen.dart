@@ -31,11 +31,16 @@ class _ReadingScreenState extends State<ReadingScreen> {
       _error = '';
     });
     try {
-      final data = await SupabaseConfig.client
+      var userId = '';
+      try { userId = SupabaseConfig.currentUserId; } catch (_) {}
+      var query = SupabaseConfig.client
           .from('archives')
           .select('id,title,content_md,created_at,metadata')
-          .eq('module', 'reading')
-          .eq('user_id', SupabaseConfig.currentUserId)
+          .eq('module', 'reading');
+      if (userId.isNotEmpty) {
+        query = query.eq('user_id', userId);
+      }
+      final data = await query
           .order('created_at', ascending: false);
       _entries = List<Map<String, dynamic>>.from(data as List);
     } catch (e) {
