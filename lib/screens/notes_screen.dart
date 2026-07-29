@@ -193,7 +193,6 @@ class _NotesScreenState extends State<NotesScreen> {
     bool _timerStarted = false;
     bool _playerExpanded = false;
     Timer? _playerAutoHideTimer;
-    Offset? _tapDownPos;
 
     Timer _startScrollTimer(ScrollController controller, {required void Function(void Function()) setModalState}) {
       final maxScroll = controller.position.maxScrollExtent;
@@ -315,12 +314,12 @@ class _NotesScreenState extends State<NotesScreen> {
             ),
 
           Expanded(
-            child: Listener(
-              onPointerDown: (event) { _tapDownPos = event.position; },
-              onPointerUp: (event) {
-                if (_tapDownPos != null) {
-                  _toggleAutoScrollVia(_tapDownPos!, event.position, scrollController, setModalState);
+            child: NotificationListener<UserScrollNotification>(
+              onNotification: (notification) {
+                if (isAutoScrolling) {
+                  _toggleAutoScrollVia(const Offset(0, 0), const Offset(0, 0), scrollController, setModalState);
                 }
+                return false;
               },
               child: ListView(
                 controller: scrollController,
@@ -394,18 +393,24 @@ class _NotesScreenState extends State<NotesScreen> {
                         ),
                       ],
                       const SizedBox(height: 12),
-                      MarkdownBody(
-                        data: content,
-                        softLineBreak: true,
-                        styleSheet: getAcademicMarkdownStyle(context),
-                        selectable: false,
-                        extensionSet: md.ExtensionSet(
-                          [const md.FencedCodeBlockSyntax()],
-                          [md.EmojiSyntax(), HighlightSyntax()],
-                        ),
-                        builders: {
-                          'highlight': HighlightBuilder(context),
+                      GestureDetector(
+                        behavior: HitTestBehavior.opaque,
+                        onTap: () {
+                          _toggleAutoScrollVia(const Offset(0, 0), const Offset(0, 0), scrollController, setModalState);
                         },
+                        child: MarkdownBody(
+                          data: content,
+                          softLineBreak: true,
+                          styleSheet: getAcademicMarkdownStyle(context),
+                          selectable: false,
+                          extensionSet: md.ExtensionSet(
+                            [const md.FencedCodeBlockSyntax()],
+                            [md.EmojiSyntax(), HighlightSyntax()],
+                          ),
+                          builders: {
+                            'highlight': HighlightBuilder(context),
+                          },
+                        ),
                       ),
                       const SizedBox(height: 40),
                     ],
