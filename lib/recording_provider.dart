@@ -1062,17 +1062,22 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> _uploadToSupabase(File file, String module) async {
     try {
+      var userId = '';
+      try { userId = SupabaseConfig.currentUserId; } catch (_) {}
       final bytes = await file.readAsBytes();
       final hash = md5.convert(bytes).toString();
       final title = file.path.split('/').last;
-      await SupabaseConfig.client.from('archives').insert({
+      final map = {
         'file_hash': hash,
         'module': module,
         'title': title,
         'content_md': utf8.decode(bytes),
         'file_size': bytes.length,
-        'user_id': SupabaseConfig.currentUserId,
-      });
+      };
+      if (userId.isNotEmpty) {
+        map['user_id'] = userId;
+      }
+      await SupabaseConfig.client.from('archives').insert(map);
       debugPrint('[Supabase Upload OK] $title ($module)');
     } catch (e) {
       debugPrint('[Supabase Upload Error] $e');
