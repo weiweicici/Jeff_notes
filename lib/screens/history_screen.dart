@@ -91,7 +91,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         final data = await SupabaseConfig.client
             .from('archives')
             .select('id,title,content_md,created_at,module')
-            .or('module.eq.listening,module.eq.freetalk,module.eq.discussion,module.eq.essay,module.eq.exam')
+            .or('module.eq.listening,module.eq.freetalk,module.eq.discussion,module.eq.essay,module.eq.exam,module.eq.grammar,module.eq.reading')
             .eq('user_id', SupabaseConfig.currentUserId)
             .order('created_at', ascending: false);
 
@@ -148,6 +148,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   IconData _iconFor(String name) {
+    if (name.contains('Grammar')) return Icons.abc_rounded;
     if (name.contains('Essay')) return Icons.edit_note_rounded;
     if (name.contains('Discussion')) return Icons.forum_outlined;
     if (name.contains('FreeTalk')) return Icons.chat_bubble_outline_rounded;
@@ -156,6 +157,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Color _colorFor(String name) {
+    if (name.contains('Grammar')) return Colors.orange;
     if (name.contains('Essay')) return Colors.deepPurpleAccent;
     if (name.contains('Discussion')) return Colors.deepPurpleAccent;
     if (name.contains('FreeTalk')) return Colors.teal;
