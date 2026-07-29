@@ -803,17 +803,20 @@ class RecordingProvider extends ChangeNotifier {
       final recapPrompt = PromptProvider.getSystemPrompt(PromptStrategy.recap, AIProvider.groq, mode: _currentMode, unit: _currentUnit);
 
       String? summary;
-      // Try Groq first
-      try {
-        summary = await _aiService!.summarize(
-          material,
-          strategy: PromptStrategy.recap,
-          mode: _currentMode,
-          unit: _currentUnit,
-        );
-      } catch (e) {
-        debugPrint("[40s Segment Summary] Groq failed, trying Gemini: $e");
-        summary = await _callGemini(recapPrompt, material);
+      // Gemini first, Groq fallback
+      summary = await _callGemini(recapPrompt, material);
+      if (summary == null || summary.isEmpty || summary.startsWith('[')) {
+        debugPrint("[40s Segment Summary] Gemini failed, trying Groq...");
+        try {
+          summary = await _aiService!.summarize(
+            material,
+            strategy: PromptStrategy.recap,
+            mode: _currentMode,
+            unit: _currentUnit,
+          );
+        } catch (e) {
+          debugPrint("[40s Segment Summary] Groq also failed: $e");
+        }
       }
 
       if (summary != null && summary.isNotEmpty && !summary.startsWith('[')) {
@@ -876,24 +879,27 @@ class RecordingProvider extends ChangeNotifier {
           _finalReviewContent = "Not enough material.";
         } else {
           final recapPrompt = PromptProvider.getSystemPrompt(PromptStrategy.recap, AIProvider.groq, mode: _currentMode, unit: _currentUnit);
-          try {
-            final recap = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
-            _finalReviewContent = recap;
-          } catch (mainError) {
-            debugPrint("[Final Academic Review] Main service failed, trying Gemini: $mainError");
-            final geminiRecap = await _callGemini(recapPrompt, material);
-            if (geminiRecap != null) {
-              _finalReviewContent = geminiRecap;
-            } else if (_fallbackTranslationService != null) {
-              try {
-                debugPrint("[Final Academic Review] Gemini also failed, trying Groq fallback...");
-                final recap = await _fallbackTranslationService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
-                _finalReviewContent = recap;
-              } catch (fallbackError) {
-                _finalReviewContent = "Recap failed both primary and fallback service.";
+          // Gemini first, Groq fallback
+          final geminiRecap = await _callGemini(recapPrompt, material);
+          if (geminiRecap != null && !geminiRecap.startsWith('[')) {
+            _finalReviewContent = geminiRecap;
+          } else {
+            debugPrint("[Final Academic Review] Gemini failed, trying Groq...");
+            try {
+              final recap = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
+              _finalReviewContent = recap;
+            } catch (mainError) {
+              debugPrint("[Final Academic Review] Groq also failed: $mainError");
+              if (_fallbackTranslationService != null) {
+                try {
+                  final recap = await _fallbackTranslationService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
+                  _finalReviewContent = recap;
+                } catch (fallbackError) {
+                  _finalReviewContent = "Recap failed all services.";
+                }
+              } else {
+                _finalReviewContent = "Recap failed and no fallback configured.";
               }
-            } else {
-              _finalReviewContent = "Recap failed and no fallback configured.";
             }
           }
         }
