@@ -775,10 +775,11 @@ $keyRules
 - 覆盖范围：各时态被动 / 带情态动词的被动（must be done） / 被动使役（have/get something done）
 - 至少用到 2 种不同结构，自然融入''';
       case 'part_8':
-        return '''- 全文 6-7 句话，其中 4 句使用 if 条件句
+        return '''- 全文 8-10 句话，其中 4 句使用 if 条件句
 - 覆盖范围：First Conditional / Second Conditional / Third Conditional / I Wish
 - 4 个条件句至少用到 2 种不同类型，不要求全部类型都用上
-- 条件句要自然融入文章逻辑中，不要生硬堆砌''';
+- 条件句要自然融入文章逻辑中，不要生硬堆砌
+- **句式多样：避免连续两句都以 If 开头。条件从句可放在句首或句中/句末。例如： "I would have... if..." 而不是连续 "If... If..."''';
       case 'part_9':
         return '''- 全文 6-7 句话，其中至少 4 句使用间接引语或嵌入问句
 - 覆盖范围：say/tell/ask 转述 / 时态回退和时间词变化 / 间接指令/请求/建议 / 间接疑问句 / 嵌入问句
@@ -822,28 +823,33 @@ $keyRules
 
 # 输出要求：
 $requirement
-- 字数 80-120 词
+- 字数 100-160 词
 - 用词：**简单基础词汇**，不要用高级或学术词汇
 - 核心目标：清晰展示语法结构用得是否正确，不是展示写作水平
 - 风格：简单直白，像初中生写的句子
+- **句式多样：避免连续多句以同一个词开头，混合使用不同句式结构**
 
 # 输出格式：
-## 📖 范文
+## 英文全文
 
 [英文范文正文]
 
-## 🏷️ 语法标注
+## 中文翻译
+
+[对应的中文翻译]
+
+## 语法标注
 $annotation''';
   }
 
-  static String getCombinedWritingPrompt(List<String> partIds, List<String> partTitles, List<String> partRequirements) {
-    final combinedReqs = partRequirements.map((r) => r.trim()).join('\n');
-    final partsList = partIds.map((id) {
-      final idx = partIds.indexOf(id);
-      return '${partTitles[idx]} — ${_writingAnnotationHint(id)}';
-    }).join('\n');
+   static String getCombinedWritingPrompt(List<String> partIds, List<String> partTitles, List<String> partRequirements) {
+     final combinedReqs = partRequirements.map((r) => r.trim()).join('\n');
+     final partsList = partIds.map((id) {
+       final idx = partIds.indexOf(id);
+       return '${partTitles[idx]} — ${_writingAnnotationHint(id)}';
+     }).join('\n');
 
-    return '''# Role: 英语写作示范教师
+     return '''# Role: 英语写作示范教师
 # Task: 根据指定的多个语法章节和主题，写一篇有逻辑、自然流畅的短篇范文。
 # 要求：必须同时使用以下 ${partIds.length} 个语法章节的核心语法结构。
 
@@ -857,16 +863,21 @@ $partsList
 - 用词：**简单基础词汇**，不要用高级或学术词汇
 - 核心目标：清晰展示每个语法结构用得是否正确，不是展示写作水平
 - 风格：简单直白，像初中生写的句子
+- **句式多样：避免连续多句以同一个词开头，混合使用不同句式结构**
 
 # 输出格式：
-## 📖 范文
+## 英文全文
 
 [英文范文正文]
 
-## 🏷️ 语法标注
+## 中文翻译
+
+[对应的中文翻译]
+
+## 语法标注
 - 分别标注每个语法章节对应的句子和说明
 - 格式：[句子片段] — [章节名]: [语法结构说明]''';
-  }
+   }
 
   static String _writingAnnotationHint(String partId) {
     switch (partId) {

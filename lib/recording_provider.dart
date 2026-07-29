@@ -163,6 +163,7 @@ class RecordingProvider extends ChangeNotifier {
   bool _enableLectureDiscovery = false;
   AppMode _currentMode = AppMode.exam;
   PathwaysUnit _currentUnit = PathwaysUnit.none;
+  int _autoScrollPauseDuration = 60;
   
   final Map<AIProvider, String> _apiKeys = {
     AIProvider.siliconFlow: "",
@@ -207,6 +208,7 @@ class RecordingProvider extends ChangeNotifier {
   bool get enableLectureDiscovery => _enableLectureDiscovery;
   AppMode get currentMode => _currentMode;
   PathwaysUnit get currentUnit => _currentUnit;
+  int get autoScrollPauseDuration => _autoScrollPauseDuration;
   String? get statusMessage => _statusMessage;
   String? get finalReviewContent => _finalReviewContent;
   bool get isGeneratingFinalReview => _isGeneratingFinalReview;
@@ -280,6 +282,7 @@ class RecordingProvider extends ChangeNotifier {
     bool? enableLectureDiscovery,
     AppMode? mode,
     PathwaysUnit? unit,
+    int? autoScrollPauseDuration,
 
   }) async {
     final prefs = await SharedPreferences.getInstance();
@@ -295,6 +298,10 @@ class RecordingProvider extends ChangeNotifier {
     if (unit != null) {
       await prefs.setInt('current_unit', unit.index);
       _currentUnit = unit;
+    }
+    if (autoScrollPauseDuration != null) {
+      await prefs.setInt('autoScrollPauseDuration', autoScrollPauseDuration);
+      _autoScrollPauseDuration = autoScrollPauseDuration;
     }
     
     if (groqKey != null) {
@@ -332,6 +339,7 @@ class RecordingProvider extends ChangeNotifier {
     _isDarkMode = prefs.getBool('is_dark_mode') ?? false;
     _enableFinalRecap = prefs.getBool('enableFinalRecap') ?? false;
     _enableLectureDiscovery = prefs.getBool('enableLectureDiscovery') ?? false;
+    _autoScrollPauseDuration = prefs.getInt('autoScrollPauseDuration') ?? 60;
     final modeIndex = prefs.getInt('app_mode') ?? AppMode.exam.index;
     _currentMode = AppMode.values[modeIndex];
     _currentUnit = PathwaysUnit.values[prefs.getInt('current_unit') ?? 0];

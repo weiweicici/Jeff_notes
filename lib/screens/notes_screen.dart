@@ -250,7 +250,7 @@ class _NotesScreenState extends State<NotesScreen> {
                   } else {
                     scrollTimer?.cancel();
                     scrollTimer = null;
-                    resumeTimer = Timer(const Duration(seconds: 20), () {
+                    resumeTimer = Timer(Duration(seconds: provider.autoScrollPauseDuration), () {
                       setModalState(() {
                         isAutoScrolling = true;
                 scrollTimer = _startScrollTimer(scrollController, setModalState: setModalState);
@@ -275,7 +275,7 @@ class _NotesScreenState extends State<NotesScreen> {
                     ),
                     const SizedBox(width: 6),
                     Text(
-                      isAutoScrolling ? '⏬ 自动滚屏中 · 点击暂停' : '⏸ 已暂停 · 20秒后自动恢复',
+                      isAutoScrolling ? '⏬ 自动滚屏中 · 点击暂停' : '⏸ 已暂停 · ${provider.autoScrollPauseDuration}秒后自动恢复',
                       style: TextStyle(
                         fontSize: 11,
                         color: isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],
@@ -798,6 +798,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   late bool _tempIsDarkMode;
   late bool _tempEnableFinalRecap;
   late bool _tempEnableLectureDiscovery;
+  late int _tempAutoScrollPause;
   late TextEditingController _groqController;
   late TextEditingController _openRouterController;
   late TextEditingController _siliconFlowController;
@@ -818,6 +819,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     _tempIsDarkMode = p.isDarkMode;
     _tempEnableFinalRecap = p.enableFinalRecap;
     _tempEnableLectureDiscovery = p.enableLectureDiscovery;
+    _tempAutoScrollPause = p.autoScrollPauseDuration;
     _groqController = TextEditingController(text: p.groqKey);
     _openRouterController = TextEditingController(text: p.openRouterKey);
     _siliconFlowController = TextEditingController(text: p.siliconFlowKey);
@@ -845,6 +847,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
       isDarkMode: _tempIsDarkMode,
       enableFinalRecap: _tempEnableFinalRecap,
       enableLectureDiscovery: _tempEnableLectureDiscovery,
+      autoScrollPauseDuration: _tempAutoScrollPause,
     );
     if (mounted) Navigator.pop(context);
   }
@@ -936,6 +939,38 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             ),
             const SizedBox(height: 8),
             const Divider(),
+            const SizedBox(height: 8),
+            Text(
+              '自动滚屏暂停恢复时间',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.white70 : Colors.black87,
+              ),
+            ),
+            Row(
+              children: [
+                const Text('10秒'),
+                Expanded(
+                  child: Slider(
+                    value: _tempAutoScrollPause.toDouble(),
+                    min: 10,
+                    max: 300,
+                    divisions: 29,
+                    label: '${_tempAutoScrollPause}秒',
+                    onChanged: (v) => setState(() => _tempAutoScrollPause = v.round()),
+                  ),
+                ),
+                const Text('300秒'),
+              ],
+            ),
+            Center(
+              child: Text(
+                '当前：$_tempAutoScrollPause 秒',
+                style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black54),
+              ),
+            ),
+            const SizedBox(height: 8),
             const SizedBox(height: 8),
             Text(
               'API KEYS CONFIGURATION',

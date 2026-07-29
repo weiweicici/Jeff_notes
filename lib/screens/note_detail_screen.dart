@@ -50,7 +50,12 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     _autoScrollTimer = null;
   }
 
+  int get _autoScrollPauseSeconds {
+    try { return context.read<RecordingProvider>().autoScrollPauseDuration; } catch (_) { return 60; }
+  }
+
   void _toggleAutoScroll() {
+    final pause = _autoScrollPauseSeconds;
     setState(() {
       _isAutoScrolling = !_isAutoScrolling;
       if (_isAutoScrolling) {
@@ -59,7 +64,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       } else {
         _stopAutoScrollTimer();
         _autoScrollPauseResumeTimer?.cancel();
-        _autoScrollPauseResumeTimer = Timer(const Duration(seconds: 20), () {
+        _autoScrollPauseResumeTimer = Timer(Duration(seconds: pause), () {
           if (mounted) setState(() { _isAutoScrolling = true; _startAutoScrollTimer(); });
         });
       }
@@ -609,6 +614,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
               ],
               GestureDetector(
                 onTap: () {
+                  final pause = _autoScrollPauseSeconds;
                   setState(() {
                     _isAutoScrolling = !_isAutoScrolling;
                     if (_isAutoScrolling) {
@@ -617,7 +623,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                     } else {
                       _stopAutoScrollTimer();
                       _autoScrollPauseResumeTimer?.cancel();
-                      _autoScrollPauseResumeTimer = Timer(const Duration(seconds: 20), () {
+                      _autoScrollPauseResumeTimer = Timer(Duration(seconds: pause), () {
                         if (mounted) setState(() { _isAutoScrolling = true; _startAutoScrollTimer(); });
                       });
                     }
@@ -639,7 +645,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        _isAutoScrolling ? '⏬ 自动滚屏中 · 点击暂停' : '⏸ 已暂停 · 20秒后自动恢复',
+                        _isAutoScrolling ? '⏬ 自动滚屏中 · 点击暂停' : '⏸ 已暂停 · $_autoScrollPauseSeconds秒后自动恢复',
                         style: TextStyle(
                           fontSize: 11,
                           color: _isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],

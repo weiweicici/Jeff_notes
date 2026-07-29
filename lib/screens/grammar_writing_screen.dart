@@ -1,10 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
+import 'package:intl/intl.dart';
+import 'package:crypto/crypto.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:provider/provider.dart';
+import 'dart:convert';
+import 'dart:io';
 import '../models.dart';
+import '../recording_provider.dart';
 import '../services/grammar_service.dart';
 import '../services/grammar_repository.dart';
+import '../services/supabase_config.dart';
+import '../services/tts_service.dart';
 import '../widgets/academic_markdown.dart';
+import 'history_screen.dart';
 
 class GrammarWritingScreen extends StatefulWidget {
   final GrammarUnit? unit;
@@ -20,6 +30,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
   Set<GrammarPart> _selectedParts = {};
   String? _selectedTheme;
   bool _isLoading = false;
+  bool _isSaving = false;
   bool _loadingParts = true;
   String _result = '';
   bool _combinedMode = false;
@@ -77,7 +88,12 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
       if (_combinedMode) {
         final parts = _selectedParts.toList();
         final result = await GrammarService.generateCombinedSample(parts, _selectedTheme!);
-        if (mounted) setState(() { _result = result; _isLoading = false; });
+        if (mounted) {
+          setState(() { _result = result; _isLoading = false; });
+          _showResultDialog();
+          // 自动保存至存档中心（后台发起）
+          if (mounted) _saveToArchive();
+        }
       } else {
         final unit = _selectedUnits.isNotEmpty
             ? _selectedUnits.first
@@ -90,10 +106,223 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
           partId: _selectedPart!.id,
           focusUnits: unitTitles.isNotEmpty ? unitTitles : null,
         );
-        if (mounted) setState(() { _result = result; _isLoading = false; });
+        if (mounted) {
+          setState(() { _result = result; _isLoading = false; });
+          _showResultDialog();
+          // 自动保存至存档中心（后台发起）
+          if (mounted) _saveToArchive();
+        }
       }
-    } catch (_) {
-      if (mounted) setState(() { _isLoading = false; });
+    } catch (e) {
+      if (mounted) setState(() { _isLoading = false; _result = '生成失败: $e'; });
+    }
+  }
+
+  void _showResultDialog() {
+    if (_result.isEmpty) return;
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: Row(
+          children: [
+            const Text('✍️ 写作范文', style: TextStyle(fontSize: 18)),
+            const Spacer(),
+            IconButton(
+              icon: const Icon(Icons.close, size: 18),
+              onPressed: () => Navigator.pop(ctx),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('📖 英文范文', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                _buildEnglishSection(_result),
+                const SizedBox(height: 24),
+                const Text('🇨🇳 中文翻译', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                _buildChineseSection(_result),
+                const SizedBox(height: 24),
+                const Text('🏷️ 语法标注', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 8),
+                MarkdownBody(
+                  data: _getAnnotationText(_result),
+                  softLineBreak: true,
+                  selectable: true,
+                  styleSheet: getAcademicMarkdownStyle(context),
+                  extensionSet: md.ExtensionSet([const md.FencedCodeBlockSyntax()], [md.EmojiSyntax(), HighlightSyntax()]),
+                  builders: {'highlight': HighlightBuilder(context)},
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.volume_up),
+            tooltip: '朗读英文',
+            onPressed: () => _playEnglish(ctx),
+          ),
+          TextButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _saveToArchive();
+            },
+            child: const Text('💾 保存'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _playEnglish(BuildContext dialogContext) {
+    final englishContent = _getEnglishText(_result);
+    if (englishContent.isEmpty) return;
+    try {
+      final tts = TtsService();
+      final provider = context.read<RecordingProvider>();
+      tts.speakEnglish(
+        englishContent,
+        geminiKey: provider.geminiKey,
+        siliconFlowKey: provider.siliconFlowKey,
+      );
+    } catch (e) {
+      if (dialogContext.mounted && e.toString().contains('NoHeadphones')) {
+        ScaffoldMessenger.of(dialogContext).showSnackBar(
+          SnackBar(
+            content: Text('⚠️ 未检测到耳机 (${e.toString().replaceAll("Exception: ", "")})', style: const TextStyle(fontSize: 13)),
+            backgroundColor: Colors.orange,
+            duration: const Duration(seconds: 5),
+          ),
+        );
+      }
+    }
+  }
+
+  String _getEnglishText(String full) {
+    const startTag = '## 英文全文';
+    const endTag = '## 中文翻译';
+    final start = full.indexOf(startTag);
+    if (start == -1) return '';
+    final end = full.indexOf(endTag, start + startTag.length);
+    return end > start
+        ? full.substring(start + startTag.length, end).trim()
+        : full.substring(start + startTag.length).trim();
+  }
+
+  // 构建英文全文部分
+  Widget _buildEnglishSection(String full) {
+    const startTag = '## 英文全文';
+    const endTag = '## 中文翻译';
+    final start = full.indexOf(startTag);
+    if (start == -1) return const SizedBox();
+    final end = full.indexOf(endTag, start + startTag.length);
+    final content = end > start 
+        ? full.substring(start + startTag.length, end).trim()
+        : full.substring(start + startTag.length).trim();
+    return MarkdownBody(
+      data: content,
+      softLineBreak: true,
+      selectable: true,
+      styleSheet: getAcademicMarkdownStyle(context),
+      extensionSet: md.ExtensionSet([const md.FencedCodeBlockSyntax()], [md.EmojiSyntax(), HighlightSyntax()]),
+      builders: {'highlight': HighlightBuilder(context)},
+    );
+  }
+
+  // 构建中文翻译部分
+  Widget _buildChineseSection(String full) {
+    const chineseTag = '## 中文翻译';
+    const annotationTag = '## 语法标注';
+    final chineseStart = full.indexOf(chineseTag);
+    if (chineseStart == -1) return const SizedBox();
+    final chineseEnd = full.indexOf(annotationTag, chineseStart + chineseTag.length);
+    final content = chineseEnd > chineseStart
+        ? full.substring(chineseStart + chineseTag.length, chineseEnd).trim()
+        : full.substring(chineseStart + chineseTag.length).trim();
+    return MarkdownBody(
+      data: content,
+      softLineBreak: true,
+      selectable: true,
+      styleSheet: getAcademicMarkdownStyle(context),
+      extensionSet: md.ExtensionSet(const [], const []),
+      builders: {},
+    );
+  }
+
+  // 获取语法标注文本
+  String _getAnnotationText(String full) {
+    const annotationTag = '## 语法标注';
+    final start = full.indexOf(annotationTag);
+    if (start == -1) return '';
+    return full.substring(start).trim();
+  }
+
+  Future<void> _saveToArchive() async {
+    if (_result.isEmpty || _isSaving) return;
+
+    var userId = '';
+    try {
+      userId = SupabaseConfig.currentUserId;
+    } catch (e) {
+      // 未登录，user_id 留空
+    }
+
+    setState(() { _isSaving = true; });
+
+    try {
+      final now = DateTime.now();
+      final dateStr = DateFormat('yyyyMMdd_HHmm').format(now);
+      final firstLine = _result.split('\n').firstOrNull ?? 'Grammar Writing';
+      final safeTopic = firstLine.replaceAll(RegExp(r'[\\/:*?"<>|]'), '').replaceAll(' ', '_').trim();
+      final filename = safeTopic.isNotEmpty ? 'Jeff_Grammar_${safeTopic}_$dateStr.md' : 'Jeff_Grammar_$dateStr.md';
+      final contentMd = _result;
+
+      // 1. 保存到本地 .md 文件
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/$filename');
+      await file.writeAsString(contentMd);
+      debugPrint('[Grammar Save] Saved to local file: ${file.path}');
+
+      // 2. 同步到 Supabase
+      final hash = md5.convert(utf8.encode('${contentMd}_${DateTime.now().microsecondsSinceEpoch}')).toString();
+      final map = {
+        'module': 'grammar',
+        'title': filename,
+        'content_md': contentMd,
+        'file_hash': hash,
+        'metadata': {'source': 'grammar_writing'},
+        'file_size': contentMd.length,
+      };
+      if (userId.isNotEmpty) {
+        map['user_id'] = userId;
+      }
+
+      await SupabaseConfig.client.from('archives').insert(map);
+
+      if (mounted && userId.isNotEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('✅ 已保存到本地 .md 文件与存档中心'), backgroundColor: Colors.green),
+        );
+      }
+    } catch (e) {
+      debugPrint('[Grammar Save Error] $e');
+      if (mounted && !e.toString().contains('Not authenticated')) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ 保存失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+    } finally {
+      if (mounted) setState(() { _isSaving = false; });
     }
   }
 
@@ -103,13 +332,33 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
 
     if (_loadingParts) {
       return Scaffold(
-        appBar: AppBar(title: const Text('✍️ 写作练习')),
+        appBar: AppBar(
+          title: const Text('✍️ 写作练习'),
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.history_edu),
+              tooltip: '查看存档',
+              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen(initialModuleFilter: 'grammar'))),
+            ),
+            const SizedBox(width: 8),
+          ],
+        ),
         body: const Center(child: CircularProgressIndicator()),
       );
     }
 
     return Scaffold(
-      appBar: AppBar(title: const Text('✍️ 写作练习')),
+      appBar: AppBar(
+        title: const Text('✍️ 写作练习'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.history_edu),
+            tooltip: '查看存档',
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen(initialModuleFilter: 'grammar'))),
+          ),
+          const SizedBox(width: 8),
+        ],
+      ),
       body: SingleChildScrollView(
         padding: const EdgeInsets.fromLTRB(20, 16, 20, 80),
         child: Column(
@@ -296,19 +545,17 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
               ),
             ),
 
-            // Result
-            if (_result.isNotEmpty) ...[
+            // Error result (only shown when generation fails)
+            if (_result.isNotEmpty && _result.startsWith('生成失败')) ...[
               const SizedBox(height: 24),
-              MarkdownBody(
-                data: _result,
-                softLineBreak: true,
-                selectable: true,
-                styleSheet: getAcademicMarkdownStyle(context),
-                extensionSet: md.ExtensionSet(
-                  [const md.FencedCodeBlockSyntax()],
-                  [md.EmojiSyntax(), HighlightSyntax()],
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  color: Colors.red.withValues(alpha: 0.1),
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                builders: {'highlight': HighlightBuilder(context)},
+                child: Text(_result, style: const TextStyle(color: Colors.red)),
               ),
             ],
           ],
