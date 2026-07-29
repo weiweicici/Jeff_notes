@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
+import 'package:http/http.dart' as http;
 import 'api_scheduler.dart';
 import 'text_sanitizer.dart';
 import 'terminology_interceptor.dart';
@@ -34,12 +36,47 @@ class AIOrchestratorService {
   bool _isTranslating = false;
   bool _isDisposed = false;
 
+  final String _geminiApiKey;
+
   AIOrchestratorService({
     required this.sttService,
     required this.translationService,
     this.translationFallbackService,
     required this.sessionId,
-  });
+    String geminiApiKey = '',
+  }) : _geminiApiKey = geminiApiKey;
+
+  Future<String?> _callGemini(String text) async {
+    if (_geminiApiKey.isEmpty) return null;
+    try {
+      final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+      );
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'system_instruction': {'parts': [{'text': 'You are a professional translator. Translate the following English to Chinese. Output ONLY the Chinese translation, no explanations.'}]},
+          'contents': [{'parts': [{'text': text}]}],
+          'generationConfig': {'temperature': 0.1},
+        }),
+      ).timeout(const Duration(seconds: 30));
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final candidates = data['candidates'] as List?;
+        if (candidates != null && candidates.isNotEmpty) {
+          final parts = candidates[0]['content']?['parts'] as List?;
+          if (parts != null && parts.isNotEmpty) {
+            final result = parts[0]['text'] as String?;
+            if (result != null && result.trim().isNotEmpty) return result.trim();
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('[Orchestrator Gemini] Error: $e');
+    }
+    return null;
+  }
 
   void _addFastEnglish(PipelineResult result) {
     if (_isDisposed) return;
@@ -161,16 +198,43 @@ class AIOrchestratorService {
         );
       } catch (mainError) {
         debugPrint("[Orchestrator] Main translation service failed: $mainError");
+        bool geminiTried = false;
         if (translationFallbackService != null) {
-          onStatus?.call("Main failed. Using fallback...");
-          debugPrint("[Orchestrator] Attempting translation fallback...");
-          translatedText = await ApiScheduler().enqueue(
-            () => translationFallbackService!.translate(textToTranslate, history: _latestHistory),
-            priority: 1,
-            sessionId: sessionId,
-          );
+          try {
+            onStatus?.call("Main failed. Using fallback...");
+            debugPrint("[Orchestrator] Attempting translation fallback...");
+            translatedText = await ApiScheduler().enqueue(
+              () => translationFallbackService!.translate(textToTranslate, history: _latestHistory),
+              priority: 1,
+              sessionId: sessionId,
+            );
+          } catch (fallbackError) {
+            debugPrint("[Orchestrator] Fallback also failed, trying Gemini: $fallbackError");
+            onStatus?.call("Fallback failed. Trying Gemini...");
+            final geminiResult = await _callGemini(textToTranslate);
+            if (geminiResult != null) {
+              translatedText = geminiResult;
+              geminiTried = true;
+            } else {
+              rethrow;
+            }
+          }
         } else {
-          rethrow;
+          final geminiResult = await _callGemini(textToTranslate);
+          if (geminiResult != null) {
+            translatedText = geminiResult;
+            geminiTried = true;
+          } else {
+            rethrow;
+          }
+        }
+        if (!geminiTried) {
+          final geminiResult = await _callGemini(textToTranslate);
+          if (geminiResult != null) {
+            translatedText = geminiResult;
+          } else {
+            rethrow;
+          }
         }
       }
 

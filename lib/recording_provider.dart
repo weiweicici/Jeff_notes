@@ -407,6 +407,7 @@ class RecordingProvider extends ChangeNotifier {
         translationService: _aiService!,
         translationFallbackService: _fallbackTranslationService,
         sessionId: DateTime.now().millisecondsSinceEpoch.toString(),
+        geminiApiKey: _apiKeys[AIProvider.gemini] ?? '',
       );
       
       _fastSub = _orchestrator!.fastEnglishStream.listen((result) {
