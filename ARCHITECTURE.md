@@ -62,7 +62,8 @@ All AI services are bound to **Groq** (`openai/gpt-oss-120b` for chat, `whisper-
 
 | 功能 | 实际服务 | 实际模型 |
 |------|---------|---------|
-| STT 语音转写 | Groq | `whisper-large-v3` |
+| STT 语音转写 (首选) | Groq | `whisper-large-v3` |
+| STT 语音转写 (降级) | Google Gemini | `gemini-2.5-flash` (多模态音频直接转写) |
 | 实时翻译 | Groq | `openai/gpt-oss-120b` |
 | 翻译兜底 | Groq | `openai/gpt-oss-120b` (同一实例) |
 | 最终复盘 (Final Recap) | Groq | `openai/gpt-oss-120b` |

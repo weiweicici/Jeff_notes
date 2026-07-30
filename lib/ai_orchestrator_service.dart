@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'api_scheduler.dart';
@@ -78,6 +79,76 @@ class AIOrchestratorService {
     return null;
   }
 
+  /// [STT 降级兜底] 当 Groq STT 失败/429/超时，调用 Gemini 2.5 Flash 进行多模态音频转写
+  Future<String?> _transcribeGemini(String filePath) async {
+    if (_geminiApiKey.isEmpty) return null;
+    try {
+      final file = File(filePath);
+      if (!await file.exists()) return null;
+      final bytes = await file.readAsBytes();
+      if (bytes.length < 100) return "";
+
+      final base64Audio = base64Encode(bytes);
+      final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+      );
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'system_instruction': {
+            'parts': [
+              {
+                'text':
+                    'You are an expert English speech-to-text transcriber. Transcribe the given audio slice into raw English text. Output ONLY the clean transcribed English text with no markdown, no quotes, no explanations, and no conversational filler. If the audio contains only silence or background noise, output NOTHING.'
+              }
+            ]
+          },
+          'contents': [
+            {
+              'parts': [
+                {
+                  'inline_data': {
+                    'mime_type': 'audio/wav',
+                    'data': base64Audio,
+                  }
+                },
+                {'text': 'Transcribe this English audio recording slice.'}
+              ]
+            }
+          ],
+          'generationConfig': {'temperature': 0.1},
+        }),
+      ).timeout(const Duration(seconds: 25));
+
+      if (response.statusCode == 200) {
+        final data = jsonDecode(response.body);
+        final candidates = data['candidates'] as List?;
+        if (candidates != null && candidates.isNotEmpty) {
+          final parts = candidates[0]['content']?['parts'] as List?;
+          if (parts != null && parts.isNotEmpty) {
+            final result = parts[0]['text'] as String?;
+            if (result != null && result.trim().isNotEmpty) {
+              final cleaned = result.trim();
+              final lower = cleaned.toLowerCase();
+              if (lower.contains("no speech") ||
+                  lower.contains("silence") ||
+                  lower.contains("background noise")) {
+                return "";
+              }
+              return cleaned;
+            }
+          }
+        }
+      } else {
+        debugPrint('[Orchestrator Gemini STT] Failed status ${response.statusCode}: ${response.body}');
+      }
+    } catch (e) {
+      debugPrint('[Orchestrator Gemini STT] Error: $e');
+    }
+    return null;
+  }
+
   void _addFastEnglish(PipelineResult result) {
     if (_isDisposed) return;
     _fastEnglishController.add(result);
@@ -100,14 +171,32 @@ class AIOrchestratorService {
     try {
       onStatus?.call("STT requesting...");
       
-      // 1. STT 阶段（快车道）
-      final rawEnglish = await ApiScheduler().enqueue(
-        () => sttService.transcribe(filePath, previousText: context),
-        priority: 0,
-        sessionId: sessionId,
-      );
+      // 1. STT 阶段（快车道）：Groq 主服务 → Gemini 2.5 Flash 自动降级兜底
+      String? rawEnglish;
+      try {
+        rawEnglish = await ApiScheduler().enqueue(
+          () => sttService.transcribe(filePath, previousText: context),
+          priority: 0,
+          sessionId: sessionId,
+        );
+      } catch (sttErr) {
+        debugPrint("[Orchestrator STT] Main Groq STT failed: $sttErr. Trying Gemini 2.5 Flash fallback...");
+        onStatus?.call("STT failover to Gemini...");
+        rawEnglish = await _transcribeGemini(filePath);
+      }
 
       if (_isDisposed) return;
+
+      // 如果 Groq 返回空/未识别，且配置了 Gemini Key，用 Gemini Flash 尝试兜底转写
+      if (rawEnglish == null || rawEnglish.trim().isEmpty) {
+        if (_geminiApiKey.isNotEmpty) {
+          onStatus?.call("Checking STT with Gemini...");
+          final geminiSTT = await _transcribeGemini(filePath);
+          if (geminiSTT != null && geminiSTT.trim().isNotEmpty) {
+            rawEnglish = geminiSTT;
+          }
+        }
+      }
 
       if (rawEnglish == null || rawEnglish.trim().isEmpty) {
         onStatus?.call("Silence detected");
