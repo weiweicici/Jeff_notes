@@ -625,3 +625,89 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 | FreeTalk 使用硅基流动 Qwen 翻译 | 实际走 Groq `openai/gpt-oss-120b` | `_translateViaSiliconFlow()` 调用的是 `_aiService!.translate()` |
 | 英文 TTS 使用 SiliconFlow 高拟真 AI 音色 | ✅ **正确** | `CosyVoice2-0.5B` Bella 女声，失败后降级 |
 | 60s 滑动窗口语义摘要 | **未实现** | `isSummary` 字段存在但从未被写入，`_performBatchSummary()` 不存在 |
+
+---
+
+## 14. Full Bug Audit & Fix Verification Report (全面 Bug 审查与修复验证报告)
+
+### 14.1 审查概述
+在 2026-07-30 对全 App 代码库（screens / services / providers / models / widgets）进行了深度代码审计，共排查出 **20 个 Bug**（7 个高优先级、8 个中优先级、5 个低优先级）。目前所有 20 个 Bug 已全部修复完毕，且通过 `flutter analyze lib/` **0 错误** 校验。
+
+### 14.2 高优先级 Bug 修复记录 (7/7)
+1. **BUG-01 (ApiScheduler 状态未隔离)**:
+   - **现象**: `untilIdle()` 复用了上次 session 已完成的 `_idleCompleter`，导致 `stopRecording()` 立即返回跳过等待，MD 文件未能安全导出。
+   - **修复**: 在 `untilIdle()` 及任务入队时检查并重置 `_idleCompleter`；同时在 `enqueue` 完成时从 `_sessionIdleCompleters` 中移除完成项，防止 Map 泄漏。
+2. **BUG-02 (TtsService 重复配置音频会话)**:
+   - **现象**: `_queryCurrentRoute()` 每次 200ms 轮询都重新调用 `configure + setActive`，导致 iOS 端口频繁抖动。
+   - **修复**: 从 `_queryCurrentRoute()` 移除配置调用，仅保留端口判定；会话配置统一由 `ensurePlaybackSession()` 管理。
+3. **BUG-03 (TtsService 耳机监控并发堆积)**:
+   - **现象**: 100ms 轮询定时器在 4 秒硬件判定未结束时反复触发，产生大量并发异步任务堆积。
+   - **修复**: 增加 `_isCheckingHeadphones` 标志位，在上一次检查未完成时直接跳过。
+4. **BUG-04 (VocabService 本地删除未同步云端)**:
+   - **现象**: `deleteCard()` 只清本地存储，不删除 Supabase 云端记录，重启后词卡复活。
+   - **修复**: 增加 `_deleteFromSupabase(id)` 方法，删除本地时同步向 Supabase 发起 `delete` 请求。
+5. **BUG-05 (VocabService 无 upsert & 掌握状态不同步)**:
+   - **现象**: 每次上传 `insert` 新行导致重复积累；`toggleMastered()` 不同步云端。
+   - **修复**: 改用 `.upsert(..., onConflict: 'file_hash')`；在 `toggleMastered()` 后增加云端同步。
+6. **BUG-06 (GrammarWritingScreen 哈希时间戳导致无限上传)**:
+   - **现象**: 生成 `file_hash` 时加入了时间戳，导致同一范文每次保存产生新 Hash，造成 Supabase 重复堆积。
+   - **修复**: 去除时间戳，仅基于 Markdown 内容做 md5 摘要，并在插入后调用 `UploadCache.mark(hash)`。
+7. **BUG-07 (HistoryScreen 删除抛出异常导致本地云端不一致)**:
+   - **现象**: `SupabaseConfig.currentUserId` 在未登录时抛出异常，引发本地文件删除了但云端记录残留。
+   - **修复**: 本地与云端删除逻辑解耦；用安全的 `currentUser?.id` 替代 getter；云端失败时 SnackBar 提示。
+
+### 14.3 中优先级 Bug 修复记录 (8/8)
+8. **BUG-08 (AIOrchestratorService 批次失败通知不全)**:
+   - **修复**: `catch` 块中遍历 `ids` 为每个 `noteId` 分发降级通知。
+9. **BUG-09 (RecordingProvider 短录音弹窗广播不可靠)**:
+   - **修复**: `_exportToMarkdown()` 成功后直接广播 `_lastExportedPath`，不依赖异步的 `_finalReviewContent`。
+10. **BUG-10 (TtsService pauseEnglish 重头播放)**:
+    - **修复**: 修改 `_flutterTts.stop()` 为 `_flutterTts.pause()`，并暂停耳机轮询定时器。
+11. **BUG-11 (FileSyncAgent Jeff_速记_*.md 归类错误)**:
+    - **修复**: 在 `_inferModule()` 中新增 `速记` 关键字匹配，准确映射为 `exam` 模块。
+12. **BUG-12 (HistoryScreen 打开云端条目重复上传)**:
+    - **修复**: 云端内容保存至本地后，计算 md5 并调用 `UploadCache.mark(hash)`。
+13. **BUG-13 (RecordingProvider 暂停/继续后摘要计数器错乱)**:
+    - **修复**: `pauseRecording()` 时显式重置 `_segmentSummaryCounter = 0`。
+14. **BUG-14 (GrammarWritingScreen 保存缺少 UploadCache.mark)**:
+    - **修复**: 已在 BUG-06 修复中一并补充。
+15. **BUG-15 (Edge WebSocket HttpClient 连接池泄漏)**:
+    - **修复**: 增加 `try-finally` 结构，分段合成完成后强制调用 `client.close(force: true)`。
+
+### 14.4 低优先级 Bug 修复记录 (5/5)
+16. **BUG-16 (RecordingProvider Gemini Key 变化未重建 Orchestrator)**:
+    - **修复**: 增加 `_prevGeminiKey` 监听，修改 Gemini Key 也重建编排器。
+17. **BUG-17 (RecordingProvider 数据流与视图优化)**:
+    - **修复**: 优化 `_updateService()` 调用与内存结构。
+18. **BUG-18 (HistoryScreen _moduleOfEntry 缺少速记识别)**:
+    - **修复**: 增加 `t.contains('速记')` 识别条件归为 `exam`。
+19. **BUG-19 (HistoryScreen 本地条目 module 为空)**:
+    - **修复**: 使用 `_inferModuleFromFileName()` 静态辅助函数在加载本地条目时即填充 `module`。
+20. **BUG-20 (NoteDetailScreen FreeTalk 大小写敏感判断)**:
+    - **修复**: 改为 `fileName.toLowerCase().contains('freetalk')`。
+
+### 14.5 全量 Bug 审计汇总表
+
+| ID | 模块 | 描述 | 严重度 | 修复状态 |
+|----|------|------|--------|----------|
+| BUG-01 | ApiScheduler | 全局单例未隔离，`untilIdle()` 提前返回 | 🔴 高 | ✅ 已修复 |
+| BUG-02 | TtsService | 轮询重复 configure+setActive 音频会话 | 🔴 高 | ✅ 已修复 |
+| BUG-03 | TtsService | 耳机监控与 4s 轮询并发堆积 | 🔴 高 | ✅ 已修复 |
+| BUG-04 | VocabService | 删除词卡未同步 Supabase，重启后复活 | 🔴 高 | ✅ 已修复 |
+| BUG-05 | VocabService | 词卡上传无 upsert；掌握状态不同步 | 🔴 高 | ✅ 已修复 |
+| BUG-06 | GrammarWriting | Hash 含时间戳造成无限重复上传 | 🔴 高 | ✅ 已修复 |
+| BUG-07 | HistoryScreen | currentUserId 抛错导致本地/云端不一致 | 🔴 高 | ✅ 已修复 |
+| BUG-08 | Orchestrator | 翻译批次失败仅通知 ids.last | 🟡 中 | ✅ 已修复 |
+| BUG-09 | RecordingProvider | 短录音弹窗广播依赖未完成字段 | 🟡 中 | ✅ 已修复 |
+| BUG-10 | TtsService | pauseEnglish 调用 stop，无法原位续播 | 🟡 中 | ✅ 已修复 |
+| BUG-11 | FileSyncAgent | 速记文件被误判为 listening 模块 | 🟡 中 | ✅ 已修复 |
+| BUG-12 | HistoryScreen | 云端写入本地未标记 UploadCache | 🟡 中 | ✅ 已修复 |
+| BUG-13 | RecordingProvider | 暂停/继续后摘要计数器错乱 | 🟡 中 | ✅ 已修复 |
+| BUG-14 | GrammarWriting | 缺少 UploadCache.mark() | 🟡 中 | ✅ 已修复 |
+| BUG-15 | TtsService | Edge WebSocket HttpClient 未关闭 | 🟡 中 | ✅ 已修复 |
+| BUG-16 | RecordingProvider | 修改 Gemini Key 未重建 Orchestrator | 🟢 低 | ✅ 已修复 |
+| BUG-17 | RecordingProvider | 数据流与视图优化 | 🟢 低 | ✅ 已修复 |
+| BUG-18 | HistoryScreen | _moduleOfEntry 缺少速记识别 | 🟢 低 | ✅ 已修复 |
+| BUG-19 | HistoryScreen | 本地条目初始化 module 字段缺失 | 🟢 低 | ✅ 已修复 |
+| BUG-20 | NoteDetail | FreeTalk 文件名大小写敏感判定 | 🟢 低 | ✅ 已修复 |
+
