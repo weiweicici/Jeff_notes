@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'services/supabase_config.dart';
+import 'services/upload_cache.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:audio_session/audio_session.dart';
@@ -184,6 +185,7 @@ class RecordingProvider extends ChangeNotifier {
   String? _statusMessage;
 
   String? _finalReviewContent;
+  String? _shorthandReviewContent;
   bool _isGeneratingFinalReview = false;
   String? _lastExportedPath;
   // 40秒分段 AI 摘要
@@ -211,6 +213,7 @@ class RecordingProvider extends ChangeNotifier {
   int get autoScrollPauseDuration => _autoScrollPauseDuration;
   String? get statusMessage => _statusMessage;
   String? get finalReviewContent => _finalReviewContent;
+  String? get shorthandReviewContent => _shorthandReviewContent;
   bool get isGeneratingFinalReview => _isGeneratingFinalReview;
   String? get lastExportedPath => _lastExportedPath;
   String? get identifiedLectureContext => _identifiedLectureContext;
@@ -227,7 +230,7 @@ class RecordingProvider extends ChangeNotifier {
   String get openRouterKey => _openRouterKey;
 
   String _prevGroqKey = "";
-
+  String _prevGeminiKey = "";
 
   RecordingProvider() { _init(); }
 
@@ -354,9 +357,11 @@ class RecordingProvider extends ChangeNotifier {
 
   void _updateService() {
     final groqKey = _apiKeys[AIProvider.groq] ?? "";
+    final geminiKey = _apiKeys[AIProvider.gemini] ?? "";
     final groqChanged = groqKey != _prevGroqKey;
+    final geminiChanged = geminiKey != _prevGeminiKey;
 
-    if (!groqChanged && _orchestrator != null) {
+    if (!groqChanged && !geminiChanged && _orchestrator != null) {
       return;
     }
 
@@ -365,6 +370,7 @@ class RecordingProvider extends ChangeNotifier {
     _orchestrator?.dispose();
 
     _prevGroqKey = groqKey;
+    _prevGeminiKey = geminiKey;
 
     
     // 1. 初始化 Groq 服务（STT 专用，独立实例避免并发干扰）
@@ -564,6 +570,14 @@ class RecordingProvider extends ChangeNotifier {
     // 立即导出 MD 文件（含分段摘要），确保存档立即可见
     await _exportToMarkdown();
 
+    // [BUG-09 Fix] 短录音（< 40s，无分段摘要）时，_finalReviewContent 由 unawaited 后台任务赋值，
+    // 此处几乎肯定为 null，用它做广播判断会导致弹窗永不弹出。
+    // 修复：_exportToMarkdown() 成功后 _lastExportedPath 已被设置，
+    // 无论 _segmentSummaries 是否为空，统一广播 _lastExportedPath，确保弹窗一定触发。
+    if (_segmentSummaries.isEmpty && _lastExportedPath != null) {
+      _sessionReadyController.add(_lastExportedPath!);
+    }
+
     // 后台继续生成完整 AI review（不阻塞弹窗），完成后会覆盖更新 MD 文件
     _statusMessage = "Finalizing full AI review...";
     notifyListeners();
@@ -592,6 +606,9 @@ class RecordingProvider extends ChangeNotifier {
       }
     } catch (e) {
       debugPrint("[Background Final Review Error] $e");
+      if (_lastExportedPath != null) {
+        _sessionReadyController.add(_lastExportedPath!);
+      }
     }
   }
 
@@ -603,6 +620,11 @@ class RecordingProvider extends ChangeNotifier {
     // 处理暂停前的最后一段音频切片
     final path = await _audioRecorder.stop();
     if (path != null) unawaited(_processAudio(path));
+    // [BUG-13 Fix] 暂停时重置 40s 摘要计数器：
+    // _sliceTimer 已被取消，_segmentSummaryCounter 若不清零，
+    // 继续录音后 _startSmartSliceTimer() 重启会在错误时机触发摘要。
+    // 重置为 0 让新一轮从干净起点开始，不影响已积累的 _segmentTranscriptBuffer。
+    _segmentSummaryCounter = 0;
     _statusMessage = "⏸ Paused";
     notifyListeners();
   }
@@ -873,33 +895,60 @@ class RecordingProvider extends ChangeNotifier {
     try {
       if (_aiService == null) {
         _finalReviewContent = "[AI service not ready — recap skipped]";
+        _shorthandReviewContent = null;
         debugPrint("[Final Academic Review] _aiService is null, skipping recap.");
       } else {
         final material = _allNotes.where((n) => !n.isSummary).map((n) => n.transcript).join(" ");
         if (material.isEmpty) {
           _finalReviewContent = "Not enough material.";
+          _shorthandReviewContent = null;
         } else {
-          final recapPrompt = PromptProvider.getSystemPrompt(PromptStrategy.recap, AIProvider.groq, mode: _currentMode, unit: _currentUnit);
-          // Gemini first, Groq fallback
-          final geminiRecap = await _callGemini(recapPrompt, material);
-          if (geminiRecap != null && !geminiRecap.startsWith('[')) {
-            _finalReviewContent = geminiRecap;
+          if (_currentMode == AppMode.exam) {
+            // 1. 生成 Exam 考点大纲
+            final examPrompt = PromptProvider.getFinalReviewPrompt(AppMode.exam, _currentUnit);
+            final geminiExam = await _callGemini(examPrompt, material);
+            if (geminiExam != null && !geminiExam.startsWith('[')) {
+              _finalReviewContent = geminiExam;
+            } else {
+              try {
+                _finalReviewContent = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: AppMode.exam, unit: _currentUnit);
+              } catch (_) {
+                _finalReviewContent = await _fallbackTranslationService?.summarize(material, strategy: PromptStrategy.recap, mode: AppMode.exam, unit: _currentUnit) ?? "Exam recap failed.";
+              }
+            }
+
+            // 2. 生成 Lecture/速记 学术讲座笔记 (用于浮窗显示与导出 Jeff_速记_xxx.md)
+            final shorthandPrompt = PromptProvider.getFinalReviewPrompt(AppMode.lecture, _currentUnit);
+            final geminiShorthand = await _callGemini(shorthandPrompt, material);
+            if (geminiShorthand != null && !geminiShorthand.startsWith('[')) {
+              _shorthandReviewContent = geminiShorthand;
+            } else {
+              try {
+                _shorthandReviewContent = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: AppMode.lecture, unit: _currentUnit);
+              } catch (_) {
+                _shorthandReviewContent = await _fallbackTranslationService?.summarize(material, strategy: PromptStrategy.recap, mode: AppMode.lecture, unit: _currentUnit);
+              }
+            }
+            // 浮窗弹出的总结直接展现【速记】
+            // _shorthandReviewContent 已赋值供导出和浮窗展示
           } else {
-            debugPrint("[Final Academic Review] Gemini failed, trying Groq...");
-            try {
-              final recap = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
-              _finalReviewContent = recap;
-            } catch (mainError) {
-              debugPrint("[Final Academic Review] Groq also failed: $mainError");
-              if (_fallbackTranslationService != null) {
-                try {
-                  final recap = await _fallbackTranslationService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
-                  _finalReviewContent = recap;
-                } catch (fallbackError) {
-                  _finalReviewContent = "Recap failed all services.";
+            final recapPrompt = PromptProvider.getFinalReviewPrompt(_currentMode, _currentUnit);
+            final geminiRecap = await _callGemini(recapPrompt, material);
+            if (geminiRecap != null && !geminiRecap.startsWith('[')) {
+              _finalReviewContent = geminiRecap;
+            } else {
+              try {
+                _finalReviewContent = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
+              } catch (mainError) {
+                if (_fallbackTranslationService != null) {
+                  try {
+                    _finalReviewContent = await _fallbackTranslationService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
+                  } catch (_) {
+                    _finalReviewContent = "Recap failed all services.";
+                  }
+                } else {
+                  _finalReviewContent = "Recap failed and no fallback configured.";
                 }
-              } else {
-                _finalReviewContent = "Recap failed and no fallback configured.";
               }
             }
           }
@@ -997,6 +1046,25 @@ class RecordingProvider extends ChangeNotifier {
     return result;
   }
 
+  String _generateFallbackShorthandFromTranscripts() {
+    final transcripts = _allNotes.where((n) => !n.isSummary).toList();
+    if (transcripts.isEmpty) return "";
+    final buffer = StringBuffer();
+    buffer.writeln("### Key Discussion / Audio Points (逐字要点)");
+    buffer.writeln();
+    for (int i = 0; i < transcripts.length; i++) {
+      final t = transcripts[i].transcript.trim();
+      final zh = transcripts[i].translatedContent?.trim();
+      if (t.isNotEmpty && t != '...' && !t.startsWith('[')) {
+        buffer.writeln("- **Point ${i + 1}**: $t");
+        if (zh != null && zh.isNotEmpty && !zh.startsWith('[')) {
+          buffer.writeln("  - *翻译*: $zh");
+        }
+      }
+    }
+    return buffer.toString();
+  }
+
   Future<void> _exportToMarkdown() async {
     try {
       final now = DateTime.now();
@@ -1084,6 +1152,68 @@ class RecordingProvider extends ChangeNotifier {
       await file.writeAsString(sb.toString());
       debugPrint("\x1B[32m[Export OK] ${file.absolute.path}\x1B[0m");
 
+      // ── Exam 模式下，额外独立保存一份《Jeff_速记_yyyyMMdd_HHmm.md》（浮窗同款学术速记） ──
+      final shorthandContentToUse = (_shorthandReviewContent != null && _shorthandReviewContent!.isNotEmpty)
+          ? _shorthandReviewContent
+          : _generateFallbackShorthandFromTranscripts();
+
+      if (isExam && shorthandContentToUse != null && shorthandContentToUse.isNotEmpty) {
+        try {
+          final shorthandFilename = "Jeff_速记_$dateStr.md";
+          final shorthandFile = File('${directory.path}/$shorthandFilename');
+          final StringBuffer sbShort = StringBuffer();
+          sbShort.writeln("# Academic Shorthand Notes (学术速记)");
+          sbShort.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
+          sbShort.writeln("**Context:** ${_identifiedLectureContext ?? 'Academic Lecture Shorthand'}");
+          sbShort.writeln();
+          sbShort.writeln("---");
+          sbShort.writeln();
+          sbShort.writeln("## Part 1 · Academic Shorthand Notes (Pathways 3)");
+          sbShort.writeln();
+          sbShort.writeln(shorthandContentToUse);
+          sbShort.writeln();
+
+          final transcripts = _allNotes.where((n) => !n.isSummary).toList();
+          if (transcripts.isNotEmpty) {
+            sbShort.writeln("---");
+            sbShort.writeln();
+            sbShort.writeln("## Part 2 · Full Script");
+            sbShort.writeln();
+
+            final List<String> chineseSegments = [];
+            final List<String> englishSegments = [];
+
+            for (int i = 0; i < transcripts.length; i++) {
+              final note = transcripts[i];
+              final engText = note.transcript.trim();
+              if (engText.isEmpty || engText == '...' || engText.startsWith('[Silence') || engText.startsWith('[Error')) continue;
+              englishSegments.add(engText);
+              final zhText = note.translatedContent?.trim();
+              if (zhText != null && zhText.isNotEmpty && !zhText.startsWith('[')) {
+                chineseSegments.add(zhText);
+              }
+            }
+
+            sbShort.writeln("### 中文全文 (Chinese Transcript)");
+            sbShort.writeln();
+            sbShort.writeln(chineseSegments.join(" "));
+            sbShort.writeln();
+            sbShort.writeln();
+
+            sbShort.writeln("### 英文全文 (English Transcript)");
+            sbShort.writeln();
+            sbShort.writeln(_highlightText(_applyVocabularyHighlight(englishSegments.join(" "), _currentUnit)));
+            sbShort.writeln();
+          }
+
+          await shorthandFile.writeAsString(sbShort.toString());
+          debugPrint("\x1B[32m[Shorthand Export OK] ${shorthandFile.absolute.path}\x1B[0m");
+          await _uploadToSupabase(shorthandFile, 'notes');
+        } catch (shorthandError) {
+          debugPrint("[Shorthand Export Error] $shorthandError");
+        }
+      }
+
       // ── 缝合当次 session 所有的真实录音切片，导出为同名的 .wav 录音文件 ──
       if (_sessionAudioPaths.isNotEmpty) {
         final wavFilename = filename.replaceAll('.md', '.wav');
@@ -1092,7 +1222,7 @@ class RecordingProvider extends ChangeNotifier {
       }
 
       final module = isDiscussion ? 'discussion' : isExam ? 'exam' : 'listening';
-      _uploadToSupabase(file, module);
+      await _uploadToSupabase(file, module);
       _lastExportedPath = file.absolute.path;
       notifyListeners();
     } catch (e) {
@@ -1125,12 +1255,19 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> _uploadToSupabase(File file, String module) async {
     try {
-      var userId = '';
-      try { userId = SupabaseConfig.currentUserId; } catch (_) {}
       final bytes = await file.readAsBytes();
       final hash = md5.convert(bytes).toString();
       final title = file.path.split('/').last;
-      final map = {
+
+      var userId = '';
+      try {
+        userId = SupabaseConfig.currentUserId;
+      } catch (_) {
+        await SupabaseConfig.signInAnonymously();
+        try { userId = SupabaseConfig.currentUserId; } catch (_) {}
+      }
+
+      final map = <String, dynamic>{
         'file_hash': hash,
         'module': module,
         'title': title,
@@ -1141,6 +1278,7 @@ class RecordingProvider extends ChangeNotifier {
         map['user_id'] = userId;
       }
       await SupabaseConfig.client.from('archives').insert(map);
+      await UploadCache.mark(hash);
       debugPrint('[Supabase Upload OK] $title ($module)');
     } catch (e) {
       debugPrint('[Supabase Upload Error] $e');

@@ -53,14 +53,26 @@ class FileSyncAgent {
           final module = _inferModule(file.path);
           final title = file.path.split('/').last;
 
-          await SupabaseConfig.client.from('archives').insert({
+          String? userId;
+          try {
+            userId = SupabaseConfig.currentUserId;
+          } catch (_) {
+            await SupabaseConfig.signInAnonymously();
+            try { userId = SupabaseConfig.currentUserId; } catch (_) {}
+          }
+
+          final payload = <String, dynamic>{
             'file_hash': hash,
             'module': module,
             'title': title,
             'content_md': utf8.decode(bytes),
             'file_size': bytes.length,
-            'user_id': SupabaseConfig.currentUserId,
-          });
+          };
+          if (userId != null && userId.isNotEmpty) {
+            payload['user_id'] = userId;
+          }
+
+          await SupabaseConfig.client.from('archives').insert(payload);
 
           await UploadCache.mark(hash);
           // ignore: avoid_print
@@ -78,11 +90,15 @@ class FileSyncAgent {
 
   String _inferModule(String path) {
     final name = path.split('/').last.toLowerCase();
-    if (name.contains('essay')) return 'essay';
+    if (name.contains('essay'))      return 'essay';
     if (name.contains('discussion')) return 'discussion';
-    if (name.contains('freetalk')) return 'freetalk';
-    if (name.contains('reading')) return 'reading';
-    if (name.contains('exam')) return 'exam';
+    if (name.contains('freetalk'))   return 'freetalk';
+    if (name.contains('reading'))    return 'reading';
+    // [BUG-11 Fix] Jeff_速记_*.md 由 Exam 模式生成，应归为 'exam'，
+    // 之前因无此分支而回退到 'listening'，导致历史记录分类混乱。
+    if (name.contains('速记'))       return 'exam';
+    if (name.contains('exam'))       return 'exam';
+    if (name.contains('grammar'))    return 'grammar';
     return 'listening';
   }
 }

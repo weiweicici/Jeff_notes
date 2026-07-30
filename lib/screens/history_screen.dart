@@ -1,8 +1,11 @@
 import 'dart:io';
+import 'dart:convert';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'note_detail_screen.dart';
 import '../services/supabase_config.dart';
+import '../services/upload_cache.dart';
 
 class _HistoryEntry {
   final String? id;
@@ -11,12 +14,14 @@ class _HistoryEntry {
   final bool isLocal;
   final File? localFile;
   final String? cloudContent;
+  final String? module;
 
   _HistoryEntry.local({
     this.id,
     required this.title,
     required this.modified,
     required this.localFile,
+    this.module,
   })  : isLocal = true,
         cloudContent = null;
 
@@ -25,6 +30,7 @@ class _HistoryEntry {
     required this.title,
     required this.modified,
     required this.cloudContent,
+    this.module,
   })  : isLocal = false,
         localFile = null;
 }
@@ -50,14 +56,36 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   String _moduleOfEntry(_HistoryEntry entry) {
+    if (entry.module != null && entry.module!.isNotEmpty) {
+      final m = entry.module!.toLowerCase();
+      if (m == 'listening' || m == 'discussion' || m == 'notes') return 'notes';
+      if (m == 'reading') return 'reading';
+      if (m == 'essay') return 'essay';
+      if (m == 'freetalk') return 'freetalk';
+      if (m == 'grammar') return 'grammar';
+      if (m == 'exam') return 'exam';
+    }
+
     final t = entry.title.toLowerCase();
     if (t.contains('reading')) return 'reading';
     if (t.contains('essay')) return 'essay';
     if (t.contains('freetalk')) return 'freetalk';
     if (t.contains('grammar')) return 'grammar';
-    if (t.contains('exam')) return 'exam';
-    if (t.contains('discussion') || t.contains('note')) return 'notes';
+    if (t.contains('速记') || t.contains('exam')) return 'exam';
+    if (t.contains('discussion') || t.contains('note') || t.contains('lecture') || t.contains('listening')) return 'notes';
     return 'other';
+  }
+
+  static String _inferModuleFromFileName(String filename) {
+    final name = filename.toLowerCase();
+    if (name.contains('essay')) return 'essay';
+    if (name.contains('discussion')) return 'discussion';
+    if (name.contains('freetalk')) return 'freetalk';
+    if (name.contains('reading')) return 'reading';
+    if (name.contains('速记')) return 'exam';
+    if (name.contains('exam')) return 'exam';
+    if (name.contains('grammar')) return 'grammar';
+    return 'listening';
   }
 
   List<_HistoryEntry> get _filteredEntries {
@@ -84,6 +112,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
           title: f.path.split('/').last,
           modified: f.statSync().modified,
           localFile: f,
+          module: _inferModuleFromFileName(f.path.split('/').last),
         ),
       ).toList();
 
@@ -103,6 +132,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         for (final row in List<Map<String, dynamic>>.from(data as List)) {
           final id = row['id']?.toString();
           final title = row['title'] as String? ?? '';
+          final module = row['module'] as String?;
           if (localTitles.contains(title)) {
             final localIdx = merged.indexWhere((e) => e.title == title);
             if (localIdx != -1) {
@@ -111,6 +141,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 title: title,
                 modified: merged[localIdx].modified,
                 localFile: merged[localIdx].localFile,
+                module: module,
               );
             }
             continue;
@@ -125,6 +156,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
                   ? DateTime.parse(createdAt)
                   : DateTime.now(),
               cloudContent: row['content_md'] as String?,
+              module: module,
             ),
           );
         }
@@ -231,6 +263,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
       final dir = await getApplicationDocumentsDirectory();
       fileToOpen = File('${dir.path}/${entry.title}');
       await fileToOpen.writeAsString(entry.cloudContent!);
+      // [BUG-12 Fix] 标记云端下载的内容 Hash 为已上传，防止 FileSyncAgent 当作新文件重复 insert
+      final hash = md5.convert(utf8.encode(entry.cloudContent!)).toString();
+      await UploadCache.mark(hash);
     }
 
     if (fileToOpen != null && mounted) {
@@ -266,6 +301,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
     );
 
     if (confirmed == true) {
+      // [BUG-07 Fix] 本地删除先执行（不依赖认证），云端删除分离，用 currentUser?.id 替代
+      // 可能 throw StateError 的 currentUserId getter，防止本地已删但云端残留的不一致。
+      bool localDeleted = false;
       try {
         if (entry.isLocal && entry.localFile != null) {
           if (await entry.localFile!.exists()) {
@@ -277,13 +315,38 @@ class _HistoryScreenState extends State<HistoryScreen> {
             await wavFile.delete();
           }
         }
-        if (entry.id != null && entry.id!.isNotEmpty) {
-          await SupabaseConfig.client.from('archives').delete().eq('id', entry.id!).eq('user_id', SupabaseConfig.currentUserId);
-        }
-        await _loadEntries();
+        localDeleted = true;
       } catch (e) {
-        debugPrint("[HistoryScreen] Delete Error: $e");
+        debugPrint("[HistoryScreen] Local delete error: $e");
       }
+
+      if (entry.id != null && entry.id!.isNotEmpty) {
+        try {
+          // 安全取 userId，不再使用会 throw 的 currentUserId getter
+          final userId = SupabaseConfig.client.auth.currentUser?.id;
+          if (userId != null && userId.isNotEmpty) {
+            await SupabaseConfig.client
+                .from('archives')
+                .delete()
+                .eq('id', entry.id!)
+                .eq('user_id', userId);
+          } else {
+            debugPrint("[HistoryScreen] Skipping cloud delete — user not authenticated.");
+          }
+        } catch (e) {
+          debugPrint("[HistoryScreen] Cloud delete error: $e");
+          if (mounted && localDeleted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(
+                content: Text('⚠️ 本地文件已删除，但云端记录清除失败，请刷新后重试'),
+                backgroundColor: Colors.orange,
+              ),
+            );
+          }
+        }
+      }
+
+      await _loadEntries();
     }
   }
 

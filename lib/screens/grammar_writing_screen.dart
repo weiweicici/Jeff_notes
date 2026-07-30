@@ -12,6 +12,7 @@ import '../recording_provider.dart';
 import '../services/grammar_service.dart';
 import '../services/grammar_repository.dart';
 import '../services/supabase_config.dart';
+import '../services/upload_cache.dart';
 import '../services/tts_service.dart';
 import '../widgets/academic_markdown.dart';
 import 'history_screen.dart';
@@ -294,7 +295,9 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
       debugPrint('[Grammar Save] Saved to local file: ${file.path}');
 
       // 2. 同步到 Supabase
-      final hash = md5.convert(utf8.encode('${contentMd}_${DateTime.now().microsecondsSinceEpoch}')).toString();
+      // [BUG-06 Fix] 哈希值只基于内容，不加时间戳，相同内容产生相同 hash，
+      // 这样 UploadCache 去重才能生效，防止每次点击“保存”都无限重复插入。
+      final hash = md5.convert(utf8.encode(contentMd)).toString();
       final map = {
         'module': 'grammar',
         'title': filename,
@@ -307,7 +310,9 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
         map['user_id'] = userId;
       }
 
-      await SupabaseConfig.client.from('archives').insert(map);
+      await SupabaseConfig.client.from('archives').upsert(map, onConflict: 'file_hash');
+      // [BUG-14 Fix] 标记为已上传，防止 FileSyncAgent 下次扫描时再次 insert
+      await UploadCache.mark(hash);
 
       if (mounted && userId.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(

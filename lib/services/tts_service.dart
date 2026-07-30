@@ -223,19 +223,27 @@ class TtsService extends ChangeNotifier {
 
   StreamSubscription? _devicesSubscription;
   Timer? _headphoneMonitor;
+  bool _isCheckingHeadphones = false; // [BUG-03 Fix] 防止并发耳机检测堆积
   String lastRouteDebug = '';
 
   void _startHeadphoneMonitor() {
     _stopHeadphoneMonitor();
-    // 100ms 高频周期性安全轮询（devicesChangedEventStream 已在 init() 中全局注册）
+    // 100ms 周期安全轮询（devicesChangedEventStream 已在 init() 中全局注册）
     _headphoneMonitor = Timer.periodic(const Duration(milliseconds: 100), (_) async {
       if (!isPlaying) {
         _stopHeadphoneMonitor();
         return;
       }
-      if (!(await isHeadphonesConnected())) {
-        debugPrint('[TtsService] Headphone monitor — lost headphones/speaker selected during playback, stopping immediately.');
-        await stopAll();
+      // [BUG-03 Fix] 如果上一次检测还未完成，跳过本次，防止并发堆积
+      if (_isCheckingHeadphones) return;
+      _isCheckingHeadphones = true;
+      try {
+        if (!(await isHeadphonesConnected())) {
+          debugPrint('[TtsService] Headphone monitor — lost headphones/speaker selected during playback, stopping immediately.');
+          await stopAll();
+        }
+      } finally {
+        _isCheckingHeadphones = false;
       }
     });
   }
@@ -278,14 +286,9 @@ class TtsService extends ChangeNotifier {
   /// 严密检查系统硬件与输出路由（允许耳机/蓝牙/AirPlay输出，坚决禁止扬声器外放）
   Future<bool> _queryCurrentRoute() async {
     try {
-      // 每次查询前重新配置会话，确保不被录音残留的 defaultToSpeaker 干扰
-      final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
-        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-      ));
-      await session.setActive(true);
+      // [BUG-02 Fix] 过去此处会在每次轮询时重复 configure+setActive，
+      // 导致 iOS 音频路由频繁抗抖和运行抗否风险。
+      // configure+setActive 已在 ensurePlaybackSession() 中统一调用，此处仅查路由，不重复配置。
 
       // 1. 对 iOS/macOS，直接严密核查系统【当前激活生效的输出端口 currentRoute.outputs】
       if (Platform.isIOS || Platform.isMacOS) {
@@ -318,6 +321,7 @@ class TtsService extends ChangeNotifier {
 
         // B. 插件的 currentRoute 只显示扬声器，用 getDevices() 兜底查是否有耳机类设备可用
         try {
+          final session = await AudioSession.instance;
           final devices = await session.getDevices(includeInputs: false);
           final hasHeadphoneDevice = devices.any((d) =>
             d.type == AudioDeviceType.wiredHeadset ||
@@ -359,6 +363,7 @@ class TtsService extends ChangeNotifier {
       }
 
       // 2. Android 硬件检查（session 已在 iOS 路径前声明）
+      final session = await AudioSession.instance;
       final devices = await session.getDevices();
       for (final device in devices) {
         final type = device.type;
@@ -721,66 +726,71 @@ class TtsService extends ChangeNotifier {
       final client = HttpClient();
       client.userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0";
 
-      final random = Random();
-      final muid = List.generate(32, (_) => random.nextInt(16).toRadixString(16)).join().toUpperCase();
+      try {
+        final random = Random();
+        final muid = List.generate(32, (_) => random.nextInt(16).toRadixString(16)).join().toUpperCase();
 
-      final socket = await WebSocket.connect(
-        wsUrl,
-        headers: {
-          "Pragma": "no-cache",
-          "Cache-Control": "no-cache",
-          "Origin": "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold",
-          "Cookie": "muid=$muid;",
-          "Accept-Encoding": "gzip, deflate, br, zstd",
-          "Accept-Language": "en-US,en;q=0.9",
-        },
-        customClient: client,
-      ).timeout(const Duration(seconds: 15));
+        final socket = await WebSocket.connect(
+          wsUrl,
+          headers: {
+            "Pragma": "no-cache",
+            "Cache-Control": "no-cache",
+            "Origin": "chrome-extension://jdiccldimpdaibmpdkjnbmckianbfold",
+            "Cookie": "muid=$muid;",
+            "Accept-Encoding": "gzip, deflate, br, zstd",
+            "Accept-Language": "en-US,en;q=0.9",
+          },
+          customClient: client,
+        ).timeout(const Duration(seconds: 15));
 
-      final chunkBytes = <int>[];
-      final completer = Completer<void>();
+        final chunkBytes = <int>[];
+        final completer = Completer<void>();
 
-      socket.listen((data) {
-        if (data is List<int> && data.length > 2) {
-          final headerLength = (data[0] << 8) | data[1];
-          if (data.length >= 2 + headerLength) {
-            final headerStr = utf8.decode(data.sublist(2, 2 + headerLength), allowMalformed: true);
-            if (headerStr.contains("Path:audio")) {
-              chunkBytes.addAll(data.sublist(2 + headerLength));
+        socket.listen((data) {
+          if (data is List<int> && data.length > 2) {
+            final headerLength = (data[0] << 8) | data[1];
+            if (data.length >= 2 + headerLength) {
+              final headerStr = utf8.decode(data.sublist(2, 2 + headerLength), allowMalformed: true);
+              if (headerStr.contains("Path:audio")) {
+                chunkBytes.addAll(data.sublist(2 + headerLength));
+              }
+            }
+          } else if (data is String) {
+            if (data.contains("Path:turn.end")) {
+              if (!completer.isCompleted) completer.complete();
             }
           }
-        } else if (data is String) {
-          if (data.contains("Path:turn.end")) {
-            if (!completer.isCompleted) completer.complete();
-          }
+        }, onError: (err) {
+          if (!completer.isCompleted) completer.completeError(err);
+        }, onDone: () {
+          if (!completer.isCompleted) completer.complete();
+        });
+
+        final configFrame =
+            "Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n"
+            '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
+        socket.add(configFrame);
+
+        final ssmlFrame =
+            "X-RequestId:$requestId\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n"
+            "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='$lang'><voice name='$voiceName'><prosody pitch='+0Hz' rate='+0%'>$safeChunk</prosody></voice></speak>";
+        socket.add(ssmlFrame);
+
+        await completer.future.timeout(const Duration(seconds: 45), onTimeout: () {
+          socket.close();
+          throw TimeoutException('Edge WebSocket chunk timeout after 45s');
+        });
+
+        await socket.close();
+
+        if (chunkBytes.isNotEmpty) {
+          allAudioBytes.addAll(chunkBytes);
+        } else {
+          throw Exception("Edge WebSocket chunk returned empty audio");
         }
-      }, onError: (err) {
-        if (!completer.isCompleted) completer.completeError(err);
-      }, onDone: () {
-        if (!completer.isCompleted) completer.complete();
-      });
-
-      final configFrame =
-          "Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n"
-          '{"context":{"synthesis":{"audio":{"metadataoptions":{"sentenceBoundaryEnabled":"false","wordBoundaryEnabled":"false"},"outputFormat":"audio-24khz-48kbitrate-mono-mp3"}}}}';
-      socket.add(configFrame);
-
-      final ssmlFrame =
-          "X-RequestId:$requestId\r\nContent-Type:application/ssml+xml\r\nPath:ssml\r\n\r\n"
-          "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='$lang'><voice name='$voiceName'><prosody pitch='+0Hz' rate='+0%'>$safeChunk</prosody></voice></speak>";
-      socket.add(ssmlFrame);
-
-      await completer.future.timeout(const Duration(seconds: 45), onTimeout: () {
-        socket.close();
-        throw TimeoutException('Edge WebSocket chunk timeout after 45s');
-      });
-
-      await socket.close();
-
-      if (chunkBytes.isNotEmpty) {
-        allAudioBytes.addAll(chunkBytes);
-      } else {
-        throw Exception("Edge WebSocket chunk returned empty audio");
+      } finally {
+        // [BUG-15 Fix] 必须显式关闭 HttpClient，防止多 chunk 合成时 HTTP 连接池泄漏
+        client.close(force: true);
       }
     }
 
@@ -1506,8 +1516,11 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> pauseEnglish() async {
-    await _flutterTts.stop();
+    // [BUG-10 Fix] 之前调用 _flutterTts.stop() 会重置 TTS 状态，
+    // 恢复播放时从头开始。改为 pause() 与 pauseChinese() 行为一致，可从暂停位置续播。
+    await _flutterTts.pause();
     await _audioPlayer.pause();
+    _stopHeadphoneMonitor(); // 暂停时无需继续轮询耳机
     notifyListeners();
   }
 

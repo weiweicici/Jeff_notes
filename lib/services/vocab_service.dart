@@ -59,6 +59,8 @@ class VocabService extends ChangeNotifier {
     _cards.removeWhere((c) => c.id == id);
     await _persistLocal();
     notifyListeners();
+    // [BUG-04 Fix] 同步删除 Supabase 云端记录，防止词卡重启后复活
+    _deleteFromSupabase(id);
   }
 
   Future<void> toggleMastered(String id) async {
@@ -67,6 +69,8 @@ class VocabService extends ChangeNotifier {
       _cards[idx].isMastered = !_cards[idx].isMastered;
       await _persistLocal();
       notifyListeners();
+      // [BUG-05 Fix] 同步已掌握状态到云端，不能只写到本地
+      _uploadToSupabase(_cards[idx]);
     }
   }
 
@@ -82,17 +86,31 @@ class VocabService extends ChangeNotifier {
 
   Future<void> _uploadToSupabase(VocabCard card) async {
     try {
-      await SupabaseConfig.client.from('archives').insert({
+      // [BUG-05 Fix] 使用 upsert 而非 insert，防止重复行积累（on_conflict: file_hash）
+      await SupabaseConfig.client.from('archives').upsert({
         'file_hash': 'vocab_${card.id}',
         'module': 'vocab',
         'title': 'VocabCard: ${card.wordOrPhrase}',
         'content_md': jsonEncode(card.toJson()),
         'file_size': card.wordOrPhrase.length,
         'user_id': SupabaseConfig.currentUserId,
-      });
-      debugPrint('[Vocab Cloud Upload OK] ${card.wordOrPhrase}');
+      }, onConflict: 'file_hash');
+      debugPrint('[Vocab Cloud Upsert OK] ${card.wordOrPhrase}');
     } catch (e) {
       debugPrint('[Vocab Cloud Upload Error] $e');
+    }
+  }
+
+  /// [BUG-04 Fix] 删除 Supabase 中对应词卡记录
+  Future<void> _deleteFromSupabase(String id) async {
+    try {
+      await SupabaseConfig.client
+          .from('archives')
+          .delete()
+          .eq('file_hash', 'vocab_$id');
+      debugPrint('[Vocab Cloud Delete OK] vocab_$id');
+    } catch (e) {
+      debugPrint('[Vocab Cloud Delete Error] $e');
     }
   }
 

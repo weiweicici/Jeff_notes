@@ -159,9 +159,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
 
     if (capturedLines.isNotEmpty) return capturedLines.join('\n\n');
 
-    // 策略 2：FreeTalk 模式
-    final fileName = widget.file.path.split('/').last;
-    if (fileName.contains('FreeTalk')) {
+    // 策略 2：FreeTalk 模式（文件名区分大小写不敏感）
+    final fileName = widget.file.path.split('/').last.toLowerCase();
+    if (fileName.contains('freetalk')) {
       final firstBlank = fullText.indexOf('\n\n');
       if (firstBlank > 0) {
         return fullText.substring(0, firstBlank).trim();

@@ -277,9 +277,11 @@ class AIOrchestratorService {
     } catch (e) {
       debugPrint("[Translation Batch Error] $e");
       onStatus?.call("Translation failed");
-      // [Fix] 不再显示 [Translation Error]，而是把 batch 合并的英文原文作为降级显示
-      // 这样中文字幕区至少不会出现红字 Error
-      _addAccurateChinese(PipelineResult(ids.last, "[Translation unavailable]"));
+      // [BUG-08 Fix] 翻译批次全部失败时，必须通知 batch 内每一个 noteId，
+      // 而不是只通知 ids.last，否则其余 id 的中文字段永久为 null，导致 UI 永远空白。
+      for (final id in ids) {
+        _addAccurateChinese(PipelineResult(id, "[Translation unavailable]"));
+      }
     } finally {
       _isTranslating = false;
       

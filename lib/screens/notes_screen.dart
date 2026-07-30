@@ -195,12 +195,12 @@ class _NotesScreenState extends State<NotesScreen> {
     Timer? _playerAutoHideTimer;
 
     Timer _startScrollTimer(ScrollController controller, {required void Function(void Function()) setModalState}) {
-      final maxScroll = controller.position.maxScrollExtent;
-      if (maxScroll <= 0) return Timer(Duration.zero, () {});
-      const ticksPerScreen = 60 * 1000 ~/ 50; // 1200 ticks @ 50ms = 60s per viewport
-      final increment = controller.position.viewportDimension / ticksPerScreen;
       return Timer.periodic(const Duration(milliseconds: 50), (timer) {
         if (!controller.hasClients) { timer.cancel(); return; }
+        final maxScroll = controller.position.maxScrollExtent;
+        if (maxScroll <= 0) return;
+        const ticksPerScreen = 60 * 1000 ~/ 50; // 1200 ticks @ 50ms = 60s per viewport
+        final increment = controller.position.viewportDimension / ticksPerScreen;
         final currentScroll = controller.position.pixels;
         if (currentScroll >= maxScroll) {
           controller.jumpTo(0);
@@ -216,14 +216,19 @@ class _NotesScreenState extends State<NotesScreen> {
         isAutoScrolling = !isAutoScrolling;
         if (isAutoScrolling) {
           resumeTimer?.cancel();
+          resumeTimer = null;
+          scrollTimer?.cancel();
           scrollTimer = _startScrollTimer(ctrl, setModalState: sms);
         } else {
           scrollTimer?.cancel();
           scrollTimer = null;
+          resumeTimer?.cancel();
           resumeTimer = Timer(Duration(seconds: provider.autoScrollPauseDuration), () {
             sms(() {
-              isAutoScrolling = true;
-              scrollTimer = _startScrollTimer(ctrl, setModalState: sms);
+              if (!isAutoScrolling) {
+                isAutoScrolling = true;
+                scrollTimer = _startScrollTimer(ctrl, setModalState: sms);
+              }
             });
           });
         }
@@ -500,7 +505,7 @@ class _NotesScreenState extends State<NotesScreen> {
             ),
           ),
           IconButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen())),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen(initialModuleFilter: 'notes'))),
             icon: const Icon(Icons.history_edu),
           ),
           IconButton(
@@ -721,7 +726,7 @@ class _NotesScreenState extends State<NotesScreen> {
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (context) => const HistoryScreen()),
+                              MaterialPageRoute(builder: (context) => const HistoryScreen(initialModuleFilter: 'notes')),
                             );
                           },
                         ),

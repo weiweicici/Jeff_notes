@@ -56,7 +56,7 @@ class ApiScheduler {
       _sessionIdleCompleters.remove(sessionId);
     }
 
-    // 如果当前正在等待空闲，且这是新任务，则需要重置 idleCompleter
+    // 如果当前 idleCompleter 已经完成（上次 session 遗留），重置它以便本次任务能正确等待
     if (_idleCompleter != null && _idleCompleter!.isCompleted) {
       _idleCompleter = null;
     }
@@ -73,7 +73,9 @@ class ApiScheduler {
         final count = (_activeCountBySession[sessionId] ?? 1) - 1;
         if (count <= 0) {
           _activeCountBySession.remove(sessionId);
+          // complete() 后立即从 Map 中移除，防止 Map 无限增长（跨 session 积累）
           _sessionIdleCompleters[sessionId]?.complete();
+          _sessionIdleCompleters.remove(sessionId);
         } else {
           _activeCountBySession[sessionId] = count;
         }
@@ -100,6 +102,11 @@ class ApiScheduler {
   /// 等待所有任务完成（全局）
   Future<void> untilIdle() async {
     if (_activeRequests == 0 && _waitingQueue.isEmpty) return;
+    // [BUG-01 Fix] 如果上次 session 遗留了已完成的 Completer，必须先重置，
+    // 否则 ??= 会复用它，导致 await 立即返回而跳过真正的等待。
+    if (_idleCompleter != null && _idleCompleter!.isCompleted) {
+      _idleCompleter = null;
+    }
     _idleCompleter ??= Completer<void>();
     return _idleCompleter!.future.timeout(const Duration(seconds: 120), onTimeout: () {});
   }
