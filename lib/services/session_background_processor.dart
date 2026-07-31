@@ -11,6 +11,8 @@ import 'shadow_draft_service.dart';
 import 'cloud_sync_service.dart';
 import '../models/session_ready_event.dart';
 import 'diagnostic_log_service.dart';
+import 'transcript_assembler.dart';
+import 'wav_stitch_service.dart';
 
 class HandoverPayload {
   final RecordingSessionContext context;
@@ -121,6 +123,22 @@ class SessionBackgroundProcessor {
       final file = File(ctx.exportPath);
       await _writeMarkdownFile(ctx, file);
 
+      // Restore the real-classroom recording that the MD player expects.
+      // Audio failure must not destroy otherwise valid notes.
+      final wavPath = ctx.exportPath.replaceAll(RegExp(r'\.md$'), '.wav');
+      final audioSaved = await WavStitchService.stitch(
+        inputPaths: ctx.rawAudioPaths,
+        outputPath: wavPath,
+      );
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'background',
+          audioSaved ? 'audio_export_verified' : 'audio_export_unavailable',
+          sessionId: ctx.sessionId,
+          fields: {'sliceCount': ctx.rawAudioPaths.length},
+        ),
+      );
+
       // ─── 6. [Fix 6] Disk Write Verification ───────────────────
       if (await file.exists()) {
         final length = await file.length();
@@ -135,6 +153,10 @@ class SessionBackgroundProcessor {
             'background',
             'export_verified',
             sessionId: ctx.sessionId,
+            fields: {
+              'fileCount': ctx.mode == AppMode.exam ? 2 : 1,
+              'primaryFile': file.uri.pathSegments.last,
+            },
           ),
         );
         // ─── 7. Export verified OK ─────────────────────────────
@@ -187,13 +209,20 @@ class SessionBackgroundProcessor {
 
   /// [Fix 7] Generates final review / exam answer card / shorthand recap.
   Future<void> _generateFinalReview(RecordingSessionContext ctx) async {
-    final material = ctx.notes
-        .where((n) => !n.isSummary)
-        .map((n) => n.transcript.trim())
-        .where((t) => t.isNotEmpty && t != '...' && !t.startsWith('['))
-        .join(" ");
+    final transcript = TranscriptAssembler.english(ctx.notes);
+    final timestampedTranscript = TranscriptAssembler.timestampedEnglish(
+      ctx.notes,
+      sessionStart: ctx.createdAt,
+    );
+    final rollingDraft = ctx.segmentSummaries.isEmpty
+        ? '(No rolling draft was available.)'
+        : ctx.segmentSummaries.last;
+    final material =
+        '[ROLLING NOTE DRAFT]\n$rollingDraft\n\n'
+        '[FULL TRANSCRIPT — SOURCE OF TRUTH]\n$transcript\n\n'
+        '[TIMESTAMPED EVIDENCE]\n$timestampedTranscript';
 
-    if (material.isEmpty) {
+    if (transcript.isEmpty) {
       ctx.finalReviewContent = "Not enough material for final review.";
       return;
     }
@@ -292,47 +321,106 @@ class SessionBackgroundProcessor {
     }
 
     // Part 2: Full Script
-    final transcripts = ctx.notes.where((n) => !n.isSummary).toList();
+    final transcripts = TranscriptAssembler.validNotes(ctx.notes);
     if (transcripts.isNotEmpty) {
       sb.writeln('---');
       sb.writeln();
       sb.writeln('## Part 2 · Full Script');
       sb.writeln();
 
-      final chineseSegments = <String>[];
-      final englishSegments = <String>[];
-
-      for (final note in transcripts) {
-        final eng = note.transcript.trim();
-        if (eng.isEmpty ||
-            eng == '...' ||
-            eng.startsWith('[Silence') ||
-            eng.startsWith('[Error')) {
-          continue;
-        }
-        englishSegments.add(eng);
-        final zh = note.translatedContent?.trim();
-        if (zh != null && zh.isNotEmpty && !zh.startsWith('[')) {
-          chineseSegments.add(zh);
-        }
-      }
+      final chineseTranscript = TranscriptAssembler.chinese(transcripts);
+      final englishTranscript = TranscriptAssembler.english(transcripts);
 
       sb.writeln('### 中文全文 (Chinese Transcript)');
       sb.writeln();
-      sb.writeln(chineseSegments.join(' '));
+      sb.writeln(chineseTranscript);
       sb.writeln();
       sb.writeln();
       sb.writeln('### 英文全文 (English Transcript)');
       sb.writeln();
       sb.writeln(
-        _highlightText(
-          _applyVocabHighlight(englishSegments.join(' '), ctx.unit),
-        ),
+        _highlightText(_applyVocabHighlight(englishTranscript, ctx.unit)),
       );
       sb.writeln();
     }
 
     await _writeAtomically(file, sb.toString());
+
+    // Exam sessions historically produce two documents: the answer card/full
+    // transcript above and a separate shorthand document. Keep that public
+    // behavior when exporting through the background session architecture.
+    if (isExam) {
+      final shorthandFile = File(
+        '${file.parent.path}/Jeff_速记_${ctx.sessionId}.md',
+      );
+      await _writeAtomically(
+        shorthandFile,
+        _formatExamShorthand(ctx, now, transcripts),
+      );
+      if (!await shorthandFile.exists() || await shorthandFile.length() == 0) {
+        throw FileSystemException(
+          'Exam shorthand export verification failed',
+          shorthandFile.path,
+        );
+      }
+    }
+  }
+
+  String _formatExamShorthand(
+    RecordingSessionContext ctx,
+    DateTime now,
+    List<InsightNote> transcripts,
+  ) {
+    final shorthand = ctx.shorthandReviewContent?.trim();
+    final sb = StringBuffer()
+      ..writeln('# Academic Shorthand Notes (学术速记)')
+      ..writeln('**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}')
+      ..writeln(
+        '**Context:** ${ctx.identifiedLectureContext ?? 'Academic Lecture Shorthand'}',
+      )
+      ..writeln()
+      ..writeln('---')
+      ..writeln()
+      ..writeln('## Part 1 · Academic Shorthand Notes (Pathways 3)')
+      ..writeln();
+
+    if (shorthand != null && shorthand.isNotEmpty) {
+      sb.writeln(shorthand);
+    } else {
+      for (var i = 0; i < transcripts.length; i++) {
+        final english = transcripts[i].transcript.trim();
+        if (english.isEmpty || english == '...' || english.startsWith('[')) {
+          continue;
+        }
+        sb.writeln('- **Point ${i + 1}**: $english');
+        final chinese = transcripts[i].translatedContent?.trim();
+        if (chinese != null && chinese.isNotEmpty && !chinese.startsWith('[')) {
+          sb.writeln('  - *翻译*: $chinese');
+        }
+      }
+    }
+
+    sb
+      ..writeln()
+      ..writeln('---')
+      ..writeln()
+      ..writeln('## Part 2 · Full Script')
+      ..writeln();
+
+    final chineseTranscript = TranscriptAssembler.chinese(transcripts);
+    final englishTranscript = TranscriptAssembler.english(transcripts);
+
+    sb
+      ..writeln('### 中文全文 (Chinese Transcript)')
+      ..writeln()
+      ..writeln(chineseTranscript)
+      ..writeln()
+      ..writeln('### 英文全文 (English Transcript)')
+      ..writeln()
+      ..writeln(
+        _highlightText(_applyVocabHighlight(englishTranscript, ctx.unit)),
+      );
+    return sb.toString();
   }
 
   Future<void> _writeAtomically(File file, String content) async {

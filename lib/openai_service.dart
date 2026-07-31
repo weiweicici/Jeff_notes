@@ -231,8 +231,8 @@ class OpenAIService {
                 },
                 {'role': 'user', 'content': text},
               ],
-              'temperature': 0.5,
-              'max_tokens': 2048,
+              'temperature': strategy == PromptStrategy.recap ? 0.15 : 0.2,
+              'max_tokens': strategy == PromptStrategy.recap ? 4096 : 1600,
             }),
           )
           .timeout(

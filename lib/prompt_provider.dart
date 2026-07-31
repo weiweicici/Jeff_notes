@@ -1,20 +1,36 @@
 import 'models.dart';
 
 class PromptProvider {
-  static String getSystemPrompt(PromptStrategy strategy, AIProvider provider, {AppMode mode = AppMode.exam, PathwaysUnit unit = PathwaysUnit.none}) {
+  static String getSystemPrompt(
+    PromptStrategy strategy,
+    AIProvider provider, {
+    AppMode mode = AppMode.exam,
+    PathwaysUnit unit = PathwaysUnit.none,
+  }) {
     switch (strategy) {
       case PromptStrategy.discovery:
         return getDiscoveryPrompt();
       case PromptStrategy.recap:
+        if (mode == AppMode.exam) return getFinalExamFirstPassPrompt(unit);
+        if (mode == AppMode.lecture) return getLectureFirstPassPrompt(unit);
         return getFinalReviewPrompt(mode, unit);
+      case PromptStrategy.rollingNotes:
+        return getRollingNotesPrompt(mode: mode, unit: unit);
       case PromptStrategy.essay:
         return "You are a professional academic writing assistant. Follow the user's instructions and format constraints exactly. Generate the output exactly as requested, focusing on high-quality English templates and structured vocabulary notes.";
       default:
-        return mode == AppMode.discussion ? getDiscussionPrompt(unit: unit) : mode == AppMode.exam ? getLecturePrompt(unit: unit) : getLecturePrompt(unit: unit);
+        return mode == AppMode.discussion
+            ? getDiscussionPrompt(unit: unit)
+            : mode == AppMode.exam
+            ? getLecturePrompt(unit: unit)
+            : getLecturePrompt(unit: unit);
     }
   }
 
-  static String _getUnitInjection(PathwaysUnit unit, {required bool isLecture}) {
+  static String _getUnitInjection(
+    PathwaysUnit unit, {
+    required bool isLecture,
+  }) {
     late final String topicName;
     late final String focusInstruction;
     late final String signalWords;
@@ -26,53 +42,74 @@ class PromptProvider {
       case PathwaysUnit.unit1:
         topicName = 'Unit 1: Shopping Psychology';
         focusInstruction = '消费心理学、消费者决策过程及影响购买行为的因素';
-        signalWords = 'Motives/Influences 类信号词（如 motivated by, influenced by, due to, as a result of）引导的因果链条';
-        comparisonFrame = '消费者行为的"内因(Internal motives)"与"外因(External influences)"对比';
+        signalWords =
+            'Motives/Influences 类信号词（如 motivated by, influenced by, due to, as a result of）引导的因果链条';
+        comparisonFrame =
+            '消费者行为的"内因(Internal motives)"与"外因(External influences)"对比';
       case PathwaysUnit.unit2:
         topicName = "Unit 2: It's In My DNA";
         focusInstruction = '基因科学、DNA研究及其对个人身份与社会的影响';
-        signalWords = 'Definition/Discovery 类信号词（如 refers to, defined as, discovered that, revealed）引导的核心概念与研究发现';
-        comparisonFrame = '基因决定的"先天因素(Genetic determinism)"与"环境影响(Environmental factors)"对比';
+        signalWords =
+            'Definition/Discovery 类信号词（如 refers to, defined as, discovered that, revealed）引导的核心概念与研究发现';
+        comparisonFrame =
+            '基因决定的"先天因素(Genetic determinism)"与"环境影响(Environmental factors)"对比';
       case PathwaysUnit.unit3:
         topicName = 'Unit 3: On the Move';
         focusInstruction = '人口迁徙与人才外流（Human Migration & Brain Drain）';
-        signalWords = 'Cause and Effect 信号词（如 because of, resulting in, leads to, due to, consequently）引导的因果链条';
-        comparisonFrame = '迁徙行为的"积极后果(Positive consequences)"与"消极后果(Negative consequences)"对比';
+        signalWords =
+            'Cause and Effect 信号词（如 because of, resulting in, leads to, due to, consequently）引导的因果链条';
+        comparisonFrame =
+            '迁徙行为的"积极后果(Positive consequences)"与"消极后果(Negative consequences)"对比';
       case PathwaysUnit.unit4:
         topicName = 'Unit 4: Our Changing Planet';
         focusInstruction = '气候变化、环境保护及人类活动对地球生态系统的影响';
-        signalWords = 'Change/Impact 类信号词（如 leading to, contributing to, resulting in, according to）引导的变化趋势与影响';
-        comparisonFrame = '人类活动的"短期收益(Short-term gains)"与"长期环境代价(Long-term environmental costs)"对比';
+        signalWords =
+            'Change/Impact 类信号词（如 leading to, contributing to, resulting in, according to）引导的变化趋势与影响';
+        comparisonFrame =
+            '人类活动的"短期收益(Short-term gains)"与"长期环境代价(Long-term environmental costs)"对比';
       case PathwaysUnit.unit5:
         topicName = 'Unit 5: Rise to the Top';
         focusInstruction = '成功与领导力、创新与个人成长路径';
-        signalWords = 'Success/Strategy 类信号词（如 key to, essential for, critical factor, according to）引导的关键成功因素';
-        comparisonFrame = '成功的"个人特质(Personal traits)"与"外部机遇(External opportunities)"对比';
+        signalWords =
+            'Success/Strategy 类信号词（如 key to, essential for, critical factor, according to）引导的关键成功因素';
+        comparisonFrame =
+            '成功的"个人特质(Personal traits)"与"外部机遇(External opportunities)"对比';
       case PathwaysUnit.unit6:
         topicName = 'Unit 6: Design with Purpose';
-        focusInstruction = '仿生设计(Biomimicry)的定义、设计流程(Design Process Stages)及具体学术案例';
-        signalWords = 'Process/Stage 类信号词（如 first, after that, once, finally, typically）以及 Example 类信号词（如 for example, in other cases, let me give you）引导的步骤与案例';
-        comparisonFrame = '人类面临的问题(Human problems)与自然解决方案(Natural solutions)的对比，以及设计的效果与成本权衡（如 effective rate, expensive）';
+        focusInstruction =
+            '仿生设计(Biomimicry)的定义、设计流程(Design Process Stages)及具体学术案例';
+        signalWords =
+            'Process/Stage 类信号词（如 first, after that, once, finally, typically）以及 Example 类信号词（如 for example, in other cases, let me give you）引导的步骤与案例';
+        comparisonFrame =
+            '人类面临的问题(Human problems)与自然解决方案(Natural solutions)的对比，以及设计的效果与成本权衡（如 effective rate, expensive）';
       case PathwaysUnit.unit7:
         topicName = 'Unit 7: Inspired to Protect';
         focusInstruction = '环境保护、濒危物种保护及生态可持续发展';
-        signalWords = 'Threat/Action 类信号词（如 endangered by, threatened by, conservation efforts, protected by）引导的生态威胁与保护措施';
-        comparisonFrame = '经济发展的"需求(Human needs)"与生态保护的"必要性(Conservation necessity)"对比';
+        signalWords =
+            'Threat/Action 类信号词（如 endangered by, threatened by, conservation efforts, protected by）引导的生态威胁与保护措施';
+        comparisonFrame =
+            '经济发展的"需求(Human needs)"与生态保护的"必要性(Conservation necessity)"对比';
       case PathwaysUnit.unit8:
         topicName = 'Unit 8: Traditional and Modern Medicine';
         focusInstruction = '传统医学与现代医学的比较与融合';
-        signalWords = 'Comparison/Evidence 类信号词（如 in contrast to, compared with, studies show, evidence suggests）引导的疗效对比';
-        comparisonFrame = '传统医学的"历史经验(Traditional wisdom)"与现代医学的"科学证据(Scientific evidence)"对比';
+        signalWords =
+            'Comparison/Evidence 类信号词（如 in contrast to, compared with, studies show, evidence suggests）引导的疗效对比';
+        comparisonFrame =
+            '传统医学的"历史经验(Traditional wisdom)"与现代医学的"科学证据(Scientific evidence)"对比';
       case PathwaysUnit.unit9:
         topicName = 'Unit 9: Uncovering the Past';
         focusInstruction = '考古学、历史发现与人类文明起源';
-        signalWords = 'Discovery/Analysis 类信号词（如 discovered, unearthed, analysis reveals, suggests that）引导的考古发现与历史推论';
-        comparisonFrame = '考古证据的"直接证据(Direct evidence)"与"间接推论(Indirect inference)"对比';
+        signalWords =
+            'Discovery/Analysis 类信号词（如 discovered, unearthed, analysis reveals, suggests that）引导的考古发现与历史推论';
+        comparisonFrame =
+            '考古证据的"直接证据(Direct evidence)"与"间接推论(Indirect inference)"对比';
       case PathwaysUnit.unit10:
         topicName = 'Unit 10: Feelings & Emotions';
         focusInstruction = '情感心理学、情绪智力及其对人类行为的影响';
-        signalWords = 'Emotion/Behavior 类信号词（如 triggered by, leads to, associated with, linked to）引导的情感触发与行为关联';
-        comparisonFrame = '情绪的"积极影响(Positive effects)"与"消极影响(Negative effects)"对比';
+        signalWords =
+            'Emotion/Behavior 类信号词（如 triggered by, leads to, associated with, linked to）引导的情感触发与行为关联';
+        comparisonFrame =
+            '情绪的"积极影响(Positive effects)"与"消极影响(Negative effects)"对比';
     }
 
     if (isLecture) {
@@ -109,6 +146,226 @@ $injection
 🔢 [步骤] Step1 → Step2 → Step3（如无步骤，写 N/A）
 🔍 [案例] 案例名: 关键词/机制 | 数字结果 | 评价（如无案例，写 N/A）''';
   }
+
+  static const String _allLevel3ListeningSkills = '''
+Apply the complete Pathways 3, Third Edition, Level 3 listening toolkit only
+when the audio provides evidence: main ideas/details and outlines; facts vs.
+opinions and selective note-taking; signal phrases and contrasting ideas;
+supporting information and context clues; paraphrase and event sequence;
+process steps plus abbreviations/symbols; speaker purpose and divided notes;
+filler-word filtering and questions in notes; referents and question-answer
+structure; consequences and note review. Never force a category that is not
+present in the audio.''';
+
+  /// Updates one stable note draft from a new 60-90 second semantic window.
+  /// The caller supplies [CURRENT DRAFT] and [NEW TRANSCRIPT] blocks.
+  static String getRollingNotesPrompt({
+    required AppMode mode,
+    PathwaysUnit unit = PathwaysUnit.none,
+  }) {
+    final modeLabel = mode == AppMode.exam ? 'final-exam listening' : 'lecture';
+    return '''# Role
+You maintain ONE evolving set of industrial-quality notes for a $modeLabel.
+
+# Evidence Policy
+- Use only facts actually present in CURRENT DRAFT or NEW TRANSCRIPT.
+- Later explicit corrections supersede earlier claims.
+- Mark uncertain words or numbers as `[? ...]`; never guess from textbook knowledge.
+- Remove fillers and repetition, but retain definitions, main points, necessary
+  supporting details, examples, names, numbers, contrasts, causes, processes,
+  speaker purpose, attitude, and conclusions.
+
+# Pathways 3 Level 3 Skills
+$_allLevel3ListeningSkills
+
+# Task
+Rewrite the complete CURRENT DRAFT using the NEW TRANSCRIPT. Preserve correct
+earlier information, repair earlier mistakes when new evidence justifies it,
+and add only genuinely new information. This is a compact working draft, not a
+final exam report.
+
+# Exact Output
+## Current Understanding
+[80-140 Chinese characters explaining what the lecture means so far]
+
+## Working Notes
+- **Main Idea:** [compact English; short Chinese clarification only if needed]
+- **Structure:** [A → B → C]
+- **MP1:** [English note-taking style]
+  - [maximum 2 essential details]
+- **MP2:** [only if supported]
+  - [maximum 2 essential details]
+- **MP3:** [only if supported]
+  - [maximum 2 essential details]
+
+## Evidence Strip
+- **Numbers / Names / Terms:** [audio evidence only]
+- **Cause / Contrast / Process:** [only applicable relations]
+
+## Verify Later
+- [? item that remains genuinely uncertain]
+
+Keep the whole response under 320 English-equivalent words. Do not output a
+transcript, predicted questions, greetings, or explanations.''';
+  }
+
+  static String getLectureFirstPassPrompt(PathwaysUnit unit) =>
+      '''# Role
+You are producing a polished first-listening note sheet for a student using
+Pathways 3: Listening, Speaking, and Critical Thinking, Third Edition, Level 3.
+
+# Goal
+The student must understand the whole unseen lecture after one listening and
+read a clean, complete note sheet during an optional second listening. Treat
+this as a self-sufficient final result: a second recording may never happen.
+
+# Evidence Rules
+1. The FULL TRANSCRIPT is the source of truth. Use the rolling draft only as a
+   structural aid and correct it whenever the full transcript disagrees.
+2. Never invent facts, numbers, names, purposes, or textbook content.
+3. Mark uncertainty as `[? heard form / alternative]`; do not hide it behind
+   polished prose.
+4. Preserve every exam-relevant number, date, percentage, name, term,
+   definition, contrast, cause, process step, example, correction and conclusion.
+5. English is primary for notes. Add concise Chinese only for difficult terms
+   or complex logic. Do not translate every bullet.
+
+# Pathways 3 Level 3 Skills
+$_allLevel3ListeningSkills
+
+# Exact Markdown Output
+## 第一遍快速理解
+[150-250 Chinese characters: topic, progression, evidence and conclusion]
+
+## One-Screen Quick View
+- **Main Idea:** [one compact English line] —— [one short Chinese line]
+- **Structure:** [A → B → C → conclusion]
+- **Core 1:** [one line]
+- **Core 2:** [one line]
+- **Core 3:** [one line]
+- **Key Evidence:** [one or two decisive examples/numbers]
+- **Verify if Replayed:** [top three uncertainties, or `No critical gaps`]
+
+## Topic, Main Idea & Speaker Purpose
+- **Topic:** ...
+- **Main Idea:** ...
+- **Purpose / Attitude:** ...
+
+## Complete First-Pass Notes
+### MP1 · [descriptive title]
+- [essential claim]
+  - [supporting detail/evidence]
+### MP2 · [descriptive title]
+- ...
+### MP3 · [if supported]
+- ...
+[Use 3-5 main-point sections and 8-15 essential bullets total.]
+
+## Logic & Organization
+- **Cause → Effect:** ...
+- **Contrast:** ...
+- **Sequence / Process:** ...
+[Omit inapplicable lines.]
+
+## Numbers, Names & Key Terms
+- ...
+
+## Evidence & Examples
+- ...
+
+## Uncertain / Missing
+- [? ...]
+[Write `No critical gaps detected` if none.]
+
+Do not include the full Chinese or English transcript; the app appends fixed
+playback sections after this response.''';
+
+  static String getFinalExamFirstPassPrompt(PathwaysUnit unit) =>
+      '''# Role
+You create a comprehensive, evidence-first final-exam listening document for
+Pathways 3: Listening, Speaking, and Critical Thinking, Third Edition, Level 3.
+The lecture is unseen and may be recorded only once.
+
+# Goal
+Produce a polished document that is independently useful after the first
+listening. Cover all relevant skills from all ten units without forcing the
+lecture into a known textbook topic.
+
+# Evidence Rules
+1. FULL TRANSCRIPT is the only factual authority. Rolling notes are a draft.
+2. Textbook background may help recognize a term but may never supply an answer.
+3. Never fabricate likely blanks, numbers, questions, options or quotations.
+4. Clearly separate confirmed evidence from inference and uncertainty.
+5. Preserve audio order where it helps locate answers.
+
+# Pathways 3 Level 3 Skills
+$_allLevel3ListeningSkills
+
+# Exact Markdown Output
+## 第一遍快速理解
+[150-250 Chinese characters explaining the complete lecture]
+
+## One-Screen Exam View
+- **Main Idea:** [one line]
+- **Structure:** [A → B → C]
+- **Core 1:** [one line]
+- **Core 2:** [one line]
+- **Core 3:** [one line]
+- **Key Evidence:** [top names/numbers/examples]
+- **Verify if Replayed:** [top three gaps, or `No critical gaps`]
+
+## Complete Exam Overview
+- **Topic:** ...
+- **Speaker's Purpose / Attitude:** ...
+- **Organization:** ...
+- **Conclusion:** ...
+
+## Industrial Lecture Notes
+### MP1 · [title]
+- [claim]
+  - [necessary details/evidence]
+### MP2 · [title]
+- ...
+### MP3 · [if supported]
+- ...
+[Use 3-5 sections and 8-15 essential bullets total.]
+
+## Answer Candidate Bank
+| Audio Order | Candidate | Type | Exact Context | Confidence |
+|---|---|---|---|---|
+| 1 | ... | term/number/name/detail | ... | Confirmed/Probable/Uncertain |
+[Include only strong, actually heard candidates.]
+
+## Pathways Listening Evidence
+- **Main Ideas & Supporting Details:** ...
+- **Facts vs. Opinions:** ...
+- **Signal Phrases / Contrasts:** ...
+- **Paraphrase / Sequence / Process:** ...
+- **Speaker Purpose / Referents / Q&A:** ...
+- **Causes & Consequences:** ...
+[Omit categories unsupported by the lecture.]
+
+## Paraphrase Map
+| Heard Wording | Safe Equivalent Meaning |
+|---|---|
+| ... | ... |
+
+## Numbers, Names, Terms & Spellings
+- ...
+
+## Trap Ledger
+- [negation, correction, contrast, qualifier, similar numbers, example vs main idea]
+
+## Confidence Audit
+### Confirmed
+- ...
+### Probable
+- ...
+### Uncertain / Missing
+- [? ...]
+
+Do not invent concrete exam questions. Do not include full transcripts; the app
+appends fixed playback sections after this response.''';
 
   static String getDiscussionPrompt({PathwaysUnit unit = PathwaysUnit.none}) {
     final injection = _getUnitInjection(unit, isLecture: false);
@@ -342,33 +599,55 @@ $unitStrategyBlock
 
   static String _getUnitName(PathwaysUnit unit) {
     switch (unit) {
-      case PathwaysUnit.none: return '';
-      case PathwaysUnit.unit1: return 'Unit 1: Shopping Psychology';
-      case PathwaysUnit.unit2: return "Unit 2: It's In My DNA";
-      case PathwaysUnit.unit3: return 'Unit 3: On the Move';
-      case PathwaysUnit.unit4: return 'Unit 4: Our Changing Planet';
-      case PathwaysUnit.unit5: return 'Unit 5: Rise to the Top';
-      case PathwaysUnit.unit6: return 'Unit 6: Design with Purpose';
-      case PathwaysUnit.unit7: return 'Unit 7: Inspired to Protect';
-      case PathwaysUnit.unit8: return 'Unit 8: Traditional and Modern Medicine';
-      case PathwaysUnit.unit9: return 'Unit 9: Uncovering the Past';
-      case PathwaysUnit.unit10: return 'Unit 10: Feelings & Emotions';
+      case PathwaysUnit.none:
+        return '';
+      case PathwaysUnit.unit1:
+        return 'Unit 1: Shopping Psychology';
+      case PathwaysUnit.unit2:
+        return "Unit 2: It's In My DNA";
+      case PathwaysUnit.unit3:
+        return 'Unit 3: On the Move';
+      case PathwaysUnit.unit4:
+        return 'Unit 4: Our Changing Planet';
+      case PathwaysUnit.unit5:
+        return 'Unit 5: Rise to the Top';
+      case PathwaysUnit.unit6:
+        return 'Unit 6: Design with Purpose';
+      case PathwaysUnit.unit7:
+        return 'Unit 7: Inspired to Protect';
+      case PathwaysUnit.unit8:
+        return 'Unit 8: Traditional and Modern Medicine';
+      case PathwaysUnit.unit9:
+        return 'Unit 9: Uncovering the Past';
+      case PathwaysUnit.unit10:
+        return 'Unit 10: Feelings & Emotions';
     }
   }
 
   static String _getUnitTopic(PathwaysUnit unit) {
     switch (unit) {
-      case PathwaysUnit.none: return '';
-      case PathwaysUnit.unit1: return '（关于消费心理学）';
-      case PathwaysUnit.unit2: return '（关于基因科学）';
-      case PathwaysUnit.unit3: return '（关于人口迁徙与人才流失）';
-      case PathwaysUnit.unit4: return '（关于气候变化与环境保护）';
-      case PathwaysUnit.unit5: return '（关于成功与领导力）';
-      case PathwaysUnit.unit6: return '（关于设计思维与创新）';
-      case PathwaysUnit.unit7: return '（关于生态保护与濒危物种）';
-      case PathwaysUnit.unit8: return '（关于传统与现代医学）';
-      case PathwaysUnit.unit9: return '（关于考古与历史发现）';
-      case PathwaysUnit.unit10: return '（关于情感与情绪智力）';
+      case PathwaysUnit.none:
+        return '';
+      case PathwaysUnit.unit1:
+        return '（关于消费心理学）';
+      case PathwaysUnit.unit2:
+        return '（关于基因科学）';
+      case PathwaysUnit.unit3:
+        return '（关于人口迁徙与人才流失）';
+      case PathwaysUnit.unit4:
+        return '（关于气候变化与环境保护）';
+      case PathwaysUnit.unit5:
+        return '（关于成功与领导力）';
+      case PathwaysUnit.unit6:
+        return '（关于设计思维与创新）';
+      case PathwaysUnit.unit7:
+        return '（关于生态保护与濒危物种）';
+      case PathwaysUnit.unit8:
+        return '（关于传统与现代医学）';
+      case PathwaysUnit.unit9:
+        return '（关于考古与历史发现）';
+      case PathwaysUnit.unit10:
+        return '（关于情感与情绪智力）';
     }
   }
 
@@ -381,83 +660,247 @@ $unitStrategyBlock
       case PathwaysUnit.unit1:
         // Unit 1: Shopping Psychology
         return [
-          'affordable', 'allocate', 'analyze', 'appeal', 'brand', 'budget',
-          'consume', 'consumer', 'consumption', 'convince', 'impulse',
-          'luxury', 'motive', 'purchase', 'strategy', 'trend', 'influence',
-          'behavior', 'rational', 'emotional',
+          'affordable',
+          'allocate',
+          'analyze',
+          'appeal',
+          'brand',
+          'budget',
+          'consume',
+          'consumer',
+          'consumption',
+          'convince',
+          'impulse',
+          'luxury',
+          'motive',
+          'purchase',
+          'strategy',
+          'trend',
+          'influence',
+          'behavior',
+          'rational',
+          'emotional',
         ];
       case PathwaysUnit.unit2:
         // Unit 2: It's In My DNA
         return [
-          'characteristic', 'clone', 'determine', 'gene', 'genetic',
-          'heredity', 'inherit', 'inherited', 'mutation', 'sequence',
-          'species', 'trait', 'identical', 'reveal', 'discovered',
-          'DNA', 'biology', 'chromosome', 'environment', 'factor',
+          'characteristic',
+          'clone',
+          'determine',
+          'gene',
+          'genetic',
+          'heredity',
+          'inherit',
+          'inherited',
+          'mutation',
+          'sequence',
+          'species',
+          'trait',
+          'identical',
+          'reveal',
+          'discovered',
+          'DNA',
+          'biology',
+          'chromosome',
+          'environment',
+          'factor',
         ];
       case PathwaysUnit.unit3:
         // Unit 3: On the Move
         return [
-          'adapt', 'benefit', 'challenge', 'emigrate', 'immigrate',
-          'migrate', 'migration', 'opportunity', 'population', 'region',
-          'rural', 'urban', 'drain', 'remittance', 'workforce',
-          'destination', 'settlement', 'economy', 'poverty', 'diversity',
+          'adapt',
+          'benefit',
+          'challenge',
+          'emigrate',
+          'immigrate',
+          'migrate',
+          'migration',
+          'opportunity',
+          'population',
+          'region',
+          'rural',
+          'urban',
+          'drain',
+          'remittance',
+          'workforce',
+          'destination',
+          'settlement',
+          'economy',
+          'poverty',
+          'diversity',
         ];
       case PathwaysUnit.unit4:
         // Unit 4: Our Changing Planet
         return [
-          'atmosphere', 'chemical', 'climate', 'conservation', 'ecosystem',
-          'emission', 'fossil', 'habitat', 'renewable', 'pollution',
-          'sustainable', 'temperature', 'biodiversity', 'deforestation',
-          'extinction', 'glacier', 'carbon', 'impact', 'resource', 'threat',
+          'atmosphere',
+          'chemical',
+          'climate',
+          'conservation',
+          'ecosystem',
+          'emission',
+          'fossil',
+          'habitat',
+          'renewable',
+          'pollution',
+          'sustainable',
+          'temperature',
+          'biodiversity',
+          'deforestation',
+          'extinction',
+          'glacier',
+          'carbon',
+          'impact',
+          'resource',
+          'threat',
         ];
       case PathwaysUnit.unit5:
         // Unit 5: Rise to the Top
         return [
-          'achievement', 'ambitious', 'competitive', 'confident', 'creative',
-          'dedicated', 'determination', 'goal', 'innovative', 'inspire',
-          'leadership', 'motivate', 'persist', 'potential', 'productive',
-          'resilient', 'skill', 'strategy', 'succeed', 'talent',
+          'achievement',
+          'ambitious',
+          'competitive',
+          'confident',
+          'creative',
+          'dedicated',
+          'determination',
+          'goal',
+          'innovative',
+          'inspire',
+          'leadership',
+          'motivate',
+          'persist',
+          'potential',
+          'productive',
+          'resilient',
+          'skill',
+          'strategy',
+          'succeed',
+          'talent',
         ];
       case PathwaysUnit.unit6:
         // Unit 6: Design with Purpose
         return [
-          'adjust', 'approach', 'architect', 'biomimicry', 'design',
-          'designer', 'engineer', 'function', 'form', 'inspire',
-          'material', 'objective', 'process', 'prototype', 'reflect',
-          'solve', 'solution', 'stage', 'test', 'ultraviolet', 'UV',
-          'efficient', 'effective', 'nature', 'natural',
+          'adjust',
+          'approach',
+          'architect',
+          'biomimicry',
+          'design',
+          'designer',
+          'engineer',
+          'function',
+          'form',
+          'inspire',
+          'material',
+          'objective',
+          'process',
+          'prototype',
+          'reflect',
+          'solve',
+          'solution',
+          'stage',
+          'test',
+          'ultraviolet',
+          'UV',
+          'efficient',
+          'effective',
+          'nature',
+          'natural',
         ];
       case PathwaysUnit.unit7:
         // Unit 7: Inspired to Protect
         return [
-          'barrier', 'conservation', 'creature', 'decline', 'ecosystem',
-          'endangered', 'extinct', 'fund', 'habitat', 'illegal',
-          'permit', 'poaching', 'preserve', 'protect', 'restore',
-          'sanctuary', 'species', 'sustainable', 'threaten', 'wildlife',
+          'barrier',
+          'conservation',
+          'creature',
+          'decline',
+          'ecosystem',
+          'endangered',
+          'extinct',
+          'fund',
+          'habitat',
+          'illegal',
+          'permit',
+          'poaching',
+          'preserve',
+          'protect',
+          'restore',
+          'sanctuary',
+          'species',
+          'sustainable',
+          'threaten',
+          'wildlife',
         ];
       case PathwaysUnit.unit8:
         // Unit 8: Traditional and Modern Medicine
         return [
-          'alternative', 'ancient', 'cure', 'diagnose', 'evidence',
-          'herbal', 'holistic', 'medication', 'prescribe', 'remedy',
-          'research', 'symptom', 'therapy', 'traditional', 'treatment',
-          'clinical', 'effective', 'patient', 'practice', 'scientific',
+          'alternative',
+          'ancient',
+          'cure',
+          'diagnose',
+          'evidence',
+          'herbal',
+          'holistic',
+          'medication',
+          'prescribe',
+          'remedy',
+          'research',
+          'symptom',
+          'therapy',
+          'traditional',
+          'treatment',
+          'clinical',
+          'effective',
+          'patient',
+          'practice',
+          'scientific',
         ];
       case PathwaysUnit.unit9:
         // Unit 9: Uncovering the Past
         return [
-          'ancestor', 'ancient', 'archaeological', 'artifact', 'century',
-          'civilization', 'culture', 'discover', 'excavate', 'evidence',
-          'fossil', 'historian', 'interpretation', 'preserve', 'relic',
-          'remains', 'ruins', 'significant', 'site', 'unearth',
+          'ancestor',
+          'ancient',
+          'archaeological',
+          'artifact',
+          'century',
+          'civilization',
+          'culture',
+          'discover',
+          'excavate',
+          'evidence',
+          'fossil',
+          'historian',
+          'interpretation',
+          'preserve',
+          'relic',
+          'remains',
+          'ruins',
+          'significant',
+          'site',
+          'unearth',
         ];
       case PathwaysUnit.unit10:
         // Unit 10: Feelings & Emotions
         return [
-          'anxiety', 'behavior', 'complex', 'cope', 'emotion',
-          'emotional', 'empathy', 'expression', 'fear', 'frustration',
-          'happiness', 'influence', 'mood', 'negative', 'positive',
-          'psychology', 'reaction', 'recognize', 'stress', 'trigger',
+          'anxiety',
+          'behavior',
+          'complex',
+          'cope',
+          'emotion',
+          'emotional',
+          'empathy',
+          'expression',
+          'fear',
+          'frustration',
+          'happiness',
+          'influence',
+          'mood',
+          'negative',
+          'positive',
+          'psychology',
+          'reaction',
+          'recognize',
+          'stress',
+          'trigger',
         ];
     }
   }
@@ -692,7 +1135,11 @@ D. ...
 
   /// Grammar Module Prompts
 
-  static String getGrammarExercisePrompt(String unitTitle, String chart, String keyRules) {
+  static String getGrammarExercisePrompt(
+    String unitTitle,
+    String chart,
+    String keyRules,
+  ) {
     return '''# Role: 英语语法出题专家
 # Task: 根据以下语法内容，生成 5 道练习题。
 
@@ -731,7 +1178,11 @@ D. [选项]
 - 对的和错的都要解释原因''';
   }
 
-  static String getGrammarQuestionPrompt(String unitTitle, String chart, String keyRules) {
+  static String getGrammarQuestionPrompt(
+    String unitTitle,
+    String chart,
+    String keyRules,
+  ) {
     return '''# Role: 英语语法导师
 # Context: 学生在学习 "$unitTitle"
 # Task: 回答学生的语法问题。
@@ -776,7 +1227,8 @@ $keyRules
 - 用中文解释，附英文例子对比''';
   }
 
-  static String getWritingRequirement(String partId) => _writingRequirement(partId);
+  static String getWritingRequirement(String partId) =>
+      _writingRequirement(partId);
 
   static String _writingRequirement(String partId) {
     switch (partId) {
@@ -841,7 +1293,12 @@ $keyRules
     }
   }
 
-  static String getGrammarWritingPrompt(String unitTitle, String chart, String keyRules, {String partId = ''}) {
+  static String getGrammarWritingPrompt(
+    String unitTitle,
+    String chart,
+    String keyRules, {
+    String partId = '',
+  }) {
     final requirement = _writingRequirement(partId);
     final annotation = _annotationFormat(partId);
     return '''# Role: 英语写作示范教师
@@ -876,14 +1333,20 @@ $requirement
 $annotation''';
   }
 
-   static String getCombinedWritingPrompt(List<String> partIds, List<String> partTitles, List<String> partRequirements) {
-     final combinedReqs = partRequirements.map((r) => r.trim()).join('\n');
-     final partsList = partIds.map((id) {
-       final idx = partIds.indexOf(id);
-       return '${partTitles[idx]} — ${_writingAnnotationHint(id)}';
-     }).join('\n');
+  static String getCombinedWritingPrompt(
+    List<String> partIds,
+    List<String> partTitles,
+    List<String> partRequirements,
+  ) {
+    final combinedReqs = partRequirements.map((r) => r.trim()).join('\n');
+    final partsList = partIds
+        .map((id) {
+          final idx = partIds.indexOf(id);
+          return '${partTitles[idx]} — ${_writingAnnotationHint(id)}';
+        })
+        .join('\n');
 
-     return '''# Role: 英语写作示范教师
+    return '''# Role: 英语写作示范教师
 # Task: 根据指定的多个语法章节和主题，写一篇有逻辑、自然流畅的短篇范文。
 # 要求：必须同时使用以下 ${partIds.length} 个语法章节的核心语法结构。
 
@@ -911,20 +1374,30 @@ $partsList
 ## 语法标注
 - 分别标注每个语法章节对应的句子和说明
 - 格式：[句子片段] — [章节名]: [语法结构说明]''';
-   }
+  }
 
   static String _writingAnnotationHint(String partId) {
     switch (partId) {
-      case 'part_1': return '时态（一般现在/现在进行/一般过去/现在完成/过去完成等）';
-      case 'part_2': return '将来时态（will/be going to/将来进行/将来完成等）';
-      case 'part_3': return '否定疑问句/反义疑问句/So/Too/Neither/But 补充';
-      case 'part_4': return '动名词/不定式/使役动词/短语动词';
-      case 'part_5': return '形容词从句（who/which/that/whose/where/when）';
-      case 'part_6': return '情态动词/过去建议/过去推测';
-      case 'part_7': return '被动语态/情态动词被动/被动使役';
-      case 'part_8': return '条件句（First/Second/Third/I Wish）';
-      case 'part_9': return '间接引语/嵌入问句/时态回退';
-      default: return '目标语法结构';
+      case 'part_1':
+        return '时态（一般现在/现在进行/一般过去/现在完成/过去完成等）';
+      case 'part_2':
+        return '将来时态（will/be going to/将来进行/将来完成等）';
+      case 'part_3':
+        return '否定疑问句/反义疑问句/So/Too/Neither/But 补充';
+      case 'part_4':
+        return '动名词/不定式/使役动词/短语动词';
+      case 'part_5':
+        return '形容词从句（who/which/that/whose/where/when）';
+      case 'part_6':
+        return '情态动词/过去建议/过去推测';
+      case 'part_7':
+        return '被动语态/情态动词被动/被动使役';
+      case 'part_8':
+        return '条件句（First/Second/Third/I Wish）';
+      case 'part_9':
+        return '间接引语/嵌入问句/时态回退';
+      default:
+        return '目标语法结构';
     }
   }
 }

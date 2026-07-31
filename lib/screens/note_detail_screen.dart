@@ -44,6 +44,32 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   Timer? _playerAutoHideTimer;
   Offset? _tapDownPos;
 
+  File _recordedAudioFile() {
+    final direct = File(widget.file.path.replaceAll('.md', '.wav'));
+    if (direct.existsSync()) return direct;
+
+    final name = widget.file.uri.pathSegments.last;
+    if (name.startsWith('Jeff_速记_')) {
+      final suffix = name.substring('Jeff_速记_'.length);
+      return File(
+        '${widget.file.parent.path}/Jeff_Exam_${suffix.replaceAll(RegExp(r'\.md$'), '.wav')}',
+      );
+    }
+    return direct;
+  }
+
+  File? _companionMarkdownFile() {
+    final name = widget.file.uri.pathSegments.last;
+    if (name.startsWith('Jeff_速记_')) {
+      final suffix = name.substring('Jeff_速记_'.length);
+      return File('${widget.file.parent.path}/Jeff_Exam_$suffix');
+    }
+    if (name.startsWith('Jeff_Exam_')) {
+      final suffix = name.substring('Jeff_Exam_'.length);
+      return File('${widget.file.parent.path}/Jeff_速记_$suffix');
+    }
+    return null;
+  }
 
   void _stopAutoScrollTimer() {
     _autoScrollTimer?.cancel();
@@ -51,7 +77,11 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   }
 
   int get _autoScrollPauseSeconds {
-    try { return context.read<RecordingProvider>().autoScrollPauseDuration; } catch (_) { return 60; }
+    try {
+      return context.read<RecordingProvider>().autoScrollPauseDuration;
+    } catch (_) {
+      return 60;
+    }
   }
 
   void _toggleAutoScroll() {
@@ -65,7 +95,11 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
         _stopAutoScrollTimer();
         _autoScrollPauseResumeTimer?.cancel();
         _autoScrollPauseResumeTimer = Timer(Duration(seconds: pause), () {
-          if (mounted) setState(() { _isAutoScrolling = true; _startAutoScrollTimer(); });
+          if (mounted)
+            setState(() {
+              _isAutoScrolling = true;
+              _startAutoScrollTimer();
+            });
         });
       }
     });
@@ -88,16 +122,24 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     final maxScroll = _scrollController.position.maxScrollExtent;
     if (maxScroll <= 0) return;
     const ticksPerScreen = 60 * 1000 ~/ 50;
-    final increment = _scrollController.position.viewportDimension / ticksPerScreen;
+    final increment =
+        _scrollController.position.viewportDimension / ticksPerScreen;
     _stopAutoScrollTimer();
-    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 50), (timer) {
-      if (!_scrollController.hasClients) { timer.cancel(); return; }
+    _autoScrollTimer = Timer.periodic(const Duration(milliseconds: 50), (
+      timer,
+    ) {
+      if (!_scrollController.hasClients) {
+        timer.cancel();
+        return;
+      }
       final currentScroll = _scrollController.position.pixels;
       if (currentScroll >= maxScroll) {
         _scrollController.jumpTo(0);
         return;
       }
-      _scrollController.jumpTo((currentScroll + increment).clamp(0.0, maxScroll));
+      _scrollController.jumpTo(
+        (currentScroll + increment).clamp(0.0, maxScroll),
+      );
     });
   }
 
@@ -136,8 +178,8 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       // 2. 遇到无关下一个主标题 → 停止收集
       if (inChineseSection &&
           (trimmed.startsWith('### ') ||
-           trimmed.startsWith('## ') ||
-           trimmed.startsWith('# '))) {
+              trimmed.startsWith('## ') ||
+              trimmed.startsWith('# '))) {
         final isContinuationHeader =
             trimmed.contains('中文全文') ||
             trimmed.contains('中文翻译') ||
@@ -174,9 +216,11 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       if (trimmed.isEmpty ||
           trimmed.startsWith('#') ||
           trimmed.startsWith('**') ||
-          trimmed.startsWith('---')) return false;
-      final cjkCount =
-          RegExp(r'[\u4e00-\u9fff\u3400-\u4dbf]').allMatches(trimmed).length;
+          trimmed.startsWith('---'))
+        return false;
+      final cjkCount = RegExp(
+        r'[\u4e00-\u9fff\u3400-\u4dbf]',
+      ).allMatches(trimmed).length;
       return cjkCount >= 3;
     }).toList();
 
@@ -202,8 +246,8 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
 
       if (inEnglishSection &&
           (trimmed.startsWith('### ') ||
-           trimmed.startsWith('## ') ||
-           trimmed.startsWith('# '))) {
+              trimmed.startsWith('## ') ||
+              trimmed.startsWith('# '))) {
         final isContinuationHeader =
             trimmed.contains('英文全文') ||
             trimmed.contains('English Transcript') ||
@@ -238,16 +282,16 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       final trimmed = line.trim();
       if (trimmed.isEmpty ||
           trimmed.startsWith('#') ||
-          trimmed.startsWith('---')) return false;
-      final cjkCount =
-          RegExp(r'[\u4e00-\u9fff\u3400-\u4dbf]').allMatches(trimmed).length;
+          trimmed.startsWith('---'))
+        return false;
+      final cjkCount = RegExp(
+        r'[\u4e00-\u9fff\u3400-\u4dbf]',
+      ).allMatches(trimmed).length;
       return cjkCount == 0 && trimmed.contains(RegExp(r'[a-zA-Z]'));
     }).toList();
 
     return purelyEnglishLines.join('\n\n');
   }
-
-
 
   Future<void> _exportPdf() async {
     if (_isExporting) return;
@@ -389,7 +433,10 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
             CircularProgressIndicator(),
             SizedBox(width: 16),
             Expanded(
-              child: Text('正在使用 AI 提炼文本中的高频学术词汇与长难句剖析...', style: TextStyle(fontSize: 13)),
+              child: Text(
+                '正在使用 AI 提炼文本中的高频学术词汇与长难句剖析...',
+                style: TextStyle(fontSize: 13),
+              ),
             ),
           ],
         ),
@@ -405,9 +452,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       if (context.mounted) {
         Navigator.pop(context); // 关闭加载框
         if (cards.isEmpty) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('⚠️ 未能提取到有效的生词卡片，请重试')),
-          );
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(const SnackBar(content: Text('⚠️ 未能提取到有效的生词卡片，请重试')));
           return;
         }
 
@@ -420,10 +467,8 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
         Navigator.push(
           context,
           MaterialPageRoute(
-            builder: (_) => SmartVocabScreen(
-              initialCards: cards,
-              sourceTitle: title,
-            ),
+            builder: (_) =>
+                SmartVocabScreen(initialCards: cards, sourceTitle: title),
           ),
         );
       }
@@ -431,7 +476,10 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       if (context.mounted) {
         Navigator.pop(context);
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ 提炼失败: $e'), backgroundColor: Colors.redAccent),
+          SnackBar(
+            content: Text('❌ 提炼失败: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
         );
       }
     }
@@ -462,7 +510,13 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
           _isExporting
               ? const Padding(
                   padding: EdgeInsets.symmetric(horizontal: 16),
-                  child: Center(child: SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2))),
+                  child: Center(
+                    child: SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  ),
                 )
               : IconButton(
                   key: _pdfButtonKey,
@@ -478,9 +532,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                 final content = await widget.file.readAsString();
                 Clipboard.setData(ClipboardData(text: content));
                 if (context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('✅ 已复制到剪贴板')),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(const SnackBar(content: Text('✅ 已复制到剪贴板')));
                 }
               } catch (e) {
                 debugPrint("Copy Error: $e");
@@ -495,7 +549,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                 context: context,
                 builder: (context) => AlertDialog(
                   title: const Text('删除笔记'),
-                  content: const Text('确定要删除这篇笔记吗？将同时清除本地文件与 Supabase 云端数据库记录。'),
+                  content: const Text(
+                    '确定要删除这篇笔记吗？将同时清除本地文件与 Supabase 云端数据库记录。',
+                  ),
                   actions: [
                     TextButton(
                       onPressed: () => Navigator.pop(context, false),
@@ -503,7 +559,13 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                     ),
                     TextButton(
                       onPressed: () => Navigator.pop(context, true),
-                      child: const Text('删除', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+                      child: const Text(
+                        '删除',
+                        style: TextStyle(
+                          color: Colors.redAccent,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
                     ),
                   ],
                 ),
@@ -512,18 +574,24 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
               if (confirmed == true) {
                 try {
                   final title = widget.file.path.split('/').last;
+                  final sharedWav = _recordedAudioFile();
+                  final companion = _companionMarkdownFile();
                   if (await widget.file.exists()) {
                     await widget.file.delete();
                   }
-                  final wavFile = File(widget.file.path.replaceAll('.md', '.wav'));
-                  if (await wavFile.exists()) {
-                    await wavFile.delete();
+                  if ((companion == null || !await companion.exists()) &&
+                      await sharedWav.exists()) {
+                    await sharedWav.delete();
                   }
-                  await SupabaseConfig.client.from('archives').delete().eq('title', title).eq('user_id', SupabaseConfig.currentUserId);
+                  await SupabaseConfig.client
+                      .from('archives')
+                      .delete()
+                      .eq('title', title)
+                      .eq('user_id', SupabaseConfig.currentUserId);
                   if (context.mounted) {
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('✅ 笔记已完全删除')),
-                    );
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(const SnackBar(content: Text('✅ 笔记已完全删除')));
                     Navigator.pop(context, true);
                   }
                 } catch (e) {
@@ -537,8 +605,10 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       body: FutureBuilder<String>(
         future: widget.file.readAsString(),
         builder: (context, snapshot) {
-          if (snapshot.hasError) return Center(child: Text("Error loading file: ${snapshot.error}"));
-          if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+          if (snapshot.hasError)
+            return Center(child: Text("Error loading file: ${snapshot.error}"));
+          if (!snapshot.hasData)
+            return const Center(child: CircularProgressIndicator());
 
           final currentContent = snapshot.data!;
           if (_lastLoadedContent != currentContent) {
@@ -556,11 +626,12 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
           if (!_autoScrollTimerStarted) {
             _autoScrollTimerStarted = true;
             WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted && _scrollController.hasClients) _startAutoScrollTimer();
+              if (mounted && _scrollController.hasClients)
+                _startAutoScrollTimer();
             });
           }
 
-          final wavFile = File(widget.file.path.replaceAll('.md', '.wav'));
+          final wavFile = _recordedAudioFile();
           final hasWav = wavFile.existsSync();
 
           return Column(
@@ -571,16 +642,22 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                     _playerExpanded = !_playerExpanded;
                     if (_playerExpanded) {
                       _playerAutoHideTimer?.cancel();
-                      _playerAutoHideTimer = Timer(const Duration(seconds: 10), () {
-                        if (mounted) setState(() => _playerExpanded = false);
-                      });
+                      _playerAutoHideTimer = Timer(
+                        const Duration(seconds: 10),
+                        () {
+                          if (mounted) setState(() => _playerExpanded = false);
+                        },
+                      );
                     } else {
                       _playerAutoHideTimer?.cancel();
                     }
                   });
                 },
                 child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 8,
+                  ),
                   decoration: BoxDecoration(
                     color: Colors.grey.withOpacity(0.06),
                     borderRadius: BorderRadius.circular(8),
@@ -593,11 +670,19 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                         color: Colors.grey[600],
                       ),
                       const SizedBox(width: 6),
-                      const Icon(Icons.headphones, size: 14, color: Colors.blueAccent),
+                      const Icon(
+                        Icons.headphones,
+                        size: 14,
+                        color: Colors.blueAccent,
+                      ),
                       const SizedBox(width: 6),
                       Text(
                         _playerExpanded ? '点击收起播放器' : '🎧 TTS 播放器',
-                        style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500),
+                        style: TextStyle(
+                          fontSize: 12,
+                          color: Colors.grey[600],
+                          fontWeight: FontWeight.w500,
+                        ),
                       ),
                     ],
                   ),
@@ -609,7 +694,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                   chineseText: _chineseOnlyText ?? '',
                   englishText: _englishOnlyText ?? '',
                   recordedAudioPath: hasWav ? wavFile.path : null,
-                  siliconFlowKey: context.read<RecordingProvider>().siliconFlowKey,
+                  siliconFlowKey: context
+                      .read<RecordingProvider>()
+                      .siliconFlowKey,
                 ),
               ],
               GestureDetector(
@@ -624,15 +711,25 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                     } else {
                       _stopAutoScrollTimer();
                       _autoScrollPauseResumeTimer?.cancel();
-                      _autoScrollPauseResumeTimer = Timer(Duration(seconds: pause), () {
-                        if (mounted) setState(() { _isAutoScrolling = true; _startAutoScrollTimer(); });
-                      });
+                      _autoScrollPauseResumeTimer = Timer(
+                        Duration(seconds: pause),
+                        () {
+                          if (mounted)
+                            setState(() {
+                              _isAutoScrolling = true;
+                              _startAutoScrollTimer();
+                            });
+                        },
+                      );
                     }
                   });
                 },
                 child: Container(
                   width: double.infinity,
-                  padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 6,
+                  ),
                   color: _isAutoScrolling
                       ? Colors.blue.withOpacity(0.08)
                       : Colors.orange.withOpacity(0.08),
@@ -640,16 +737,24 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
                       Icon(
-                        _isAutoScrolling ? Icons.keyboard_double_arrow_down : Icons.pause_circle_outline,
+                        _isAutoScrolling
+                            ? Icons.keyboard_double_arrow_down
+                            : Icons.pause_circle_outline,
                         size: 14,
-                        color: _isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],
+                        color: _isAutoScrolling
+                            ? Colors.blueAccent[200]
+                            : Colors.orange[300],
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        _isAutoScrolling ? '⏬ 自动滚屏中 · 点击暂停' : '⏸ 已暂停 · $_autoScrollPauseSeconds秒后自动恢复',
+                        _isAutoScrolling
+                            ? '⏬ 自动滚屏中 · 点击暂停'
+                            : '⏸ 已暂停 · $_autoScrollPauseSeconds秒后自动恢复',
                         style: TextStyle(
                           fontSize: 11,
-                          color: _isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],
+                          color: _isAutoScrolling
+                              ? Colors.blueAccent[200]
+                              : Colors.orange[300],
                           fontWeight: FontWeight.w600,
                         ),
                       ),
@@ -660,8 +765,12 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
               Expanded(
                 child: _showRendered
                     ? Listener(
-                        onPointerDown: (event) { _tapDownPos = event.position; },
-                        onPointerUp: (event) { _onTapAnywhere(event.position); },
+                        onPointerDown: (event) {
+                          _tapDownPos = event.position;
+                        },
+                        onPointerUp: (event) {
+                          _onTapAnywhere(event.position);
+                        },
                         child: ListView.builder(
                           controller: _scrollController,
                           padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
@@ -673,10 +782,15 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                               child: GestureDetector(
                                 behavior: HitTestBehavior.opaque,
                                 onLongPress: () {
-                                  Clipboard.setData(ClipboardData(text: paragraph));
+                                  Clipboard.setData(
+                                    ClipboardData(text: paragraph),
+                                  );
                                   if (context.mounted) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(content: Text('📋 已复制当前段落文字到剪贴板'), duration: Duration(seconds: 2)),
+                                      const SnackBar(
+                                        content: Text('📋 已复制当前段落文字到剪贴板'),
+                                        duration: Duration(seconds: 2),
+                                      ),
                                     );
                                   }
                                 },
@@ -689,7 +803,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                                     [const md.FencedCodeBlockSyntax()],
                                     [md.EmojiSyntax(), HighlightSyntax()],
                                   ),
-                                  builders: {'highlight': HighlightBuilder(context)},
+                                  builders: {
+                                    'highlight': HighlightBuilder(context),
+                                  },
                                 ),
                               ),
                             );
@@ -702,7 +818,11 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                           controller: _textController,
                           readOnly: true,
                           maxLines: null,
-                          style: const TextStyle(fontFamily: 'Menlo', fontSize: 15, height: 1.6),
+                          style: const TextStyle(
+                            fontFamily: 'Menlo',
+                            fontSize: 15,
+                            height: 1.6,
+                          ),
                           decoration: const InputDecoration(
                             border: InputBorder.none,
                             isDense: true,

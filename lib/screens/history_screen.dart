@@ -22,8 +22,8 @@ class _HistoryEntry {
     required this.modified,
     required this.localFile,
     this.module,
-  })  : isLocal = true,
-        cloudContent = null;
+  }) : isLocal = true,
+       cloudContent = null;
 
   _HistoryEntry.cloud({
     this.id,
@@ -31,8 +31,8 @@ class _HistoryEntry {
     required this.modified,
     required this.cloudContent,
     this.module,
-  })  : isLocal = false,
-        localFile = null;
+  }) : isLocal = false,
+       localFile = null;
 }
 
 class HistoryScreen extends StatefulWidget {
@@ -63,7 +63,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       if (m == 'essay') return 'essay';
       if (m == 'freetalk') return 'freetalk';
       if (m == 'grammar') return 'grammar';
-      if (m == 'exam') return 'exam';
+      if (m == 'exam') return 'notes';
     }
 
     final t = entry.title.toLowerCase();
@@ -71,8 +71,12 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (t.contains('essay')) return 'essay';
     if (t.contains('freetalk')) return 'freetalk';
     if (t.contains('grammar')) return 'grammar';
-    if (t.contains('速记') || t.contains('exam')) return 'exam';
-    if (t.contains('discussion') || t.contains('note') || t.contains('lecture') || t.contains('listening')) return 'notes';
+    if (t.contains('速记') || t.contains('exam')) return 'notes';
+    if (t.contains('discussion') ||
+        t.contains('note') ||
+        t.contains('lecture') ||
+        t.contains('listening'))
+      return 'notes';
     return 'other';
   }
 
@@ -82,8 +86,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (name.contains('discussion')) return 'discussion';
     if (name.contains('freetalk')) return 'freetalk';
     if (name.contains('reading')) return 'reading';
-    if (name.contains('速记')) return 'exam';
-    if (name.contains('exam')) return 'exam';
+    if (name.contains('速记')) return 'listening';
+    if (name.contains('exam')) return 'listening';
     if (name.contains('grammar')) return 'grammar';
     return 'listening';
   }
@@ -107,18 +111,22 @@ class _HistoryScreenState extends State<HistoryScreen> {
 
       final localTitles = localFiles.map((f) => f.path.split('/').last).toSet();
 
-      final List<_HistoryEntry> merged = localFiles.map(
-        (f) => _HistoryEntry.local(
-          title: f.path.split('/').last,
-          modified: f.statSync().modified,
-          localFile: f,
-          module: _inferModuleFromFileName(f.path.split('/').last),
-        ),
-      ).toList();
+      final List<_HistoryEntry> merged = localFiles
+          .map(
+            (f) => _HistoryEntry.local(
+              title: f.path.split('/').last,
+              modified: f.statSync().modified,
+              localFile: f,
+              module: _inferModuleFromFileName(f.path.split('/').last),
+            ),
+          )
+          .toList();
 
       try {
         var userId = '';
-        try { userId = SupabaseConfig.currentUserId; } catch (_) {}
+        try {
+          userId = SupabaseConfig.currentUserId;
+        } catch (_) {}
         var query = SupabaseConfig.client
             .from('archives')
             .select('id,title,content_md,created_at,module');
@@ -126,7 +134,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
           query = query.eq('user_id', userId);
         }
         final data = await query
-            .or('module.eq.listening,module.eq.freetalk,module.eq.discussion,module.eq.essay,module.eq.exam,module.eq.grammar,module.eq.reading')
+            .or(
+              'module.eq.listening,module.eq.freetalk,module.eq.discussion,module.eq.essay,module.eq.exam,module.eq.grammar,module.eq.reading',
+            )
             .order('created_at', ascending: false);
 
         for (final row in List<Map<String, dynamic>>.from(data as List)) {
@@ -219,7 +229,6 @@ class _HistoryScreenState extends State<HistoryScreen> {
       {'id': 'essay', 'label': '📝 短文写作'},
       {'id': 'freetalk', 'label': '🗣️ 自由对话'},
       {'id': 'grammar', 'label': '📚 语法练习'},
-      {'id': 'exam', 'label': '📋 听力考试'},
       {'id': 'notes', 'label': '🎙️ 课堂笔记'},
     ];
 
@@ -248,7 +257,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
             selected: isSelected,
             onSelected: (_) => setState(() => _selectedFilter = id),
             selectedColor: Theme.of(context).colorScheme.primaryContainer,
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(16),
+            ),
           );
         },
       ),
@@ -286,7 +297,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('删除笔记'),
-        content: Text('确定要删除 "${entry.title}" 吗？将同时清理本地文件与 Supabase 云端数据库，彻底无法恢复。'),
+        content: Text(
+          '确定要删除 "${entry.title}" 吗？将同时清理本地文件与 Supabase 云端数据库，彻底无法恢复。',
+        ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -294,7 +307,13 @@ class _HistoryScreenState extends State<HistoryScreen> {
           ),
           TextButton(
             onPressed: () => Navigator.pop(context, true),
-            child: const Text('删除', style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+            child: const Text(
+              '删除',
+              style: TextStyle(
+                color: Colors.redAccent,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -331,7 +350,9 @@ class _HistoryScreenState extends State<HistoryScreen> {
                 .eq('id', entry.id!)
                 .eq('user_id', userId);
           } else {
-            debugPrint("[HistoryScreen] Skipping cloud delete — user not authenticated.");
+            debugPrint(
+              "[HistoryScreen] Skipping cloud delete — user not authenticated.",
+            );
           }
         } catch (e) {
           debugPrint("[HistoryScreen] Cloud delete error: $e");
@@ -364,80 +385,118 @@ class _HistoryScreenState extends State<HistoryScreen> {
             child: _isLoading
                 ? const Center(child: CircularProgressIndicator())
                 : _error.isNotEmpty
-                    ? Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            const Icon(Icons.cloud_off, size: 48, color: Colors.grey),
-                            const SizedBox(height: 16),
-                            Text('Load failed', style: TextStyle(color: isDark ? Colors.white38 : Colors.black26)),
-                            const SizedBox(height: 8),
-                            TextButton(
-                              onPressed: () {
-                                setState(() => _isLoading = true);
-                                _loadEntries();
-                              },
-                              child: const Text('Retry'),
-                            ),
-                          ],
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        const Icon(
+                          Icons.cloud_off,
+                          size: 48,
+                          color: Colors.grey,
                         ),
-                      )
-                    : displayEntries.isEmpty
-                        ? Center(
-                            child: Column(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Icon(Icons.folder_open, size: 48, color: isDark ? Colors.white10 : Colors.black12),
-                                const SizedBox(height: 16),
-                                Text('暂无该分类文档',
-                                    style: TextStyle(color: isDark ? Colors.white24 : Colors.black26)),
-                              ],
-                            ),
-                          )
-                        : RefreshIndicator(
-                            onRefresh: _loadEntries,
-                            child: ListView.builder(
-                              itemCount: displayEntries.length,
-                              itemBuilder: (context, index) {
-                                final entry = displayEntries[index];
-                                return Dismissible(
-                                  key: Key(entry.title + (entry.id ?? '')),
-                                  direction: DismissDirection.endToStart,
-                                  background: Container(
-                                    alignment: Alignment.centerRight,
-                                    padding: const EdgeInsets.only(right: 20),
-                                    color: Colors.redAccent,
-                                    child: const Icon(Icons.delete_forever, color: Colors.white),
-                                  ),
-                                  confirmDismiss: (_) async {
-                                    await _deleteEntry(entry);
-                                    return false;
-                                  },
-                                  child: ListTile(
-                                    leading: Icon(_iconFor(entry.title), color: _colorFor(entry.title)),
-                                    title: Row(
-                                      children: [
-                                        Flexible(child: Text(entry.title, overflow: TextOverflow.ellipsis)),
-                                        if (!entry.isLocal) ...[
-                                          const SizedBox(width: 6),
-                                          Icon(Icons.cloud, size: 14, color: Colors.grey[400]),
-                                        ],
-                                      ],
-                                    ),
-                                    subtitle: Text(
-                                      _formatTime(entry.modified),
-                                      style: const TextStyle(fontSize: 11, color: Colors.grey),
-                                    ),
-                                    onTap: () => _openEntry(entry),
-                                    trailing: IconButton(
-                                      icon: const Icon(Icons.delete_outline, color: Colors.grey),
-                                      onPressed: () => _deleteEntry(entry),
-                                    ),
-                                  ),
-                                );
-                              },
+                        const SizedBox(height: 16),
+                        Text(
+                          'Load failed',
+                          style: TextStyle(
+                            color: isDark ? Colors.white38 : Colors.black26,
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        TextButton(
+                          onPressed: () {
+                            setState(() => _isLoading = true);
+                            _loadEntries();
+                          },
+                          child: const Text('Retry'),
+                        ),
+                      ],
+                    ),
+                  )
+                : displayEntries.isEmpty
+                ? Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.folder_open,
+                          size: 48,
+                          color: isDark ? Colors.white10 : Colors.black12,
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          '暂无该分类文档',
+                          style: TextStyle(
+                            color: isDark ? Colors.white24 : Colors.black26,
+                          ),
+                        ),
+                      ],
+                    ),
+                  )
+                : RefreshIndicator(
+                    onRefresh: _loadEntries,
+                    child: ListView.builder(
+                      itemCount: displayEntries.length,
+                      itemBuilder: (context, index) {
+                        final entry = displayEntries[index];
+                        return Dismissible(
+                          key: Key(entry.title + (entry.id ?? '')),
+                          direction: DismissDirection.endToStart,
+                          background: Container(
+                            alignment: Alignment.centerRight,
+                            padding: const EdgeInsets.only(right: 20),
+                            color: Colors.redAccent,
+                            child: const Icon(
+                              Icons.delete_forever,
+                              color: Colors.white,
                             ),
                           ),
+                          confirmDismiss: (_) async {
+                            await _deleteEntry(entry);
+                            return false;
+                          },
+                          child: ListTile(
+                            leading: Icon(
+                              _iconFor(entry.title),
+                              color: _colorFor(entry.title),
+                            ),
+                            title: Row(
+                              children: [
+                                Flexible(
+                                  child: Text(
+                                    entry.title,
+                                    overflow: TextOverflow.ellipsis,
+                                  ),
+                                ),
+                                if (!entry.isLocal) ...[
+                                  const SizedBox(width: 6),
+                                  Icon(
+                                    Icons.cloud,
+                                    size: 14,
+                                    color: Colors.grey[400],
+                                  ),
+                                ],
+                              ],
+                            ),
+                            subtitle: Text(
+                              _formatTime(entry.modified),
+                              style: const TextStyle(
+                                fontSize: 11,
+                                color: Colors.grey,
+                              ),
+                            ),
+                            onTap: () => _openEntry(entry),
+                            trailing: IconButton(
+                              icon: const Icon(
+                                Icons.delete_outline,
+                                color: Colors.grey,
+                              ),
+                              onPressed: () => _deleteEntry(entry),
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
           ),
         ],
       ),

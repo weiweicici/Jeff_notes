@@ -1,8 +1,22 @@
 export 'models/insight_note.dart';
 
 enum AIProvider { groq, siliconFlow, gemini }
+
 enum AppMode { lecture, discussion, freeTalk, exam }
-enum PromptStrategy { general, toeflIelts, scientific, humanities, recap, discovery, discussion, essay, grammar }
+
+enum PromptStrategy {
+  general,
+  toeflIelts,
+  scientific,
+  humanities,
+  recap,
+  rollingNotes,
+  discovery,
+  discussion,
+  essay,
+  grammar,
+}
+
 enum PathwaysUnit {
   none,
   unit1,
@@ -40,7 +54,11 @@ class GrammarPart {
   final String id;
   final String title;
   final List<GrammarUnit> units;
-  const GrammarPart({required this.id, required this.title, required this.units});
+  const GrammarPart({
+    required this.id,
+    required this.title,
+    required this.units,
+  });
 
   Map<String, dynamic> toJson() => {
     'id': id,

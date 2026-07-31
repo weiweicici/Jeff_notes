@@ -178,7 +178,11 @@ class RecordingProvider extends ChangeNotifier {
   String? _lastExportedPath;
   // 40秒分段 AI 摘要
   final List<String> _segmentSummaries = [];
-  static const int _kSlicesPerSegment = 8; // 8 * 5s = 40s
+
+  /// Rolling notes update after at least about one minute of valid speech.
+  /// This adapts to the user-selectable 5-8 second STT slice duration.
+  int get _slicesPerRollingUpdate =>
+      ((60 + _sliceDuration - 1) ~/ _sliceDuration).clamp(8, 15);
   String? _identifiedLectureContext;
   bool _hasRecoveredCache = false;
   String _openRouterKey = '';
@@ -645,7 +649,12 @@ class RecordingProvider extends ChangeNotifier {
     if (context != null) {
       final payload = HandoverPayload(
         context: context,
-        enableFinalRecap: _enableFinalRecap,
+        // Exam/Lecture now always produce a complete first-listening document.
+        // The preference remains meaningful for the other optional workflows.
+        enableFinalRecap:
+            _enableFinalRecap ||
+            context.mode == AppMode.exam ||
+            context.mode == AppMode.lecture,
         onDone: (event) {
           unawaited(
             DiagnosticLogService.instance.record(
@@ -770,7 +779,11 @@ class RecordingProvider extends ChangeNotifier {
       context.lastAudioTail = Uint8List.fromList(
         stitchResult['newTail'] as List<int>,
       );
-      context.addRawAudioPath(processedPath);
+      // Keep the original non-overlapped slice for faithful WAV playback.
+      // The stitched slice contains a small previous-tail overlap and is used
+      // only for safer STT across word boundaries.
+      context.addRawAudioPath(path);
+      context.addStitchedAudioPath(processedPath);
 
       final currentNote = InsightNote(
         summary: '',
@@ -848,7 +861,7 @@ class RecordingProvider extends ChangeNotifier {
           if (_isValidTranscript(transcript)) {
             context.segmentTranscriptBuffer.add(transcript);
             context.segmentSummaryCounter++;
-            if (context.segmentSummaryCounter >= _kSlicesPerSegment &&
+            if (context.segmentSummaryCounter >= _slicesPerRollingUpdate &&
                 !context.isGeneratingSegmentSummary) {
               context.segmentSummaryCounter = 0;
               await _generateSegmentSummaryForContext(context);
@@ -869,7 +882,7 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
-  /// 对当前积累的 40 秒切片文本生成分段 AI 摘要
+  /// Updates one stable working-note draft from each ~60 second window.
   Future<void> _generateSegmentSummaryForContext(
     RecordingSessionContext context,
   ) async {
@@ -881,21 +894,55 @@ class RecordingProvider extends ChangeNotifier {
     context.isGeneratingSegmentSummary = true;
     final material = context.segmentTranscriptBuffer.join(' ');
     context.segmentTranscriptBuffer.clear();
+    final previousDraft = context.segmentSummaries.isEmpty
+        ? '(No previous draft. Build the first working note.)'
+        : context.segmentSummaries.last;
     try {
+      final isRollingNotesMode =
+          context.mode == AppMode.exam || context.mode == AppMode.lecture;
       final summary = await ApiScheduler().enqueue(
         () => context.translationService!.summarize(
-          material,
-          strategy: PromptStrategy.recap,
+          isRollingNotesMode
+              ? '[CURRENT DRAFT]\n$previousDraft\n\n'
+                    '[NEW TRANSCRIPT]\n$material'
+              : material,
+          strategy: isRollingNotesMode
+              ? PromptStrategy.rollingNotes
+              : PromptStrategy.recap,
           mode: context.mode,
           unit: context.unit,
         ),
         sessionId: context.sessionId,
       );
       if (summary.trim().isNotEmpty) {
-        context.segmentSummaries.add(summary.trim());
+        if (isRollingNotesMode) {
+          context.segmentSummaries
+            ..clear()
+            ..add(summary.trim());
+        } else {
+          context.segmentSummaries.add(summary.trim());
+        }
         await context.saveShadowDraft();
+        unawaited(
+          DiagnosticLogService.instance.record(
+            'notes',
+            isRollingNotesMode
+                ? 'rolling_draft_updated'
+                : 'segment_summary_completed',
+            sessionId: context.sessionId,
+            fields: {'inputChars': material.length},
+          ),
+        );
       }
     } catch (e) {
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'notes',
+          'rolling_update_failed',
+          sessionId: context.sessionId,
+          fields: {'errorType': e.runtimeType},
+        ),
+      );
       debugPrint('[Segment Summary ${context.sessionId}] $e');
       context.segmentTranscriptBuffer.insert(0, material);
     } finally {

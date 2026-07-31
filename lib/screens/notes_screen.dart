@@ -52,8 +52,11 @@ class _NotesScreenState extends State<NotesScreen> {
       (event) {
         if (!mounted) return;
 
-        // [Phase 4 Section 4.7] 只有 Lecture 模式且 isFinal == true 且未显示过 Modal 时才去重弹出
-        if (event.mode != AppMode.lecture || !event.isFinal) return;
+        // Lecture and Exam must surface the completed first-listening notes
+        // immediately; Discussion/FreeTalk remain silent background exports.
+        final showsFirstListeningNotes =
+            event.mode == AppMode.lecture || event.mode == AppMode.exam;
+        if (!showsFirstListeningNotes || !event.isFinal) return;
         if (_shownFinalSessionIds.contains(event.sessionId)) return;
 
         // 并发弹窗保护：showDialog 前立即登记 sessionId
@@ -1227,9 +1230,20 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             ),
             SwitchListTile(
               title: const Text('Final Academic Recap'),
-              value: _tempEnableFinalRecap,
+              subtitle:
+                  (_tempMode == AppMode.exam || _tempMode == AppMode.lecture)
+                  ? const Text(
+                      'Always enabled for Exam and Lecture first-listening notes',
+                    )
+                  : null,
+              value: _tempMode == AppMode.exam || _tempMode == AppMode.lecture
+                  ? true
+                  : _tempEnableFinalRecap,
               contentPadding: EdgeInsets.zero,
-              onChanged: (val) => setState(() => _tempEnableFinalRecap = val),
+              onChanged:
+                  _tempMode == AppMode.exam || _tempMode == AppMode.lecture
+                  ? null
+                  : (val) => setState(() => _tempEnableFinalRecap = val),
             ),
             SwitchListTile(
               title: const Text('Academic Radar (Discovery)'),

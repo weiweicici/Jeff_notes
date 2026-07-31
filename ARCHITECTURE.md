@@ -19,6 +19,8 @@ graph TD
 ```
 
 ## 3. Session Isolation & Concurrency
+> ⚠️ **2026-07-31 已升级为 Session Isolation v2**：请以「15.1 ~ 15.4」为准。以下为历史描述，保留仅供追溯。
+
 To allow users to start a new recording immediately after stopping the previous one, the system uses a non-blocking finalization pipeline:
 - **RecordingProvider**: The central `ChangeNotifier` that manages the entire lifecycle — audio recording, AI orchestration, note storage, and export.
 - **Decoupling**: When `stopRecording()` is called, the slice timer stops, the orchestrator flushes its buffer, and finalization begins asynchronously. The UI is immediately ready for the next recording.
@@ -151,6 +153,8 @@ AcademicHubScreen (Home)
 - **Export**: Auto-saves to Markdown (`Jeff_Essay_{topic}_{timestamp}.md`), clipboard copy, and PDF export via `PdfService`.
 
 ## 6. Event-Driven UI & Auto-Popup
+> ⚠️ **2026-07-31 已升级**：`sessionReadyStream` 现在发射的是 `SessionReadyEvent`（结构化事件，见 15.2/15.3），不再是裸 `String`。以下为历史描述。
+
 The UI does not poll for summary completion. Instead, it uses a **Reactive Notification Stream**:
 - **sessionReadyStream**: A broadcast stream in `RecordingProvider`.
 - **Trigger**: Emits the final recap content when `generateFinalAcademicReview` is complete.
@@ -204,8 +208,10 @@ The UI does not poll for summary completion. Instead, it uses a **Reactive Notif
 - **FreeTalk 翻译** (`recording_provider.dart:587-607`): `_translateViaSiliconFlow()` 方法存在，但实际调用的是 `_aiService!.translate()`，而 `_aiService` 被绑定为 Groq 服务。
 
 ## 9. Data Persistence Hierarchy
+> ⚠️ **2026-07-31 已升级**：Shadow 草稿由 `ShadowDraftService` 管理，文件名为 `shadow_draft_<sessionId>.json`（紧邻 `.md` 导出文件），原子写入、schema v1 校验，详见 15.4。以下为历史描述。
+
 1. **Shadow Cache (Ephemeral)**: `shadow_draft.json` written to temporary directory on every translation result, enabling crash recovery.
-2. **MD Export (Permanent)**: Written to `getApplicationDocumentsDirectory()`. Filename format: `Jeff_Notes_yyyyMMdd_HHmm.md`. Structure: Part 1 (Full Script: Chinese + English), Part 2 (AI Academic Review), Part 3 (60s Block Summaries — currently unused as no summary notes are generated during recording).
+2. **MD Export (Permanent)**: Written to `getApplicationDocumentsDirectory()`. Filename format: `Jeff_Notes_yyyyMMdd_HHmm.md`. Structure: Part 1 (Full Script: Chinese + English), Part 2 (AI Academic Review), Part 3 (60s Block Summaries — currently unused as no summary notes are generated).
    - FreeTalk export: `Jeff_FreeTalk_yyyyMMdd_HHmmss.md` (pure Chinese then English, no headers).
    - Essay export: `Jeff_Essay_topicA_yyyyMMdd_HHmm.md`.
 3. **PDF Export**: Via `PdfService` using `flutter_markdown` + `pdf`/`printing` packages.
@@ -227,6 +233,7 @@ Encapsulates Supabase initialisation with a singleton pattern:
 - Recurring 30-second scan of `getApplicationDocumentsDirectory()` for `.md` files.
 - Skips files already uploaded via `UploadCache` (SharedPreferences hash check).
 - Uploads new files as `archives` rows with `module` inferred from filename: `essay`, `discussion`, `freetalk`, `reading`, or `listening`.
+- **2026-07-31**: 未登录时（`currentUserIdOrNull == null`）直接跳过同步并记录日志；上传改用 `.upsert(onConflict: 'user_id,session_id')` 并携带 `session_id: 'file_$hash'`，实现幂等写入、不再产生重复行（配合迁移 `20260731_session_id_upsert.sql`）。
 - Completely independent from RecordingProvider; no Provider dependency.
 
 ### 9.4 upload_cache.dart
@@ -711,4 +718,177 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 | BUG-18 | HistoryScreen | _moduleOfEntry 缺少速记识别 | 🟢 低 | ✅ 已修复 |
 | BUG-19 | HistoryScreen | 本地条目初始化 module 字段缺失 | 🟢 低 | ✅ 已修复 |
 | BUG-20 | NoteDetail | FreeTalk 文件名大小写敏感判定 | 🟢 低 | ✅ 已修复 |
+
+---
+
+## 15. 2026-07-31 架构加固批次 (Session Isolation v2 · 安全凭证 · 路由安全 · 幂等云同步 · 诊断日志)
+
+> 本批次（commit `99f25cd`，55 文件，+5898/−1808）是一次大型架构硬化，核心目标：**让一个录音会话的停止/收尾绝不干扰下一个会话的启动**，并把最终 AI 复盘/导出/云端上传移出 UI 线程。主导设计模式为 **per-session 隔离**、**接口 + 可注入 const 实现（fail-closed）**、**单例服务**、**幂等 upsert**。
+
+### 15.1 RecordingSessionContext — 每会话独立上下文 (Phase 3)
+
+**文件**: `lib/models/recording_session_context.dart`
+
+录音会话从 `RecordingProvider` 内聚状态升级为**自包含对象**，每个录音会话持有：
+
+| 资源 | 说明 |
+|------|------|
+| `sessionId` / `mode` / `unit` / `createdAt` | 会话身份与配置（`create()` 工厂自动生成文件名） |
+| 独立 `http.Client` | 会话专属连接，`dispose()` 时强制关闭以终止挂起请求 |
+| 独立 STT + 翻译 `OpenAIService` 实例 | 与全局服务解耦 |
+| 独立 `AIOrchestratorService` | 订阅 `fastEnglishStream` / `accurateChineseStream` 更新笔记 |
+| `notes` / `segmentSummaries` | `InsightNote` 列表 + 分段摘要 |
+| `rawAudioPaths` / `stitchedAudioPaths` | 音频切片路径清单 |
+| `shadowDraftPath` | 草稿路径（`shadow_draft_$sid.json`） |
+| 流水线追踪 `_pipelineTasks` | `runPipeline()` / `sealPipelines()` / `drainPipelines()` |
+
+**关键方法**：
+- `create({mode, unit, baseDirectory, customSessionId?, httpClient?})`：生成带前缀的文件名（`Jeff_Discussion` / `Jeff_Exam` / `Jeff_FreeTalk` / `Jeff_Notes`），对 `customSessionId` 做路径字符消毒（`<>:"/\|?*\x00-\x1F` → `_`，限 80 字符）。
+- `bindOrchestrator()`：订阅编排器双流，每次更新自动保存草稿并触发 `onChanged`。
+- `runPipeline(op)`：登记一个异步流水线任务；`sealPipelines()` 拒绝晚到的任务；`drainPipelines(timeout: 90s)` 循环等待全部任务完成，超时抛 `TimeoutException`。
+- `dispose()`：标记 disposed、取消订阅、销毁编排器、关闭专属 `http.Client`。
+
+**模型提取**: `InsightNote` 从 `models.dart` 移出至 `lib/models/insight_note.dart`（`models.dart` 保留 `export` 转发）。新增 `isProcessing` 字段（**不参与序列化**），`toJson/fromJson` 手写且容错。
+
+### 15.2 SessionReadyEvent & 后台交接 (Handover)
+
+**文件**: `lib/models/session_ready_event.dart`、`lib/services/session_background_processor.dart`
+
+**SessionReadyEvent**（不可变 DTO）：`sessionId` / `mode` / `content` / `exportPath` / `isFinal` / `eventSequence`，提供 `eventKey = '$sessionId_$eventSequence'` 供去重。`sessionReadyStream` 由原来的 `Stream<String>` 升级为 `Stream<SessionReadyEvent>`；`NotesScreen` 按 `mode == lecture && isFinal` 过滤并基于 `sessionId` 去重（有界集合，上限 100）来弹 Lecture 总结弹窗。
+
+**SessionBackgroundProcessor**（单例）：接收 `HandoverPayload{context, enableFinalRecap, onDone, onStatus, onError}`，在后台 isolate 执行 7 步收尾流程：
+1. 等待管线静默（`ApiScheduler.drain()` / `context.drainPipelines()`）
+2. flush 编排器翻译缓冲
+3. drain 编排器 + 调度器
+4. （可选）生成 Final Academic Review / 速记摘要
+5. 原子写 Markdown 到磁盘（`.tmp` + rename）
+6. 校验文件存在且 size > 0
+7. 成功 → 删除 shadow 草稿 + 云端 upsert + `onDone`；失败 → 保留草稿供恢复 + `onError`
+
+**调用方**: `RecordingProvider.stopRecording()` 构建 `HandoverPayload` 后 `unawaited(SessionBackgroundProcessor.instance.submit(...))`，返回 <200ms，UI 立即可开始下一会话。
+
+### 15.3 ApiScheduler 会话状态机
+
+**文件**: `lib/api_scheduler.dart`
+
+新增会话级状态管理：
+- `sealSession(sessionId)`：封存会话，之后 `enqueue` 抛 `StateError`。
+- `drain(sessionId, timeout)`：封存 + 循环等待「排队计数 + 在途 Future」归零，失败时保留状态不丢任务。
+- `cancelSession(sessionId)`：强制清理（socket 拆除）。
+- `untilSessionIdle()` 改为委托 `drain()`；入队从第一行即计入排队（不可漏计）；任务增加 60s 执行超时。
+
+### 15.4 ShadowDraftService — 崩溃恢复草稿 (Phase 3)
+
+**文件**: `lib/services/shadow_draft_service.dart`（单例）
+
+- schema v1 JSON 快照，覆盖 `sessionId / mode / unit / createdAt / exportPath / notes / segmentSummaries / rawAudioPaths / stitchedAudioPaths / finalReviewContent / shorthandReviewContent / identifiedLectureContext / isCompleted`。
+- **原子写入**：`.tmp` 写入后 rename；同路径串行化写队列；`deleteDraft()` 先等待 pending 写。
+- **严格校验**：`validateDraft()` 检查 `schemaVersion == 1`、枚举索引合法、字段类型正确（8 种畸形变体测试覆盖）。
+- 仅在**验证成功的导出后**才删除草稿；导出失败则保留草稿供恢复。
+
+### 15.5 CredentialStore — API Key 安全存储
+
+**文件**: `lib/services/credential_store.dart`（单例）、`test/credential_store_test.dart`
+
+- 基于 `flutter_secure_storage`（Android encryptedSharedPreferences / iOS Keychain first_unlock）。
+- 统一管理 Groq / Gemini / OpenAI / SiliconFlow / OpenRouter 五个 key。
+- `migrateFromSharedPreferences()`：一次性把旧 `SharedPreferences` key 迁移进安全存储并删除旧值（迁移写入失败则保留旧值、不丢数据）。
+- `redact()` 帮助函数防止日志泄露 key（`[REDACTED]` / `[EMPTY]`）。
+- **接线**: `main.dart` 启动时 `await CredentialStore.instance.migrateFromSharedPreferences()`；`RecordingProvider` 及 Reading/Grammar/Vocab 服务读写 key 均改走 `CredentialStore`。
+- 测试替身 `InMemorySecureStorageAdapter`。
+
+### 15.6 RouteDetector & EdgeTtsAuth — 统一路由安全 (Phase 4)
+
+**文件**: `lib/services/route_detector.dart`、`lib/services/edge_tts_auth.dart`
+
+**RouteDetector**（接口 + `SystemRouteDetector` 生产实现 + `FakeRouteDetector` 测试替身）：取代 `tts_service.dart` 与 `audio_handler.dart` 中两份重复的 iOS/Android 路由轮询代码。`inspectCurrentOutput()` 返回 `AudioRouteDecision{isSafe, reason, outputTypes}`：
+- iOS/macOS 走 `AVAudioSession.currentRoute.outputs`；Android 走 `AudioSession.getDevices()`；其他平台 fail-closed。
+- 白名单放行：`headphones / bluetoothA2dp / bluetoothLe / bluetoothHfp / airPlay / usbAudio / carAudio`；阻断：`builtInSpeaker / builtInReceiver / 空输出 / 未知端口`。
+- **耳机优先原则**：只要含任一白名单端口即放行；`bluetoothA2dp + builtInSpeaker` 混合路由被判定安全（蓝牙实际输出）。所有异常/空输出一律 fail-closed。
+- 播放前 `prepareSafePlayback()` 单次硬校验（取代旧 4s 多轮询）；播放中 `devicesChangedEventStream` 与 `playingStream` 双防线即时停播。
+
+**EdgeTtsAuth**（纯静态工具）：用精确整数运算计算 Windows FileTime ticks（100ns 单位），floor 到 5 分钟窗口，SHA-256 生成 `Sec-MS-GEC` 防盗链 token 并组装 Edge WebSocket URL。`tts_service.dart` 的 Edge 直连路径改用它，移除硬编码 token 常量，`Random` → `Random.secure()`。
+
+### 15.7 CloudSyncService & Supabase 迁移 (Phase 5)
+
+**文件**: `lib/services/cloud_sync_service.dart`、`supabase/migrations/20260731_session_id_upsert.sql`
+
+- 接口 `CloudSyncService` + `SupabaseCloudSyncService`（生产）+ `FakeCloudSyncService`（测试）。
+- `syncArchiveSession(context, file)`：以 `(user_id, session_id)` 为唯一键 upsert 到 `archives` 表，携带 `file_hash`（MD5）去重。
+- **fail-closed**：文件缺失或未登录时静默跳过并记诊断日志。
+- 迁移 `20260731_session_id_upsert.sql`（幂等）：新增 `session_id text NULL` 列；建 `UNIQUE(user_id, session_id)` 约束；启用 RLS 并重建 4 条按行所有权的策略；建 `idx_archives_session_id` 索引；旧记录 `session_id IS NULL` 仍可通过 `user_id` 访问。
+- 调用方：`SessionBackgroundProcessor._upsertToSupabase()`（`unawaited`，非阻塞）。
+
+### 15.8 DiagnosticLogService — 诊断日志
+
+**文件**: `lib/services/diagnostic_log_service.dart`（单例）、`test/diagnostic_log_service_test.dart`
+
+- 写 `jeff_notes_diagnostic.log`（文档目录），格式 `category | event | session=... | key=value`。
+- 串行化追加；512 KB 上限、保留最近 256 KB 轮转；激进脱敏（`sk-`、`gsk_`、`AIza`、`Bearer` → `[REDACTED]`）。
+- 生命周期事件覆盖：`recording`（start/stop/session_ready/handover_failed）、`background`（processing_started/export_verified/processing_failed）、`cloud`（sync_*）、`tts`（route_*/route_lost_during_playback）。
+- **UI 接线**: `notes_screen.dart` Settings 对话框新增「Copy log」/「Clear log」按钮，方便真机测试直接导出日志。
+
+### 15.9 其余模块改动
+
+| 模块 | 改动 |
+|------|------|
+| `lib/adapters/audio_recorder_adapter.dart` | 新增 `AudioRecorderAdapter` 接口 + `RecordAudioRecorderAdapter` + `FakeAudioRecorderAdapter`，解耦 `RecordingProvider` 与 `record` 插件，便于测试注入。 |
+| `lib/services/reading_content_parser.dart` | 新增 `extractArticle()`，从阅读 MD 中剥离 `练习/exercises/questions` 章节（保留 `---` 分页符），供 `ReadingDetailScreen` 只把正文喂给 AI。 |
+| `lib/openai_service.dart` | `http.Client` 可注入并带所有权标志（`_ownsClient`），`dispose()` 只关闭自己创建的连接（配合会话隔离）；删除泄露完整响应体/header/API-key 前缀的调试打印。 |
+| `lib/ai_orchestrator_service.dart` | 新增 `drain()`（flush 翻译缓冲 → 等待在途批次 → `ApiScheduler().drain()`）；实例级 `http.Client`，Gemini 调用改走该 client。 |
+| `lib/text_sanitizer.dart` | 去重仅当单词**连续出现两次**才折叠；括号剥离改为只删**转写噪音标记**（`[music|applause|silence|noise|inaudible|error...]` / `(inaudible|unclear|background noise)`，不区分大小写），保留 `[Figure 1]` 等有意义内容。 |
+| `lib/screens/notes_screen.dart` | Settings 新增诊断日志区；自动滚屏条可点击暂停；总结条 UI 重构。 |
+| `lib/services/supabase_config.dart` | 新增 `isAuthenticated` / `currentUserIdOrNull`（非抛异常）；`init()` try/catch；匿名登录复用未过期会话、先尝试 `refreshSession()`。 |
+
+### 15.10 新增测试套件
+
+| 测试文件 | 覆盖内容 |
+|---------|---------|
+| `test/session_isolation_deep_test.dart` (6) | 每会话隔离：跨会话任务不被其他会话 drain 干扰；seal 后拒绝新任务；草稿在导出失败时保留、成功后才删除。 |
+| `test/session_models_test.dart` (9) | `InsightNote`/`RecordingSessionContext`/`SessionReadyEvent` 往返序列化；`ShadowDraftService` 原子读写/畸形变体校验/重叠保存取最新。 |
+| `test/session_ready_event_test.dart` (5) | `eventKey` 去重；仅 lecture+isFinal 触发弹窗；去重集合 100 上限。 |
+| `test/release_hardening_test.dart` (3) | `TextSanitizer` 保留重复词与 `[Figure 1]`；`ReadingContentParser` 剥离练习章节；`FakeAudioRecorderAdapter` 生命周期。 |
+| `test/orchestrator_drain_test.dart` (8) | `ApiScheduler.drain()`：无任务秒返、只 drain 指定会话、二次 drain 立即返回、drain 后保持 sealed。 |
+| `test/supabase_cloud_sync_test.dart` (3) | `syncArchiveSession` 成功记录 / fail-closed 失败不记录 / 文件缺失返回 false。 |
+| `test/credential_store_test.dart` (5) | 安全读写往返；旧 SharedPreferences 迁移且失败保留旧值；`redact()`。 |
+| `test/edge_tts_auth_test.dart` (7) | Windows FileTime ticks、5 分钟窗口对齐、token 确定性、WebSocket URL 组装。 |
+| `test/diagnostic_log_service_test.dart` (1) | 日志格式、脱敏、多行折叠、clear()。 |
+| `test/tts_headphone_safety_test.dart` (10) | 路由安全矩阵：蓝牙/耳机/AirPlay 放行，扬声器/听筒/空输出阻断，混合路由耳机优先。 |
+
+### 15.11 本次批次设计原则总结
+
+1. **Fail-closed**：`SystemRouteDetector`、`SupabaseCloudSyncService`、`SessionBackgroundProcessor` 均在不确定时「保留数据 / 跳过 / 阻断」，绝不冒丢数据或扬声器漏音风险。
+2. **每会话资源隔离**：专属 `http.Client` + 专属 AI 服务实例，`dispose()` 可强制终止会话的挂起请求。
+3. **接口 + const 可注入实现**：`CloudSyncService` / `RouteDetector` / `AudioRecorderAdapter` / `SecureStorageAdapter` 全部走接口模式，测试替身随生产代码发布。
+4. **幂等持久化**：云同步 `(user_id, session_id)` upsert + MD5 去重，草稿写入原子 rename + 写队列。
+5. **日志脱敏**：所有日志与调试输出均经 `redact()` / 单行 debugPrint，杜绝 API key 与响应体泄露。
+
+### 15.12 Follow-up：Exam 双文档导出 & 历史页模块归类调整
+
+> 本次更新（2026-07-31，未提交 commit）在 `99f25cd` 之后又修复了一个行为回归：**Exam 会话经由 `SessionBackgroundProcessor` 导出时只产出答题卡主文档、丢失了原有的《Jeff_速记_*.md》副文档**；同时统一了历史页（History）的模块归类。
+
+**Exam 双文档导出** — `lib/services/session_background_processor.dart`
+
+- Exam 会话在主导出（答题卡/完整转写，见 15.1 文件名前缀 `Jeff_Exam`）原子写入并校验后，**额外再原子写出** `Jeff_速记_${sessionId}.md` 副文档，保留旧版录制链路（`recording_provider.dart` 的直出逻辑）的公开行为。
+- 新增 `_formatExamShorthand()` 生成副文档，结构与原速记文档一致：
+  - `# Academic Shorthand Notes (学术速记)` 头部 + `**Date:**` / `**Context:**`（`identifiedLectureContext`）。
+  - **Part 1 · Academic Shorthand Notes (Pathways 3)**：优先使用 `shorthandReviewContent`（AI 学术速记）；为空时逐条转写转成 `- **Point N**` 列表（附中文翻译）。
+  - **Part 2 · Full Script**：`### 中文全文` + `### 英文全文`（英文段应用 `_applyVocabHighlight()` 生词高亮 + `_highlightText()`）。
+  - 噪声过滤规则沿用：空段 / `...` / 以 `[` 开头的转写噪音标记全部跳过。
+- 副文档同样走 `_writeAtomically()` 且校验存在 + size>0，失败即抛 `FileSystemException` → 走 15.2 的失败路径（保留草稿、`onError`）。
+- 诊断日志 `export_verified` 事件新增 `fields: {fileCount: exam?2:1, primaryFile: 主文件名}`。
+
+**历史页模块归类** — `lib/screens/history_screen.dart`
+
+- 移除独立「📋 听力考试」筛选 chip；`exam` 归入「🎙️ 课堂笔记（notes）」。
+- `_moduleOfEntry`：模块声明 `m == 'exam'` → `'notes'`；标题含 `速记`/`exam` → `'notes'`。
+- `_inferModuleFromFileName`：文件名含 `速记`/`exam` → `'listening'`（旧实现为 `'exam'`）。
+- 云端查询仍保留 `module.eq.exam`（兼容既有云端历史行），仅展示归类改为 notes。
+- 其余为 `dart format` 排版重排，无逻辑变化。
+
+**测试** — `test/session_isolation_deep_test.dart`（6 → 7）
+
+- 新增用例 **7. Exam handover exports answer card and shorthand documents**：提交 Exam 会话 handover 后断言主文档与 `Jeff_速记_*.md` 均存在，且副文档包含 `Academic Shorthand` 与中文转写（`重要概念`）。
+
+> 一致性提示：`file_sync_agent.dart`（9.3）仍将 `速记`/`exam` 文件名归类为 `'exam'`，与历史页新的 `'listening'` 归类不一致，属已知差距，未改动（遵用户"不修改代码"约束）。
 
