@@ -40,7 +40,7 @@ Uint8List generateTestWav(int durationSeconds) {
 
 Future<void> main() async {
   print("=== TESTING GEMINI 2.5 FLASH AUDIO STT API ===");
-  final apiKey = "AIzaSyBU1TeaDmBB46HbVvrndasc4MmZ5QcKPOA";
+  final apiKey = Platform.environment['GEMINI_API_KEY'] ?? "";
   final wavBytes = generateTestWav(3);
   final base64Audio = base64Encode(wavBytes);
 

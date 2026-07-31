@@ -11,15 +11,16 @@ import 'package:audio_session/audio_session.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:crypto/crypto.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import 'supabase_config.dart';
 import 'wakelock_service.dart';
+import 'route_detector.dart';
+import 'edge_tts_auth.dart';
+import 'diagnostic_log_service.dart';
 import '../main.dart';
 
 enum ActiveAudioType { none, chinese, english, recorded }
 
 enum ChineseTtsEngine {
-  iosNative,  // 方案一：iOS 系统原生中文 (0秒秒开 · 0元0Token)
+  iosNative, // 方案一：iOS 系统原生中文 (0秒秒开 · 0元0Token)
   edgeNeural, // 方案二：微软 Edge 晓晓神经网络女声 (0元免费 · 播音级美音)
 }
 
@@ -31,6 +32,8 @@ enum EnglishTtsEngine {
 class TtsService extends ChangeNotifier {
   static final TtsService _instance = TtsService._internal();
   factory TtsService() => _instance;
+
+  RouteDetector routeDetector = const SystemRouteDetector();
 
   AudioPlayer get _audioPlayer => globalAudioHandler.player;
   final FlutterTts _flutterTts = FlutterTts();
@@ -54,6 +57,7 @@ class TtsService extends ChangeNotifier {
   bool _isChineseSynthesizing = false;
   double _chineseSpeed = 1.2;
   bool _isChineseNativePlaying = false;
+  String? _lastNativeChineseText;
   Duration _chineseNativePosition = Duration.zero;
   Duration _chineseNativeDuration = Duration.zero;
   Timer? _chineseNativeTimer;
@@ -79,12 +83,15 @@ class TtsService extends ChangeNotifier {
   }
 
   bool _isEnglishSynthesizing = false;
+  bool _isNativeEnglishPlaying = false;
   double _englishSpeed = 0.6;
   bool _isLoopMode = true; // 默认：无限重复播放
   bool get isLoopMode => _isLoopMode;
   bool get isEnglishSynthesizing => _isEnglishSynthesizing;
-  bool get isEnglishPlaying => _audioPlayer.playing && _currentAudioType == ActiveAudioType.english;
-  bool get isRecordedPlaying => _audioPlayer.playing && _currentAudioType == ActiveAudioType.recorded;
+  bool get isEnglishPlaying =>
+      _audioPlayer.playing && _currentAudioType == ActiveAudioType.english;
+  bool get isRecordedPlaying =>
+      _audioPlayer.playing && _currentAudioType == ActiveAudioType.recorded;
   double get englishSpeed => _englishSpeed;
 
   Future<void> toggleLoopMode() async {
@@ -97,15 +104,17 @@ class TtsService extends ChangeNotifier {
   Stream<Duration?> get englishDurationStream => _audioPlayer.durationStream;
   Duration? get currentDuration =>
       (_isChineseNativePlaying && _currentAudioType == ActiveAudioType.chinese)
-          ? _chineseNativeDuration
-          : _audioPlayer.duration;
+      ? _chineseNativeDuration
+      : _audioPlayer.duration;
   Duration get currentPosition =>
       (_isChineseNativePlaying && _currentAudioType == ActiveAudioType.chinese)
-          ? _chineseNativePosition
-          : _audioPlayer.position;
+      ? _chineseNativePosition
+      : _audioPlayer.position;
 
   bool get isPlaying =>
-      _audioPlayer.playing || (_isChineseNativePlaying && _currentAudioType == ActiveAudioType.chinese);
+      _audioPlayer.playing ||
+      _isChineseNativePlaying ||
+      _isNativeEnglishPlaying;
   bool get isSynthesizing => _isChineseSynthesizing || _isEnglishSynthesizing;
 
   TtsService._internal();
@@ -116,17 +125,19 @@ class TtsService extends ChangeNotifier {
     // 1. Configure AudioSession — category must be playback for TTS audio
     //    so iOS routes directly to headphones and NEVER defaults/forces speaker.
     final session = await AudioSession.instance;
-    await session.configure(AudioSessionConfiguration(
-      avAudioSessionCategory: AVAudioSessionCategory.playback,
-      avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
-      avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-      androidAudioAttributes: const AndroidAudioAttributes(
-        contentType: AndroidAudioContentType.speech,
-        usage: AndroidAudioUsage.media,
+    await session.configure(
+      AudioSessionConfiguration(
+        avAudioSessionCategory: AVAudioSessionCategory.playback,
+        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+        androidAudioAttributes: const AndroidAudioAttributes(
+          contentType: AndroidAudioContentType.speech,
+          usage: AndroidAudioUsage.media,
+        ),
+        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+        androidWillPauseWhenDucked: true,
       ),
-      androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-      androidWillPauseWhenDucked: true,
-    ));
+    );
     await session.setActive(true);
 
     // 2. Init FlutterTts for Chinese local playback
@@ -143,8 +154,10 @@ class TtsService extends ChangeNotifier {
 
     _flutterTts.setErrorHandler((msg) {
       debugPrint("Chinese Local TTS Error: $msg");
+      _finishNativePlayback();
       notifyListeners();
     });
+    _flutterTts.setCancelHandler(_finishNativePlayback);
 
     // 注意：flutter_tts 的 setProgressHandler 在 iOS 上不可靠（不持续触发），
     // 改用 Timer.periodic 计时器在 speakChinese 中模拟进度。
@@ -156,21 +169,25 @@ class TtsService extends ChangeNotifier {
 
     // 4. 监听设备变更（含 AirPods/有线耳机的拔出）→ 有耳机被移除且正在播放时暂停
     //    用 devicesChangedEventStream 比 becomingNoisy 更可靠（后者对 AirPods 不触发）
-    _devicesSubscription = session.devicesChangedEventStream.listen((event) async {
+    _devicesSubscription = session.devicesChangedEventStream.listen((
+      event,
+    ) async {
       if (!isPlaying) return;
       final hasHeadphoneRemoved = event.devicesRemoved.any((d) {
         final t = d.type;
         return t == AudioDeviceType.wiredHeadset ||
-               t == AudioDeviceType.wiredHeadphones ||
-               t == AudioDeviceType.bluetoothSco ||
-               t == AudioDeviceType.bluetoothA2dp ||
-               t == AudioDeviceType.bluetoothLe ||
-               t == AudioDeviceType.hearingAid ||
-               t == AudioDeviceType.airPlay ||
-               t == AudioDeviceType.usbAudio;
+            t == AudioDeviceType.wiredHeadphones ||
+            t == AudioDeviceType.bluetoothSco ||
+            t == AudioDeviceType.bluetoothA2dp ||
+            t == AudioDeviceType.bluetoothLe ||
+            t == AudioDeviceType.hearingAid ||
+            t == AudioDeviceType.airPlay ||
+            t == AudioDeviceType.usbAudio;
       });
       if (hasHeadphoneRemoved) {
-        debugPrint('[TtsService] Headphone device removed during playback → pausing.');
+        debugPrint(
+          '[TtsService] Headphone device removed during playback → pausing.',
+        );
         await pauseAll();
       }
     });
@@ -192,17 +209,19 @@ class TtsService extends ChangeNotifier {
   Future<void> ensurePlaybackSession() async {
     try {
       final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playback,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
-        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-        androidAudioAttributes: AndroidAudioAttributes(
-          contentType: AndroidAudioContentType.speech,
-          usage: AndroidAudioUsage.media,
+      await session.configure(
+        const AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playback,
+          avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.none,
+          avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+          androidAudioAttributes: AndroidAudioAttributes(
+            contentType: AndroidAudioContentType.speech,
+            usage: AndroidAudioUsage.media,
+          ),
+          androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
+          androidWillPauseWhenDucked: true,
         ),
-        androidAudioFocusGainType: AndroidAudioFocusGainType.gain,
-        androidWillPauseWhenDucked: true,
-      ));
+      );
       await session.setActive(true);
       await _flutterTts.setIosAudioCategory(
         IosTextToSpeechAudioCategory.playback,
@@ -213,10 +232,19 @@ class TtsService extends ChangeNotifier {
       if (Platform.isIOS) {
         try {
           final avSession = AVAudioSession();
-          await avSession.overrideOutputAudioPort(AVAudioSessionPortOverride.none);
+          await avSession.overrideOutputAudioPort(
+            AVAudioSessionPortOverride.none,
+          );
         } catch (_) {}
       }
     } catch (e) {
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'tts',
+          'playback_session_restore_failed',
+          fields: {'errorType': e.runtimeType},
+        ),
+      );
       debugPrint('[TtsService] ensurePlaybackSession error: $e');
     }
   }
@@ -229,7 +257,9 @@ class TtsService extends ChangeNotifier {
   void _startHeadphoneMonitor() {
     _stopHeadphoneMonitor();
     // 100ms 周期安全轮询（devicesChangedEventStream 已在 init() 中全局注册）
-    _headphoneMonitor = Timer.periodic(const Duration(milliseconds: 100), (_) async {
+    _headphoneMonitor = Timer.periodic(const Duration(milliseconds: 100), (
+      _,
+    ) async {
       if (!isPlaying) {
         _stopHeadphoneMonitor();
         return;
@@ -239,7 +269,16 @@ class TtsService extends ChangeNotifier {
       _isCheckingHeadphones = true;
       try {
         if (!(await isHeadphonesConnected())) {
-          debugPrint('[TtsService] Headphone monitor — lost headphones/speaker selected during playback, stopping immediately.');
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'tts',
+              'route_lost_during_playback',
+              fields: {'reason': lastRouteDebug},
+            ),
+          );
+          debugPrint(
+            '[TtsService] Headphone monitor — lost headphones/speaker selected during playback, stopping immediately.',
+          );
           await stopAll();
         }
       } finally {
@@ -253,136 +292,72 @@ class TtsService extends ChangeNotifier {
     _headphoneMonitor = null;
   }
 
-  /// 持续轮询检查耳机连接（每 200ms 查一次，最多 4 秒）。
-  /// 如果前 2 秒仍未检测到耳机，尝试强制 iOS 重新评估路由再继续轮询。
-  Future<bool> isHeadphonesConnected() async {
-    lastRouteDebug = '';
-    const maxAttempts = 20;
-    for (int i = 0; i < maxAttempts; i++) {
-      final connected = await _queryCurrentRoute();
-      if (connected) {
-        lastRouteDebug = '';
-        return true;
-      }
-      if (i == 10 && Platform.isIOS) {
-        try {
-          final avSession = AVAudioSession();
-          await avSession.overrideOutputAudioPort(AVAudioSessionPortOverride.none);
-        } catch (_) {}
-      }
-      if (i == 15 && Platform.isIOS) {
-        try {
-          final avSession = AVAudioSession();
-          await avSession.overrideOutputAudioPort(AVAudioSessionPortOverride.none);
-        } catch (_) {}
-      }
-      if (i < maxAttempts - 1) {
-        await Future.delayed(const Duration(milliseconds: 200));
-      }
+  /// [Phase 4 Rule 1 & 2] 统一 TTS 发声安全门：恢复 pure playback session 并在路由不安全时硬切断播放
+  Future<bool> prepareSafePlayback({required String playbackSource}) async {
+    await ensurePlaybackSession();
+    final decision = await routeDetector.inspectCurrentOutput();
+    unawaited(
+      DiagnosticLogService.instance.record(
+        'tts',
+        decision.isSafe ? 'route_allowed' : 'route_blocked',
+        fields: {
+          'source': playbackSource,
+          'outputs': decision.outputTypes.join(','),
+          'reason': decision.reason,
+        },
+      ),
+    );
+    if (!decision.isSafe) {
+      lastRouteDebug = decision.reason;
+      debugPrint(
+        '[TtsService Safety Gate] BLOCKED playback ($playbackSource): ${decision.reason}',
+      );
+      await stopAll();
+      return false;
     }
-    return false;
+    lastRouteDebug = '';
+    return true;
   }
 
-  /// 严密检查系统硬件与输出路由（允许耳机/蓝牙/AirPlay输出，坚决禁止扬声器外放）
-  Future<bool> _queryCurrentRoute() async {
-    try {
-      // [BUG-02 Fix] 过去此处会在每次轮询时重复 configure+setActive，
-      // 导致 iOS 音频路由频繁抗抖和运行抗否风险。
-      // configure+setActive 已在 ensurePlaybackSession() 中统一调用，此处仅查路由，不重复配置。
-
-      // 1. 对 iOS/macOS，直接严密核查系统【当前激活生效的输出端口 currentRoute.outputs】
-      if (Platform.isIOS || Platform.isMacOS) {
-        // A. 先用插件查（快速路径）
-        final avSession = AVAudioSession();
-        final route = await avSession.currentRoute;
-        final outputs = route.outputs;
-        final pluginPortNames = outputs.map((o) => o.portType.name).join(", ");
-        debugPrint('[TtsService] plugin currentRoute outputs: $pluginPortNames');
-
-        if (outputs.isNotEmpty) {
-          for (final output in outputs) {
-            final t = output.portType;
-            final n = output.portName;
-            if (t == AVAudioSessionPort.headphones ||
-                t == AVAudioSessionPort.bluetoothA2dp ||
-                t == AVAudioSessionPort.bluetoothLe ||
-                t == AVAudioSessionPort.bluetoothHfp ||
-                t == AVAudioSessionPort.airPlay ||
-                t == AVAudioSessionPort.usbAudio ||
-                t == AVAudioSessionPort.carAudio ||
-                n.contains('AirPods') ||
-                n.contains('Bluetooth') ||
-                n.contains('耳机')) {
-              lastRouteDebug = '';
-              return true;
-            }
-          }
-        }
-
-        // B. 插件的 currentRoute 只显示扬声器，用 getDevices() 兜底查是否有耳机类设备可用
-        try {
-          final session = await AudioSession.instance;
-          final devices = await session.getDevices(includeInputs: false);
-          final hasHeadphoneDevice = devices.any((d) =>
-            d.type == AudioDeviceType.wiredHeadset ||
-            d.type == AudioDeviceType.wiredHeadphones ||
-            d.type == AudioDeviceType.bluetoothSco ||
-            d.type == AudioDeviceType.bluetoothA2dp ||
-            d.type == AudioDeviceType.bluetoothLe ||
-            d.type == AudioDeviceType.hearingAid ||
-            d.type == AudioDeviceType.airPlay ||
-            d.type == AudioDeviceType.usbAudio ||
-            d.type == AudioDeviceType.carAudio ||
-            d.name.contains('AirPods') ||
-            d.name.contains('Bluetooth') ||
-            d.name.contains('耳机'));
-          if (hasHeadphoneDevice) {
-            debugPrint('[TtsService] getDevices found headphone — overriding route.');
-            await avSession.overrideOutputAudioPort(AVAudioSessionPortOverride.none);
-            await Future.delayed(const Duration(milliseconds: 200));
-            final retryRoute = await avSession.currentRoute;
-            if (retryRoute.outputs.any((o) =>
-              o.portType == AVAudioSessionPort.headphones ||
-              o.portType == AVAudioSessionPort.bluetoothA2dp ||
-              o.portType == AVAudioSessionPort.bluetoothLe ||
-              o.portType == AVAudioSessionPort.bluetoothHfp ||
-              o.portType == AVAudioSessionPort.airPlay ||
-              o.portType == AVAudioSessionPort.usbAudio ||
-              o.portType == AVAudioSessionPort.carAudio ||
-              o.portName.contains('AirPods') ||
-              o.portName.contains('Bluetooth') ||
-              o.portName.contains('耳机'))) {
-              lastRouteDebug = '';
-              return true;
-            }
-          }
-        } catch (_) {}
-        lastRouteDebug = 'only speaker/receiver: $pluginPortNames';
-        debugPrint('[TtsService] iOS route only has speaker — BLOCKED!');
-        return false;
-      }
-
-      // 2. Android 硬件检查（session 已在 iOS 路径前声明）
-      final session = await AudioSession.instance;
-      final devices = await session.getDevices();
-      for (final device in devices) {
-        final type = device.type;
-        if (type == AudioDeviceType.wiredHeadset ||
-            type == AudioDeviceType.wiredHeadphones ||
-            type == AudioDeviceType.bluetoothSco ||
-            type == AudioDeviceType.bluetoothA2dp ||
-            type == AudioDeviceType.bluetoothLe ||
-            type == AudioDeviceType.hearingAid ||
-            type == AudioDeviceType.airPlay ||
-            type == AudioDeviceType.usbAudio) {
-          return true;
-        }
-      }
-      return false;
-    } catch (e) {
-      debugPrint('[TtsService] _queryCurrentRoute error: $e');
+  Future<void> _playAudioSafely(String playbackSource) async {
+    if (!await prepareSafePlayback(playbackSource: playbackSource)) {
+      throw StateError('Unsafe audio route: $lastRouteDebug');
     }
-    return false;
+    await _audioPlayer.play();
+  }
+
+  Future<void> _speakNativeSafely(
+    String text, {
+    required String playbackSource,
+  }) async {
+    if (!await prepareSafePlayback(playbackSource: playbackSource)) {
+      throw StateError('Unsafe audio route: $lastRouteDebug');
+    }
+    _isNativeEnglishPlaying = _currentAudioType == ActiveAudioType.english;
+    _isChineseNativePlaying = _currentAudioType == ActiveAudioType.chinese;
+    if (_isChineseNativePlaying) _lastNativeChineseText = text;
+    _flutterTts.setCompletionHandler(_finishNativePlayback);
+    _flutterTts.setCancelHandler(_finishNativePlayback);
+    await _flutterTts.speak(text);
+  }
+
+  void _finishNativePlayback() {
+    if (_isChineseNativePlaying) {
+      _chineseNativePosition = _chineseNativeDuration;
+    }
+    _isChineseNativePlaying = false;
+    _isNativeEnglishPlaying = false;
+    _chineseNativeTimer?.cancel();
+    _stopHeadphoneMonitor();
+    WakelockService.disable();
+    notifyListeners();
+  }
+
+  /// 检查耳机/蓝牙输出是否连接（不再 4 秒多轮轮询，使用单次硬硬核路由检查）
+  Future<bool> isHeadphonesConnected() async {
+    final decision = await routeDetector.inspectCurrentOutput();
+    lastRouteDebug = decision.isSafe ? '' : decision.reason;
+    return decision.isSafe;
   }
 
   String _sanitizeMarkdown(String markdown) {
@@ -392,7 +367,10 @@ class TtsService extends ChangeNotifier {
     text = text.replaceAll(RegExp(r'^\s*\d+\.\s+', multiLine: true), '，');
     text = text.replaceAll(RegExp(r'^-{3,}\s*$', multiLine: true), '');
     text = text.replaceAll(RegExp(r'[\|\-\+]+'), ' ');
-    text = text.replaceAllMapped(RegExp(r'\[(.*?)\]\(.*?\)'), (match) => match[1] ?? '');
+    text = text.replaceAllMapped(
+      RegExp(r'\[(.*?)\]\(.*?\)'),
+      (match) => match[1] ?? '',
+    );
     final hasChinese = RegExp(r'[\u4e00-\u9fff]').hasMatch(markdown);
     text = text.replaceAll(RegExp(r'\n+'), hasChinese ? '，' : ' ');
     text = text.replaceAll(RegExp(r'\s+'), ' ');
@@ -416,7 +394,9 @@ class TtsService extends ChangeNotifier {
         if (sentence.length > maxChunkSize) {
           int start = 0;
           while (start < sentence.length) {
-            int end = (start + maxChunkSize < sentence.length) ? start + maxChunkSize : sentence.length;
+            int end = (start + maxChunkSize < sentence.length)
+                ? start + maxChunkSize
+                : sentence.length;
             chunks.add(sentence.substring(start, end).trim());
             start = end;
           }
@@ -434,7 +414,11 @@ class TtsService extends ChangeNotifier {
   }
 
   /// 后台静默预生成与下载英文神经网络音频（0 秒阻塞，全自动提前就绪）
-  Future<void> prefetchEnglish(String text, {String? geminiKey, String? siliconFlowKey}) async {
+  Future<void> prefetchEnglish(
+    String text, {
+    String? geminiKey,
+    String? siliconFlowKey,
+  }) async {
     final clean = _sanitizeMarkdown(text);
     if (clean.isEmpty) return;
 
@@ -449,12 +433,16 @@ class TtsService extends ChangeNotifier {
 
     // 若已经预载过，直接跳过
     if (await cachedFile.exists() && (await cachedFile.length()) > 0) {
-      debugPrint("[TtsPrefetch] English audio already cached: ${cachedFile.path}");
+      debugPrint(
+        "[TtsPrefetch] English audio already cached: ${cachedFile.path}",
+      );
       return;
     }
 
     try {
-      debugPrint("[TtsPrefetch] Silently pre-synthesizing English audio in background...");
+      debugPrint(
+        "[TtsPrefetch] Silently pre-synthesizing English audio in background...",
+      );
       List<int>? synthesizedBytes;
 
       final effectiveSiliconKey = (siliconFlowKey ?? '').trim();
@@ -462,15 +450,23 @@ class TtsService extends ChangeNotifier {
 
       if (effectiveSiliconKey.isNotEmpty) {
         try {
-          synthesizedBytes = await _synthesizeWithSiliconFlow(clean, effectiveSiliconKey, textHash);
+          synthesizedBytes = await _synthesizeWithSiliconFlow(
+            clean,
+            effectiveSiliconKey,
+            textHash,
+          );
         } catch (e) {
           debugPrint("[TtsPrefetch] SiliconFlow prefetch error: $e");
         }
       }
 
-      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) && effectiveGeminiKey.isNotEmpty) {
+      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
+          effectiveGeminiKey.isNotEmpty) {
         try {
-          synthesizedBytes = await _synthesizeWithGemini(clean, effectiveGeminiKey);
+          synthesizedBytes = await _synthesizeWithGemini(
+            clean,
+            effectiveGeminiKey,
+          );
         } catch (e) {
           debugPrint("[TtsPrefetch] Gemini prefetch error: $e");
         }
@@ -482,7 +478,9 @@ class TtsService extends ChangeNotifier {
 
       if (synthesizedBytes.isNotEmpty) {
         await cachedFile.writeAsBytes(synthesizedBytes);
-        debugPrint("[TtsPrefetch] English audio successfully pre-fetched to disk cache!");
+        debugPrint(
+          "[TtsPrefetch] English audio successfully pre-fetched to disk cache!",
+        );
       }
     } catch (e) {
       debugPrint("[TtsPrefetch] Background prefetch failed: $e");
@@ -497,12 +495,17 @@ class TtsService extends ChangeNotifier {
   // 🇨🇳 中文朗读接口（方案 1: iOS 本地原生 / 方案 2: 微软 Edge 晓晓神经网络女声）
   // ════════════════════════════════════════════════════════════════════
 
-  Future<void> speakChinese(String text, {String? geminiKey, String? siliconFlowKey}) async {
+  Future<void> speakChinese(
+    String text, {
+    String? geminiKey,
+    String? siliconFlowKey,
+  }) async {
     await init();
     await stopAll();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
+    if (!(await isHeadphonesConnected()))
+      throw Exception("NoHeadphones | ${lastRouteDebug}");
 
     final clean = _sanitizeMarkdown(text);
     if (clean.isEmpty) return;
@@ -525,7 +528,9 @@ class TtsService extends ChangeNotifier {
       _chineseNativePosition = Duration.zero;
 
       final estTotalSeconds = (clean.length / 3.8).clamp(2.0, 600.0);
-      _chineseNativeDuration = Duration(milliseconds: (estTotalSeconds * 1000).toInt());
+      _chineseNativeDuration = Duration(
+        milliseconds: (estTotalSeconds * 1000).toInt(),
+      );
 
       await _flutterTts.stop();
       await _flutterTts.setLanguage("zh-CN");
@@ -537,11 +542,15 @@ class TtsService extends ChangeNotifier {
         _isChineseNativePlaying = false;
         _chineseNativeTimer?.cancel();
         _chineseNativePosition = _chineseNativeDuration;
+        _stopHeadphoneMonitor();
+        WakelockService.disable();
         notifyListeners();
       });
 
       _chineseNativeTimer?.cancel();
-      _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (timer) {
+      _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (
+        timer,
+      ) {
         if (!_isChineseNativePlaying) {
           timer.cancel();
           return;
@@ -554,7 +563,7 @@ class TtsService extends ChangeNotifier {
         notifyListeners();
       });
 
-      await _flutterTts.speak(clean);
+      await _speakNativeSafely(clean, playbackSource: 'Chinese native');
       globalAudioHandler.setPlaybackMetadata(
         title: _formatLockscreenTitle(clean),
         artist: '中文 · iOS 原生语音',
@@ -571,7 +580,9 @@ class TtsService extends ChangeNotifier {
     final cachedFile = File("${cacheDir.path}/chinese_neural_$textHash.mp3");
 
     if (await cachedFile.exists() && (await cachedFile.length()) > 0) {
-      debugPrint("[TtsCache] Hit local Chinese neural disk cache: ${cachedFile.path}");
+      debugPrint(
+        "[TtsCache] Hit local Chinese neural disk cache: ${cachedFile.path}",
+      );
       _currentAudioType = ActiveAudioType.chinese;
       final duration = await _audioPlayer.setFilePath(cachedFile.path);
       globalAudioHandler.setPlaybackMetadata(
@@ -580,7 +591,7 @@ class TtsService extends ChangeNotifier {
         duration: duration,
       );
       await _audioPlayer.setSpeed(_chineseSpeed);
-      await _audioPlayer.play();
+      await _playAudioSafely('Chinese cached audio');
       _startHeadphoneMonitor();
       notifyListeners();
       return;
@@ -594,8 +605,13 @@ class TtsService extends ChangeNotifier {
 
       // 1. 优先使用微软 Edge 官方 WebSocket 协议直连 (zh-CN-XiaoxiaoNeural · 24kHz 播音女声)
       try {
-        debugPrint("[TtsService] Synthesizing Chinese via Microsoft Edge WebSocket (Xiaoxiao)...");
-        synthesizedBytes = await _synthesizeWithEdgeWebSocket(clean, "zh-CN-XiaoxiaoNeural");
+        debugPrint(
+          "[TtsService] Synthesizing Chinese via Microsoft Edge WebSocket (Xiaoxiao)...",
+        );
+        synthesizedBytes = await _synthesizeWithEdgeWebSocket(
+          clean,
+          "zh-CN-XiaoxiaoNeural",
+        );
       } catch (wsErr) {
         debugPrint("[TtsService] Microsoft Edge WebSocket failed ($wsErr)");
       }
@@ -603,7 +619,9 @@ class TtsService extends ChangeNotifier {
       // 2. 微软 Edge HTTP 代理节点降级
       if (synthesizedBytes == null || synthesizedBytes.isEmpty) {
         try {
-          debugPrint("[TtsService] Synthesizing Chinese audio via Microsoft Edge HTTP Proxy...");
+          debugPrint(
+            "[TtsService] Synthesizing Chinese audio via Microsoft Edge HTTP Proxy...",
+          );
           synthesizedBytes = await _synthesizeChineseWithEdge(clean);
         } catch (edgeErr) {
           debugPrint("[TtsService] Chinese Edge Neural HTTP failed ($edgeErr)");
@@ -612,10 +630,16 @@ class TtsService extends ChangeNotifier {
 
       // 3. 硅基流动（SiliconFlow）第三级备用通道
       final effectiveSiliconKey = (siliconFlowKey ?? '').trim();
-      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) && effectiveSiliconKey.isNotEmpty) {
+      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
+          effectiveSiliconKey.isNotEmpty) {
         try {
-          debugPrint("[TtsService] Synthesizing Chinese via SiliconFlow CosyVoice...");
-          synthesizedBytes = await _synthesizeChineseWithSiliconFlow(clean, effectiveSiliconKey);
+          debugPrint(
+            "[TtsService] Synthesizing Chinese via SiliconFlow CosyVoice...",
+          );
+          synthesizedBytes = await _synthesizeChineseWithSiliconFlow(
+            clean,
+            effectiveSiliconKey,
+          );
         } catch (e) {
           debugPrint("[TtsService] SiliconFlow Chinese failed: $e");
         }
@@ -634,21 +658,25 @@ class TtsService extends ChangeNotifier {
           duration: duration,
         );
         await _audioPlayer.setSpeed(_chineseSpeed);
-        await _audioPlayer.play();
+        await _playAudioSafely('Chinese synthesized audio');
         _startHeadphoneMonitor();
         notifyListeners();
         return;
       }
 
       // 5. 若所有在线 API 均失败或网络断开，平滑回退至 iOS 本地离线原生发音（不爆弹窗，保证 100% 正常播放）
-      debugPrint("[TtsService] Online Chinese TTS unavailable, falling back to iOS Native Speech");
+      debugPrint(
+        "[TtsService] Online Chinese TTS unavailable, falling back to iOS Native Speech",
+      );
       _isChineseSynthesizing = false;
       _currentAudioType = ActiveAudioType.chinese;
       _isChineseNativePlaying = true;
       _chineseNativePosition = Duration.zero;
 
       final estTotalSeconds = (clean.length / 3.8).clamp(2.0, 600.0);
-      _chineseNativeDuration = Duration(milliseconds: (estTotalSeconds * 1000).toInt());
+      _chineseNativeDuration = Duration(
+        milliseconds: (estTotalSeconds * 1000).toInt(),
+      );
 
       await _flutterTts.stop();
       await _flutterTts.setLanguage("zh-CN");
@@ -664,7 +692,9 @@ class TtsService extends ChangeNotifier {
       });
 
       _chineseNativeTimer?.cancel();
-      _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (timer) {
+      _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (
+        timer,
+      ) {
         if (!_isChineseNativePlaying) {
           timer.cancel();
           return;
@@ -677,7 +707,10 @@ class TtsService extends ChangeNotifier {
         notifyListeners();
       });
 
-      await _flutterTts.speak(clean);
+      await _speakNativeSafely(
+        clean,
+        playbackSource: 'Chinese native fallback',
+      );
       globalAudioHandler.setPlaybackMetadata(
         title: _formatLockscreenTitle(clean),
         artist: '中文 · iOS 离线原生语音',
@@ -701,34 +734,34 @@ class TtsService extends ChangeNotifier {
   }
 
   /// 微软 Edge 官方 WebSocket 协议神经网络发音合成
-  Future<List<int>> _synthesizeWithEdgeWebSocket(String text, String voiceName) async {
+  Future<List<int>> _synthesizeWithEdgeWebSocket(
+    String text,
+    String voiceName,
+  ) async {
     final chunks = _splitTextIntoChunks(text, maxChunkSize: 350);
     final allAudioBytes = <int>[];
-
-    final token = "6A5AA1D4EAFF4E9FB37E23D68491D6F4";
-    final version = "1-143.0.3650.75";
 
     for (final chunk in chunks) {
       final safeChunk = _escapeXml(chunk);
       final lang = voiceName.startsWith("zh") ? "zh-CN" : "en-US";
-      final requestId = md5.convert(utf8.encode(DateTime.now().toIso8601String() + chunk)).toString().replaceAll('-', '');
+      final requestId = md5
+          .convert(utf8.encode(DateTime.now().toIso8601String() + chunk))
+          .toString()
+          .replaceAll('-', '');
 
-      // 动态计算微软 Edge Sec-MS-GEC 防盗链 Token (基于 100ns Windows FileTime 时间戳)
-      final unixSec = (DateTime.now().toUtc().millisecondsSinceEpoch / 1000);
-      var fileTimeTicks = (unixSec + 11644473600) * 10000000;
-      fileTimeTicks -= (fileTimeTicks % 3000000000); // 5 分钟向上取整对齐
-
-      final strToHash = "${fileTimeTicks.toStringAsFixed(0)}$token";
-      final secMsGec = sha256.convert(utf8.encode(strToHash)).toString().toUpperCase();
-
-      final wsUrl = "wss://speech.platform.bing.com/consumer/speech/synthesize/readaloud/edge/v1?TrustedClientToken=$token&Sec-MS-GEC=$secMsGec&Sec-MS-GEC-Version=$version";
+      // [Phase 4 Section 4.5] 使用 EdgeTtsAuth 动态计算 Sec-MS-GEC 防盗链 Token 并在 WebSocket 连接时安全隔离凭据
+      final wsUrl = EdgeTtsAuth.buildWebSocketUrl(utcNow: DateTime.now());
 
       final client = HttpClient();
-      client.userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0";
+      client.userAgent =
+          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/143.0.0.0 Safari/537.36 Edg/143.0.0.0";
 
       try {
-        final random = Random();
-        final muid = List.generate(32, (_) => random.nextInt(16).toRadixString(16)).join().toUpperCase();
+        final secureRandom = Random.secure();
+        final muid = List.generate(
+          32,
+          (_) => secureRandom.nextInt(16).toRadixString(16),
+        ).join().toUpperCase();
 
         final socket = await WebSocket.connect(
           wsUrl,
@@ -746,25 +779,32 @@ class TtsService extends ChangeNotifier {
         final chunkBytes = <int>[];
         final completer = Completer<void>();
 
-        socket.listen((data) {
-          if (data is List<int> && data.length > 2) {
-            final headerLength = (data[0] << 8) | data[1];
-            if (data.length >= 2 + headerLength) {
-              final headerStr = utf8.decode(data.sublist(2, 2 + headerLength), allowMalformed: true);
-              if (headerStr.contains("Path:audio")) {
-                chunkBytes.addAll(data.sublist(2 + headerLength));
+        socket.listen(
+          (data) {
+            if (data is List<int> && data.length > 2) {
+              final headerLength = (data[0] << 8) | data[1];
+              if (data.length >= 2 + headerLength) {
+                final headerStr = utf8.decode(
+                  data.sublist(2, 2 + headerLength),
+                  allowMalformed: true,
+                );
+                if (headerStr.contains("Path:audio")) {
+                  chunkBytes.addAll(data.sublist(2 + headerLength));
+                }
+              }
+            } else if (data is String) {
+              if (data.contains("Path:turn.end")) {
+                if (!completer.isCompleted) completer.complete();
               }
             }
-          } else if (data is String) {
-            if (data.contains("Path:turn.end")) {
-              if (!completer.isCompleted) completer.complete();
-            }
-          }
-        }, onError: (err) {
-          if (!completer.isCompleted) completer.completeError(err);
-        }, onDone: () {
-          if (!completer.isCompleted) completer.complete();
-        });
+          },
+          onError: (err) {
+            if (!completer.isCompleted) completer.completeError(err);
+          },
+          onDone: () {
+            if (!completer.isCompleted) completer.complete();
+          },
+        );
 
         final configFrame =
             "Content-Type:application/json; charset=utf-8\r\nPath:speech.config\r\n\r\n"
@@ -776,10 +816,13 @@ class TtsService extends ChangeNotifier {
             "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='$lang'><voice name='$voiceName'><prosody pitch='+0Hz' rate='+0%'>$safeChunk</prosody></voice></speak>";
         socket.add(ssmlFrame);
 
-        await completer.future.timeout(const Duration(seconds: 45), onTimeout: () {
-          socket.close();
-          throw TimeoutException('Edge WebSocket chunk timeout after 45s');
-        });
+        await completer.future.timeout(
+          const Duration(seconds: 45),
+          onTimeout: () {
+            socket.close();
+            throw TimeoutException('Edge WebSocket chunk timeout after 45s');
+          },
+        );
 
         await socket.close();
 
@@ -794,7 +837,8 @@ class TtsService extends ChangeNotifier {
       }
     }
 
-    if (allAudioBytes.isEmpty) throw Exception("Edge WebSocket returned empty audio");
+    if (allAudioBytes.isEmpty)
+      throw Exception("Edge WebSocket returned empty audio");
     return allAudioBytes;
   }
 
@@ -807,14 +851,16 @@ class TtsService extends ChangeNotifier {
       // 1. Public Edge TTS Proxy Endpoint 1
       try {
         final url2 = Uri.parse("https://edge-tts.duti.tech/api/tts");
-        final resp2 = await http.post(
-          url2,
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "text": chunk,
-            "voice": "zh-CN-XiaoxiaoNeural",
-          }),
-        ).timeout(const Duration(seconds: 15));
+        final resp2 = await http
+            .post(
+              url2,
+              headers: {"Content-Type": "application/json"},
+              body: jsonEncode({
+                "text": chunk,
+                "voice": "zh-CN-XiaoxiaoNeural",
+              }),
+            )
+            .timeout(const Duration(seconds: 15));
 
         if (resp2.statusCode == 200 && resp2.bodyBytes.isNotEmpty) {
           allMp3Bytes.addAll(resp2.bodyBytes);
@@ -825,14 +871,16 @@ class TtsService extends ChangeNotifier {
       // 2. Public Edge TTS Proxy Endpoint 2
       try {
         final url3 = Uri.parse("https://tts.m8a.net/api/tts");
-        final resp3 = await http.post(
-          url3,
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "text": chunk,
-            "voice": "zh-CN-XiaoxiaoNeural",
-          }),
-        ).timeout(const Duration(seconds: 15));
+        final resp3 = await http
+            .post(
+              url3,
+              headers: {"Content-Type": "application/json"},
+              body: jsonEncode({
+                "text": chunk,
+                "voice": "zh-CN-XiaoxiaoNeural",
+              }),
+            )
+            .timeout(const Duration(seconds: 15));
 
         if (resp3.statusCode == 200 && resp3.bodyBytes.isNotEmpty) {
           allMp3Bytes.addAll(resp3.bodyBytes);
@@ -843,11 +891,15 @@ class TtsService extends ChangeNotifier {
       throw Exception("All Edge Chinese endpoints returned empty");
     }
 
-    if (allMp3Bytes.isEmpty) throw Exception("Chinese Edge Neural returned empty data");
+    if (allMp3Bytes.isEmpty)
+      throw Exception("Chinese Edge Neural returned empty data");
     return allMp3Bytes;
   }
 
-  Future<List<int>> _synthesizeChineseWithSiliconFlow(String text, String siliconFlowKey) async {
+  Future<List<int>> _synthesizeChineseWithSiliconFlow(
+    String text,
+    String siliconFlowKey,
+  ) async {
     final chunks = _splitTextIntoChunks(text, maxChunkSize: 600);
     final allBytes = <int>[];
 
@@ -855,37 +907,41 @@ class TtsService extends ChangeNotifier {
       final url = Uri.parse("https://api.siliconflow.cn/v1/audio/speech");
 
       // 1. 优先使用 SiliconFlow 的 24kHz 中文神经网络晓晓女声 (speech:zh-CN-XiaoxiaoNeural)
-      var response = await http.post(
-        url,
-        headers: {
-          "Authorization": "Bearer ${siliconFlowKey.trim()}",
-          "Content-Type": "application/json",
-        },
-        body: jsonEncode({
-          "model": "speech:zh-CN-XiaoxiaoNeural",
-          "input": chunk,
-          "voice": "speech:zh-CN-XiaoxiaoNeural",
-          "response_format": "mp3",
-          "stream": false,
-        }),
-      ).timeout(const Duration(seconds: 20));
+      var response = await http
+          .post(
+            url,
+            headers: {
+              "Authorization": "Bearer ${siliconFlowKey.trim()}",
+              "Content-Type": "application/json",
+            },
+            body: jsonEncode({
+              "model": "speech:zh-CN-XiaoxiaoNeural",
+              "input": chunk,
+              "voice": "speech:zh-CN-XiaoxiaoNeural",
+              "response_format": "mp3",
+              "stream": false,
+            }),
+          )
+          .timeout(const Duration(seconds: 20));
 
       // 2. 若专有模型未提供，使用 CosyVoice 24kHz 高级双语女声 Bella 兜底
       if (response.statusCode != 200) {
-        response = await http.post(
-          url,
-          headers: {
-            "Authorization": "Bearer ${siliconFlowKey.trim()}",
-            "Content-Type": "application/json",
-          },
-          body: jsonEncode({
-            "model": "FunAudioLLM/CosyVoice2-0.5B",
-            "input": chunk,
-            "voice": "FunAudioLLM/CosyVoice2-0.5B:bella",
-            "response_format": "mp3",
-            "stream": false,
-          }),
-        ).timeout(const Duration(seconds: 20));
+        response = await http
+            .post(
+              url,
+              headers: {
+                "Authorization": "Bearer ${siliconFlowKey.trim()}",
+                "Content-Type": "application/json",
+              },
+              body: jsonEncode({
+                "model": "FunAudioLLM/CosyVoice2-0.5B",
+                "input": chunk,
+                "voice": "FunAudioLLM/CosyVoice2-0.5B:bella",
+                "response_format": "mp3",
+                "stream": false,
+              }),
+            )
+            .timeout(const Duration(seconds: 20));
       }
 
       if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
@@ -895,21 +951,27 @@ class TtsService extends ChangeNotifier {
       }
     }
 
-    if (allBytes.isEmpty) throw Exception("SiliconFlow Chinese returned empty data");
+    if (allBytes.isEmpty)
+      throw Exception("SiliconFlow Chinese returned empty data");
     return allBytes;
   }
 
   Future<void> playChinese() async {
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
+    if (!(await isHeadphonesConnected()))
+      throw Exception("NoHeadphones | ${lastRouteDebug}");
     WakelockService.enable();
     _currentAudioType = ActiveAudioType.chinese;
-    if (_isChineseNativePlaying || (_chineseNativePosition > Duration.zero && _chineseNativeDuration > Duration.zero)) {
+    if (_isChineseNativePlaying ||
+        (_chineseNativePosition > Duration.zero &&
+            _chineseNativeDuration > Duration.zero)) {
       // 原生 TTS 履复：重新启动 timer，位置保持不变
       _isChineseNativePlaying = true;
       _chineseNativeTimer?.cancel();
-      _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (timer) {
+      _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (
+        timer,
+      ) {
         if (!_isChineseNativePlaying) {
           timer.cancel();
           return;
@@ -921,12 +983,13 @@ class TtsService extends ChangeNotifier {
         }
         notifyListeners();
       });
-      // flutter_tts iOS 支持 pause/continue，timer 重启即恢复进度条
-      // 注：flutter_tts 在 iOS 上 pause() 后可通过 speak() 同一文本继续（iOS 原生支持）
+      final text = _lastNativeChineseText;
+      if (text == null || text.isEmpty) return;
+      await _speakNativeSafely(text, playbackSource: 'Chinese native resume');
       notifyListeners();
     } else {
       // 普通 _audioPlayer 模式（微软合成音频）
-      await _audioPlayer.play();
+      await _playAudioSafely('Chinese resume');
     }
     _startHeadphoneMonitor();
   }
@@ -955,18 +1018,20 @@ class TtsService extends ChangeNotifier {
       );
       notifyListeners();
     }
+    _finishNativePlayback();
   }
 
   Future<void> seekChinese(Duration position) async {
     if (_isChineseNativePlaying ||
-        (_chineseNativePosition > Duration.zero && _chineseNativeDuration > Duration.zero)) {
+        (_chineseNativePosition > Duration.zero &&
+            _chineseNativeDuration > Duration.zero)) {
       // 原生 TTS 模式：更新虚拟进度，无法真实 seek flutter_tts
       // Duration 没有内置 clamp，手动实现
       final clamped = position < Duration.zero
           ? Duration.zero
           : position > _chineseNativeDuration
-              ? _chineseNativeDuration
-              : position;
+          ? _chineseNativeDuration
+          : position;
       _chineseNativePosition = clamped;
       notifyListeners();
     } else {
@@ -991,7 +1056,8 @@ class TtsService extends ChangeNotifier {
     await stopAll();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
+    if (!(await isHeadphonesConnected()))
+      throw Exception("NoHeadphones | ${lastRouteDebug}");
 
     WakelockService.enable();
 
@@ -1009,7 +1075,7 @@ class TtsService extends ChangeNotifier {
     );
     await _audioPlayer.setSpeed(_englishSpeed);
     await _audioPlayer.setLoopMode(_isLoopMode ? LoopMode.one : LoopMode.off);
-    await _audioPlayer.play();
+    await _playAudioSafely('Recorded audio');
     _startHeadphoneMonitor();
     notifyListeners();
   }
@@ -1022,12 +1088,17 @@ class TtsService extends ChangeNotifier {
   // 🇬🇧 英文 AI 拟真音色朗读接口（Gemini 2.0 Flash 原生 API + 硅基流动降级方案）
   // ════════════════════════════════════════════════════════════════════
 
-  Future<void> speakEnglish(String text, {String? geminiKey, String? siliconFlowKey}) async {
+  Future<void> speakEnglish(
+    String text, {
+    String? geminiKey,
+    String? siliconFlowKey,
+  }) async {
     await init();
     await stopAll();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
+    if (!(await isHeadphonesConnected()))
+      throw Exception("NoHeadphones | ${lastRouteDebug}");
 
     final clean = _sanitizeMarkdown(text);
     if (clean.isEmpty) return;
@@ -1052,7 +1123,10 @@ class TtsService extends ChangeNotifier {
               final name = voice["name"]?.toString() ?? "";
               final locale = voice["locale"]?.toString() ?? "";
               if (locale.contains("en-US") &&
-                  (name.contains("Samantha") || name.contains("Ava") || name.contains("Karen") || name.contains("Allison"))) {
+                  (name.contains("Samantha") ||
+                      name.contains("Ava") ||
+                      name.contains("Karen") ||
+                      name.contains("Allison"))) {
                 await _flutterTts.setVoice({"name": name, "locale": locale});
                 break;
               }
@@ -1063,7 +1137,7 @@ class TtsService extends ChangeNotifier {
         debugPrint("[TtsService] Voice selection fallback: $e");
       }
 
-      await _flutterTts.speak(clean);
+      await _speakNativeSafely(clean, playbackSource: 'English native');
       globalAudioHandler.setPlaybackMetadata(
         title: _formatLockscreenTitle(clean),
         artist: 'English · iOS Native Voice',
@@ -1097,7 +1171,7 @@ class TtsService extends ChangeNotifier {
       );
       await _audioPlayer.setSpeed(_englishSpeed);
       await _audioPlayer.setLoopMode(_isLoopMode ? LoopMode.one : LoopMode.off);
-      await _audioPlayer.play();
+      await _playAudioSafely('English cached audio');
       _startHeadphoneMonitor();
       notifyListeners();
       return;
@@ -1114,8 +1188,13 @@ class TtsService extends ChangeNotifier {
 
       // 1. 优先使用微软 Edge 官方 WebSocket 协议直连 (en-US-JennyNeural · 24kHz 播音美音)
       try {
-        debugPrint("[TtsService] Synthesizing English audio via Microsoft Edge WebSocket (Jenny)...");
-        synthesizedBytes = await _synthesizeWithEdgeWebSocket(clean, "en-US-JennyNeural");
+        debugPrint(
+          "[TtsService] Synthesizing English audio via Microsoft Edge WebSocket (Jenny)...",
+        );
+        synthesizedBytes = await _synthesizeWithEdgeWebSocket(
+          clean,
+          "en-US-JennyNeural",
+        );
       } catch (wsErr) {
         debugPrint("[TtsService] English Edge WebSocket failed ($wsErr)");
       }
@@ -1123,7 +1202,9 @@ class TtsService extends ChangeNotifier {
       // 2. 微软 Edge HTTP 降级方案
       if (synthesizedBytes == null || synthesizedBytes.isEmpty) {
         try {
-          debugPrint("[TtsService] Synthesizing audio via Microsoft Edge Neural HTTP...");
+          debugPrint(
+            "[TtsService] Synthesizing audio via Microsoft Edge Neural HTTP...",
+          );
           synthesizedBytes = await _synthesizeWithEdgeNeural(clean);
         } catch (e) {
           debugPrint("[TtsService] Edge Neural HTTP failed: $e");
@@ -1133,7 +1214,9 @@ class TtsService extends ChangeNotifier {
       // 3. 三级兜底：iOS 原生离线语音（秒播 · 零延迟 · 零成本 · 不断网保障）
       if (synthesizedBytes == null || synthesizedBytes.isEmpty) {
         try {
-          debugPrint("[TtsService] Fallback to iOS Native Speech (3rd tier)...");
+          debugPrint(
+            "[TtsService] Fallback to iOS Native Speech (3rd tier)...",
+          );
           _currentAudioType = ActiveAudioType.english;
           await _flutterTts.stop();
           await _flutterTts.setLanguage("en-US");
@@ -1146,14 +1229,20 @@ class TtsService extends ChangeNotifier {
                 final name = voice["name"]?.toString() ?? "";
                 final locale = voice["locale"]?.toString() ?? "";
                 if (locale.contains("en-US") &&
-                    (name.contains("Samantha") || name.contains("Ava") || name.contains("Karen") || name.contains("Allison"))) {
+                    (name.contains("Samantha") ||
+                        name.contains("Ava") ||
+                        name.contains("Karen") ||
+                        name.contains("Allison"))) {
                   await _flutterTts.setVoice({"name": name, "locale": locale});
                   break;
                 }
               }
             }
           }
-          await _flutterTts.speak(clean);
+          await _speakNativeSafely(
+            clean,
+            playbackSource: 'English native fallback',
+          );
           globalAudioHandler.setPlaybackMetadata(
             title: _formatLockscreenTitle(clean),
             artist: 'English · iOS Native Voice',
@@ -1168,20 +1257,31 @@ class TtsService extends ChangeNotifier {
       }
 
       // 4. 若配置了 SiliconFlow Key，备用尝试 24kHz 播音级女声 Bella
-      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) && effectiveSiliconKey.isNotEmpty) {
+      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
+          effectiveSiliconKey.isNotEmpty) {
         try {
-          debugPrint("[TtsService] Synthesizing audio via SiliconFlow Bella Female Voice...");
-          synthesizedBytes = await _synthesizeWithSiliconFlow(clean, effectiveSiliconKey, textHash);
+          debugPrint(
+            "[TtsService] Synthesizing audio via SiliconFlow Bella Female Voice...",
+          );
+          synthesizedBytes = await _synthesizeWithSiliconFlow(
+            clean,
+            effectiveSiliconKey,
+            textHash,
+          );
         } catch (e) {
           debugPrint("[TtsService] SiliconFlow Bella failed: $e");
         }
       }
 
       // 5. 若配置了 Gemini Key，备用尝试 Google 官方播音女声
-      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) && effectiveGeminiKey.isNotEmpty) {
+      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
+          effectiveGeminiKey.isNotEmpty) {
         try {
           debugPrint("[TtsService] Synthesizing audio via Google API...");
-          synthesizedBytes = await _synthesizeWithGemini(clean, effectiveGeminiKey);
+          synthesizedBytes = await _synthesizeWithGemini(
+            clean,
+            effectiveGeminiKey,
+          );
         } catch (e) {
           debugPrint("[TtsService] Gemini audio failed: $e");
         }
@@ -1199,8 +1299,10 @@ class TtsService extends ChangeNotifier {
           duration: duration,
         );
         await _audioPlayer.setSpeed(_englishSpeed);
-        await _audioPlayer.setLoopMode(_isLoopMode ? LoopMode.one : LoopMode.off);
-        await _audioPlayer.play();
+        await _audioPlayer.setLoopMode(
+          _isLoopMode ? LoopMode.one : LoopMode.off,
+        );
+        await _playAudioSafely('English synthesized audio');
         _startHeadphoneMonitor();
         notifyListeners();
         return;
@@ -1208,7 +1310,9 @@ class TtsService extends ChangeNotifier {
         throw Exception("All online neural TTS endpoints returned empty");
       }
     } catch (e) {
-      debugPrint("[TtsService] All remaining TTS failed ($e). Last resort: iOS Native Speech.");
+      debugPrint(
+        "[TtsService] All remaining TTS failed ($e). Last resort: iOS Native Speech.",
+      );
       _isEnglishSynthesizing = false;
       notifyListeners();
 
@@ -1216,7 +1320,10 @@ class TtsService extends ChangeNotifier {
       await _flutterTts.stop();
       await _flutterTts.setLanguage("en-US");
       await _flutterTts.setSpeechRate(_englishSpeed * 0.5);
-      await _flutterTts.speak(clean);
+      await _speakNativeSafely(
+        clean,
+        playbackSource: 'English last-resort native',
+      );
       globalAudioHandler.setPlaybackMetadata(
         title: _formatLockscreenTitle(clean),
         artist: 'English · iOS Native Voice',
@@ -1242,14 +1349,13 @@ class TtsService extends ChangeNotifier {
       if (!chunkOk) {
         try {
           final url = Uri.parse("https://edge-tts.duti.tech/api/tts");
-          final resp = await http.post(
-            url,
-            headers: {"Content-Type": "application/json"},
-            body: jsonEncode({
-              "text": chunk,
-              "voice": "en-US-JennyNeural",
-            }),
-          ).timeout(const Duration(seconds: 15));
+          final resp = await http
+              .post(
+                url,
+                headers: {"Content-Type": "application/json"},
+                body: jsonEncode({"text": chunk, "voice": "en-US-JennyNeural"}),
+              )
+              .timeout(const Duration(seconds: 15));
           if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
             allMp3Bytes.addAll(resp.bodyBytes);
             chunkOk = true;
@@ -1261,14 +1367,13 @@ class TtsService extends ChangeNotifier {
       if (!chunkOk) {
         try {
           final url = Uri.parse("https://tts.m8a.net/api/tts");
-          final resp = await http.post(
-            url,
-            headers: {"Content-Type": "application/json"},
-            body: jsonEncode({
-              "text": chunk,
-              "voice": "en-US-JennyNeural",
-            }),
-          ).timeout(const Duration(seconds: 15));
+          final resp = await http
+              .post(
+                url,
+                headers: {"Content-Type": "application/json"},
+                body: jsonEncode({"text": chunk, "voice": "en-US-JennyNeural"}),
+              )
+              .timeout(const Duration(seconds: 15));
           if (resp.statusCode == 200 && resp.bodyBytes.isNotEmpty) {
             allMp3Bytes.addAll(resp.bodyBytes);
             chunkOk = true;
@@ -1279,22 +1384,28 @@ class TtsService extends ChangeNotifier {
       // 3. 微软官方 Bing TTS API 兜底
       if (!chunkOk) {
         try {
-          final fallbackUrl = Uri.parse("https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/single/tts?api-key=6A5AA1D4EA63472594685157EF9E74B3");
-          final fallbackResp = await http.post(
-            fallbackUrl,
-            headers: {
-              "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
-              "Content-Type": "application/ssml+xml",
-              "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
-            },
-            body: utf8.encode(
-              "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
-              "<voice name='en-US-JennyNeural'>"
-              "<prosody pitch='+0Hz' rate='+0%'>$chunk</prosody>"
-              "</voice></speak>",
-            ),
-          ).timeout(const Duration(seconds: 25));
-          if (fallbackResp.statusCode == 200 && fallbackResp.bodyBytes.isNotEmpty) {
+          final fallbackUrl = Uri.parse(
+            "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/single/tts?api-key=6A5AA1D4EA63472594685157EF9E74B3",
+          );
+          final fallbackResp = await http
+              .post(
+                fallbackUrl,
+                headers: {
+                  "User-Agent":
+                      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 Edg/120.0.0.0",
+                  "Content-Type": "application/ssml+xml",
+                  "X-Microsoft-OutputFormat": "audio-24khz-48kbitrate-mono-mp3",
+                },
+                body: utf8.encode(
+                  "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' xml:lang='en-US'>"
+                  "<voice name='en-US-JennyNeural'>"
+                  "<prosody pitch='+0Hz' rate='+0%'>$chunk</prosody>"
+                  "</voice></speak>",
+                ),
+              )
+              .timeout(const Duration(seconds: 25));
+          if (fallbackResp.statusCode == 200 &&
+              fallbackResp.bodyBytes.isNotEmpty) {
             allMp3Bytes.addAll(fallbackResp.bodyBytes);
             chunkOk = true;
           }
@@ -1306,7 +1417,8 @@ class TtsService extends ChangeNotifier {
       }
     }
 
-    if (allMp3Bytes.isEmpty) throw Exception("Edge Neural English returned empty data");
+    if (allMp3Bytes.isEmpty)
+      throw Exception("Edge Neural English returned empty data");
     return allMp3Bytes;
   }
 
@@ -1320,35 +1432,43 @@ class TtsService extends ChangeNotifier {
       bool chunkSuccess = false;
 
       // 尝试 1：Google Gemini 2.0 Flash Native Audio API (generativelanguage.googleapis.com)
-      for (final modality in [["AUDIO"], ["audio"]]) {
+      for (final modality in [
+        ["AUDIO"],
+        ["audio"],
+      ]) {
         if (chunkSuccess) break;
         try {
-          final url = Uri.parse("https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey.trim()}");
-          final response = await http.post(
-            url,
-            headers: {"Content-Type": "application/json"},
-            body: jsonEncode({
-              "contents": [
-                {
-                  "parts": [
+          final url = Uri.parse(
+            "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key=${geminiKey.trim()}",
+          );
+          final response = await http
+              .post(
+                url,
+                headers: {"Content-Type": "application/json"},
+                body: jsonEncode({
+                  "contents": [
                     {
-                      "text": "Read the following English text aloud clearly, fluently, and naturally with realistic intonation:\n\n$chunk"
-                    }
-                  ]
-                }
-              ],
-              "generationConfig": {
-                "responseModalities": modality,
-                "speechConfig": {
-                  "voiceConfig": {
-                    "prebuiltVoiceConfig": {
-                      "voiceName": "Aoede" // 优美清晰的 Studio 级原声女音色
-                    }
-                  }
-                }
-              }
-            }),
-          ).timeout(const Duration(seconds: 35));
+                      "parts": [
+                        {
+                          "text":
+                              "Read the following English text aloud clearly, fluently, and naturally with realistic intonation:\n\n$chunk",
+                        },
+                      ],
+                    },
+                  ],
+                  "generationConfig": {
+                    "responseModalities": modality,
+                    "speechConfig": {
+                      "voiceConfig": {
+                        "prebuiltVoiceConfig": {
+                          "voiceName": "Aoede", // 优美清晰的 Studio 级原声女音色
+                        },
+                      },
+                    },
+                  },
+                }),
+              )
+              .timeout(const Duration(seconds: 35));
 
           if (response.statusCode == 200) {
             final json = jsonDecode(response.body);
@@ -1370,7 +1490,8 @@ class TtsService extends ChangeNotifier {
             }
           } else {
             final errJson = jsonDecode(response.body);
-            lastError = "Gemini API (${response.statusCode}): ${errJson['error']?['message'] ?? response.body}";
+            lastError =
+                "Gemini API (${response.statusCode}): ${errJson['error']?['message'] ?? response.body}";
           }
         } catch (e) {
           lastError = e.toString();
@@ -1380,21 +1501,23 @@ class TtsService extends ChangeNotifier {
       // 尝试 2：使用 Google Cloud TTS API (Studio-O / Journey 级原生优美英文女声)
       if (!chunkSuccess) {
         try {
-          final ttsUrl = Uri.parse("https://texttospeech.googleapis.com/v1/text:synthesize?key=${geminiKey.trim()}");
-          final ttsResponse = await http.post(
-            ttsUrl,
-            headers: {"Content-Type": "application/json"},
-            body: jsonEncode({
-              "input": {"text": chunk},
-              "voice": {
-                "languageCode": "en-US",
-                "name": "en-US-Studio-O" // Google 官方最高阶 Studio 播音级女声
-              },
-              "audioConfig": {
-                "audioEncoding": "MP3"
-              }
-            }),
-          ).timeout(const Duration(seconds: 35));
+          final ttsUrl = Uri.parse(
+            "https://texttospeech.googleapis.com/v1/text:synthesize?key=${geminiKey.trim()}",
+          );
+          final ttsResponse = await http
+              .post(
+                ttsUrl,
+                headers: {"Content-Type": "application/json"},
+                body: jsonEncode({
+                  "input": {"text": chunk},
+                  "voice": {
+                    "languageCode": "en-US",
+                    "name": "en-US-Studio-O", // Google 官方最高阶 Studio 播音级女声
+                  },
+                  "audioConfig": {"audioEncoding": "MP3"},
+                }),
+              )
+              .timeout(const Duration(seconds: 35));
 
           if (ttsResponse.statusCode == 200) {
             final json = jsonDecode(ttsResponse.body);
@@ -1421,39 +1544,51 @@ class TtsService extends ChangeNotifier {
     if (allAudioBytes.isEmpty) throw Exception("Google 语音 API 返回了空音频数据");
 
     // 若是 MP3 格式直接返回，若是 PCM 则加入 44 字节 WAV 头
-    if (allAudioBytes.length > 4 && allAudioBytes[0] == 0xFF && (allAudioBytes[1] & 0xE0) == 0xE0) {
+    if (allAudioBytes.length > 4 &&
+        allAudioBytes[0] == 0xFF &&
+        (allAudioBytes[1] & 0xE0) == 0xE0) {
       return allAudioBytes;
     }
     return _addWavHeader(allAudioBytes, sampleRate: 24000);
   }
 
   /// 硅基流动 API 备用合成方案
-  Future<List<int>> _synthesizeWithSiliconFlow(String text, String siliconFlowKey, String textHash) async {
+  Future<List<int>> _synthesizeWithSiliconFlow(
+    String text,
+    String siliconFlowKey,
+    String textHash,
+  ) async {
     final chunks = _splitTextIntoChunks(text, maxChunkSize: 800);
     final chunkBytesList = <List<int>>[];
 
     for (int i = 0; i < chunks.length; i++) {
       final url = Uri.parse("https://api.siliconflow.cn/v1/audio/speech");
-      final response = await http.post(
-        url,
-        headers: {
-          "Authorization": "Bearer ${siliconFlowKey.trim()}",
-          "Content-Type": "application/json",
-        },
-        body: jsonEncode({
-          "model": "FunAudioLLM/CosyVoice2-0.5B",
-          "input": chunks[i],
-          "voice": "FunAudioLLM/CosyVoice2-0.5B:bella", // 高清流畅自然英文播音女声
-          "response_format": "mp3",
-          "stream": false,
-        }),
-      ).timeout(const Duration(seconds: 30));
+      final response = await http
+          .post(
+            url,
+            headers: {
+              "Authorization": "Bearer ${siliconFlowKey.trim()}",
+              "Content-Type": "application/json",
+            },
+            body: jsonEncode({
+              "model": "FunAudioLLM/CosyVoice2-0.5B",
+              "input": chunks[i],
+              "voice": "FunAudioLLM/CosyVoice2-0.5B:bella", // 高清流畅自然英文播音女声
+              "response_format": "mp3",
+              "stream": false,
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
         chunkBytesList.add(response.bodyBytes);
       } else {
-        final errBody = response.body.length > 300 ? response.body.substring(0, 300) : response.body;
-        throw Exception("SiliconFlow API 错误 (HTTP ${response.statusCode}): $errBody");
+        final errBody = response.body.length > 300
+            ? response.body.substring(0, 300)
+            : response.body;
+        throw Exception(
+          "SiliconFlow API 错误 (HTTP ${response.statusCode}): $errBody",
+        );
       }
     }
 
@@ -1465,7 +1600,12 @@ class TtsService extends ChangeNotifier {
   }
 
   /// 构建标准的 44 字节 PCM WAV 头文件
-  List<int> _addWavHeader(List<int> pcmBytes, {int sampleRate = 24000, int channels = 1, int bitsPerSample = 16}) {
+  List<int> _addWavHeader(
+    List<int> pcmBytes, {
+    int sampleRate = 24000,
+    int channels = 1,
+    int bitsPerSample = 16,
+  }) {
     final byteRate = sampleRate * channels * (bitsPerSample ~/ 8);
     final blockAlign = channels * (bitsPerSample ~/ 8);
     final dataSize = pcmBytes.length;
@@ -1477,8 +1617,8 @@ class TtsService extends ChangeNotifier {
     header.setUint8(2, 0x46); // F
     header.setUint8(3, 0x46); // F
     header.setUint32(4, chunkSize, Endian.little);
-    header.setUint8(8, 0x57);  // W
-    header.setUint8(9, 0x41);  // A
+    header.setUint8(8, 0x57); // W
+    header.setUint8(9, 0x41); // A
     header.setUint8(10, 0x56); // V
     header.setUint8(11, 0x45); // E
 
@@ -1509,9 +1649,10 @@ class TtsService extends ChangeNotifier {
   Future<void> playEnglish() async {
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected())) throw Exception("NoHeadphones | ${lastRouteDebug}");
+    if (!(await isHeadphonesConnected()))
+      throw Exception("NoHeadphones | ${lastRouteDebug}");
     _currentAudioType = ActiveAudioType.english;
-    await _audioPlayer.play();
+    await _playAudioSafely('English resume');
     _startHeadphoneMonitor();
   }
 
@@ -1526,7 +1667,8 @@ class TtsService extends ChangeNotifier {
 
   Future<void> stopEnglish() async {
     await _flutterTts.stop();
-    if (_currentAudioType == ActiveAudioType.english || _currentAudioType == ActiveAudioType.recorded) {
+    if (_currentAudioType == ActiveAudioType.english ||
+        _currentAudioType == ActiveAudioType.recorded) {
       await _audioPlayer.stop();
       _currentAudioType = ActiveAudioType.none;
       globalAudioHandler.setPlaybackMetadata(
@@ -1535,6 +1677,7 @@ class TtsService extends ChangeNotifier {
       );
       notifyListeners();
     }
+    _finishNativePlayback();
   }
 
   Future<void> seekEnglish(Duration position) async {
@@ -1543,7 +1686,8 @@ class TtsService extends ChangeNotifier {
 
   Future<void> setEnglishSpeed(double speed) async {
     _englishSpeed = speed;
-    if (_currentAudioType == ActiveAudioType.english || _currentAudioType == ActiveAudioType.recorded) {
+    if (_currentAudioType == ActiveAudioType.english ||
+        _currentAudioType == ActiveAudioType.recorded) {
       await _audioPlayer.setSpeed(speed);
     }
     notifyListeners();
@@ -1555,6 +1699,7 @@ class TtsService extends ChangeNotifier {
 
   Future<void> pauseAll() async {
     _isChineseNativePlaying = false;
+    _isNativeEnglishPlaying = false;
     _chineseNativeTimer?.cancel();
     _stopHeadphoneMonitor();
     await _flutterTts.pause();
@@ -1565,6 +1710,7 @@ class TtsService extends ChangeNotifier {
   Future<void> stopAll() async {
     WakelockService.disable();
     _isChineseNativePlaying = false;
+    _isNativeEnglishPlaying = false;
     _chineseNativeTimer?.cancel();
     _stopHeadphoneMonitor();
     await _flutterTts.stop();
@@ -1587,13 +1733,18 @@ class TtsService extends ChangeNotifier {
     await stopAll(); // 停止播放 + 释放 setActive(false)
     try {
       final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker,
-        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-      ));
+      await session.configure(
+        const AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+          avAudioSessionCategoryOptions:
+              AVAudioSessionCategoryOptions.defaultToSpeaker,
+          avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+        ),
+      );
       await session.setActive(true); // 重新激活，解除麦克风静音
-      debugPrint('[TtsService] Session released and re-activated for recording');
+      debugPrint(
+        '[TtsService] Session released and re-activated for recording',
+      );
     } catch (e) {
       debugPrint('[TtsService] releaseForRecording session error: $e');
     }
@@ -1608,38 +1759,6 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> stop() => stopAll();
-
-  // ── Supabase 云端 Audio Cache 辅助函数 ──────────────────────────
-
-  Future<void> _tryFetchFromSupabaseCloud(File targetFile, String textHash) async {
-    try {
-      final fileName = 'english_$textHash.mp3';
-      final bytes = await SupabaseConfig.client.storage
-          .from('tts_audio')
-          .download(fileName)
-          .timeout(const Duration(seconds: 10));
-      if (bytes.isNotEmpty) {
-        await targetFile.writeAsBytes(bytes);
-        debugPrint("[TtsCache] Fetched audio from Supabase cloud: $fileName");
-      }
-    } catch (e) {
-      debugPrint("[TtsCache] Cloud cache miss: $e");
-    }
-  }
-
-  Future<void> _tryUploadToSupabaseCloud(File file, String textHash) async {
-    try {
-      final fileName = 'english_$textHash.mp3';
-      await SupabaseConfig.client.storage.from('tts_audio').upload(
-            fileName,
-            file,
-            fileOptions: const FileOptions(cacheControl: '3600000', upsert: true),
-          );
-      debugPrint("[TtsCache] Uploaded synthesized audio to Supabase cloud: $fileName");
-    } catch (e) {
-      debugPrint("[TtsCache] Cloud upload skipped/error: $e");
-    }
-  }
 
   @override
   void dispose() {

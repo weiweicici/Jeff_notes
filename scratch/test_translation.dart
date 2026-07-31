@@ -5,9 +5,9 @@ import 'package:http/http.dart' as http;
 Future<void> main() async {
   print("=== STARTING TERMINAL API TESTS ===");
 
-  final geminiKey = "AIzaSyBU1TeaDmBB46HbVvrndasc4MmZ5QcKPOA";
-  final siliconKey1 = "sk-xvqruvbtbbcqobglijorfqczmvpfvikouftvapeautkipitqh";
-  final siliconKey2 = "sk-xvqruvbtbbcqobglijorfqczmvpfvikouftvapeautkipitq";
+  final geminiKey = Platform.environment['GEMINI_API_KEY'] ?? "";
+  final siliconKey1 = Platform.environment['SILICONFLOW_API_KEY'] ?? "";
+  final siliconKey2 = Platform.environment['SILICONFLOW_API_KEY'] ?? "";
 
   print("\n1. Testing Google Gemini API...");
   await testGemini(geminiKey);

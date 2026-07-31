@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'credential_store.dart';
 import '../data/pathways_content.dart';
 import '../models.dart';
 import '../prompt_provider.dart';
@@ -11,10 +11,8 @@ class ReadingQuizService {
   static const String _geminiModel = 'gemini-2.5-flash';
 
   static Future<String> _callAI(String systemPrompt, {String userMessage = '请生成'}) async {
-    final prefs = await SharedPreferences.getInstance();
-
     // Try Gemini first
-    final geminiKey = prefs.getString('api_key_gemini') ?? '';
+    final geminiKey = await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
     if (geminiKey.isNotEmpty) {
       try {
         final url = Uri.parse(
@@ -48,7 +46,7 @@ class ReadingQuizService {
     }
 
     // Fallback: Groq
-    final groqKey = prefs.getString('api_key_groq') ?? '';
+    final groqKey = await CredentialStore.instance.readKey(CredentialStore.keyGroq) ?? '';
     if (groqKey.isEmpty) return '[AI 服务未配置，请在设置中填写 API Key]';
 
     try {

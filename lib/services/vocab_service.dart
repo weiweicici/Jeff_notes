@@ -116,11 +116,13 @@ class VocabService extends ChangeNotifier {
 
   Future<void> _syncFromSupabase() async {
     try {
+      final userId = SupabaseConfig.currentUserId;
+      if (userId == null) return;
       final data = await SupabaseConfig.client
           .from('archives')
           .select('content_md')
           .eq('module', 'vocab')
-          .eq('user_id', SupabaseConfig.currentUserId);
+          .eq('user_id', userId);
       for (final row in List<Map<String, dynamic>>.from(data as List)) {
         final contentStr = row['content_md'] as String?;
         if (contentStr != null && contentStr.isNotEmpty) {

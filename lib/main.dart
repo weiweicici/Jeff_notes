@@ -9,10 +9,15 @@ import 'services/grammar_repository.dart';
 import 'services/audio_handler.dart';
 import 'data/grammar_content.dart';
 
+import 'services/credential_store.dart';
+import 'services/diagnostic_log_service.dart';
+
 late MyAudioHandler globalAudioHandler;
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await DiagnosticLogService.instance.initialize();
+  await CredentialStore.instance.migrateFromSharedPreferences();
   await SupabaseConfig.init();
   await SupabaseConfig.signInAnonymously();
   GrammarRepository.setHardcodedProvider(() => GrammarContent.parts);
@@ -48,16 +53,16 @@ class JeffNotesApp extends StatelessWidget {
         brightness: Brightness.light,
         scaffoldBackgroundColor: Colors.white,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.grey, 
-          brightness: Brightness.light, 
-          primary: Colors.black, 
-          onPrimary: Colors.white, 
-          surface: Colors.white
+          seedColor: Colors.grey,
+          brightness: Brightness.light,
+          primary: Colors.black,
+          onPrimary: Colors.white,
+          surface: Colors.white,
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Colors.white, 
-          foregroundColor: Colors.black, 
-          elevation: 0
+          backgroundColor: Colors.white,
+          foregroundColor: Colors.black,
+          elevation: 0,
         ),
       ),
       darkTheme: ThemeData(
@@ -65,16 +70,16 @@ class JeffNotesApp extends StatelessWidget {
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF121212),
         colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.blueGrey, 
-          brightness: Brightness.dark, 
-          primary: Colors.white, 
-          onPrimary: Colors.black, 
-          surface: const Color(0xFF1E1E1E)
+          seedColor: Colors.blueGrey,
+          brightness: Brightness.dark,
+          primary: Colors.white,
+          onPrimary: Colors.black,
+          surface: const Color(0xFF1E1E1E),
         ),
         appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF121212), 
-          foregroundColor: Colors.white, 
-          elevation: 0
+          backgroundColor: Color(0xFF121212),
+          foregroundColor: Colors.white,
+          elevation: 0,
         ),
       ),
       themeMode: provider.isDarkMode ? ThemeMode.dark : ThemeMode.light,

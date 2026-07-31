@@ -14,50 +14,17 @@ import 'package:http/http.dart' as http;
 import 'openai_service.dart';
 import 'ai_orchestrator_service.dart';
 import 'api_scheduler.dart';
-import 'models.dart';  // 包含 AppMode 枚举
-import 'prompt_provider.dart';  // 单元词汇高亮列表
-import 'services/tts_service.dart';  // 录音前释放音频会话
+import 'models.dart'; // 包含 AppMode 枚举
+import 'prompt_provider.dart'; // 单元词汇高亮列表
+export 'models/insight_note.dart';
+import 'models/recording_session_context.dart';
+import 'services/tts_service.dart';
+import 'services/credential_store.dart';
+import 'services/session_background_processor.dart';
+import 'services/diagnostic_log_service.dart';
+import 'adapters/audio_recorder_adapter.dart';
 
-class InsightNote {
-  final String id;
-  String summary;
-  String transcript;
-  String? translatedContent;
-  final DateTime timestamp;
-  bool isProcessing;
-  final String? clusterId;
-  final bool isSummary;
-
-  InsightNote({
-    String? id,
-    required this.summary,
-    required this.transcript,
-    this.translatedContent,
-    required this.timestamp,
-    this.isProcessing = false,
-    this.clusterId,
-    this.isSummary = false,
-  }) : id = id ?? "note_${DateTime.now().microsecondsSinceEpoch}_${transcript.hashCode}";
-
-  Map<String, dynamic> toJson() => {
-    'summary': summary,
-    'transcript': transcript,
-    'translatedContent': translatedContent,
-    'timestamp': timestamp.toIso8601String(),
-    'clusterId': clusterId,
-    'isSummary': isSummary,
-  };
-
-  factory InsightNote.fromJson(Map<String, dynamic> json) => InsightNote(
-    summary: json['summary'],
-    transcript: json['transcript'],
-    translatedContent: json['translatedContent'],
-    timestamp: DateTime.parse(json['timestamp']),
-    clusterId: json['clusterId'],
-    isSummary: json['isSummary'] ?? false,
-  );
-}
-
+import 'models/session_ready_event.dart';
 
 class StitchData {
   final Uint8List tail;
@@ -68,25 +35,34 @@ class StitchData {
 
 int _findDataChunkOffset(Uint8List bytes) {
   if (bytes.length < 12) return 44;
-  if (bytes[0] != 0x52 || bytes[1] != 0x49 || bytes[2] != 0x46 || bytes[3] != 0x46) return 44; // "RIFF"
-  if (bytes[8] != 0x57 || bytes[9] != 0x41 || bytes[10] != 0x56 || bytes[11] != 0x45) return 44; // "WAVE"
-  
+  if (bytes[0] != 0x52 ||
+      bytes[1] != 0x49 ||
+      bytes[2] != 0x46 ||
+      bytes[3] != 0x46)
+    return 44; // "RIFF"
+  if (bytes[8] != 0x57 ||
+      bytes[9] != 0x41 ||
+      bytes[10] != 0x56 ||
+      bytes[11] != 0x45)
+    return 44; // "WAVE"
+
   int offset = 12;
   while (offset + 8 <= bytes.length) {
     final c0 = bytes[offset];
     final c1 = bytes[offset + 1];
     final c2 = bytes[offset + 2];
     final c3 = bytes[offset + 3];
-    
+
     // Check if it is "data" chunk
     if (c0 == 0x64 && c1 == 0x61 && c2 == 0x74 && c3 == 0x61) {
       return offset + 8;
     }
-    
-    final chunkSize = bytes[offset + 4] | 
-                    (bytes[offset + 5] << 8) | 
-                    (bytes[offset + 6] << 16) | 
-                    (bytes[offset + 7] << 24);
+
+    final chunkSize =
+        bytes[offset + 4] |
+        (bytes[offset + 5] << 8) |
+        (bytes[offset + 6] << 16) |
+        (bytes[offset + 7] << 24);
     offset += 8 + chunkSize;
   }
   return 44;
@@ -95,12 +71,14 @@ int _findDataChunkOffset(Uint8List bytes) {
 Future<Map<String, dynamic>> _backgroundStitchTask(StitchData data) async {
   try {
     final currentFile = File(data.path);
-    if (!currentFile.existsSync()) return {'path': data.path, 'newTail': data.tail};
+    if (!currentFile.existsSync())
+      return {'path': data.path, 'newTail': data.tail};
     final currentBytes = await currentFile.readAsBytes();
-    
+
     final dataOffset = _findDataChunkOffset(currentBytes);
-    
-    if (currentBytes.length < dataOffset) return {'path': data.path, 'newTail': data.tail};
+
+    if (currentBytes.length < dataOffset)
+      return {'path': data.path, 'newTail': data.tail};
     final currentPcm = currentBytes.sublist(dataOffset);
     final List<int> combinedPcm = [...data.tail, ...currentPcm];
     final header = _generateWavHeaderStatic(combinedPcm.length);
@@ -119,16 +97,25 @@ Future<Map<String, dynamic>> _backgroundStitchTask(StitchData data) async {
 
 Uint8List _generateWavHeaderStatic(int pcmLength) {
   final header = ByteData(44);
-  
+
   // RIFF identifier
-  header.setUint8(0, 0x52); header.setUint8(1, 0x49); header.setUint8(2, 0x46); header.setUint8(3, 0x46); // "RIFF"
+  header.setUint8(0, 0x52);
+  header.setUint8(1, 0x49);
+  header.setUint8(2, 0x46);
+  header.setUint8(3, 0x46); // "RIFF"
   header.setUint32(4, 36 + pcmLength, Endian.little); // File size - 8
-  
+
   // WAVE identifier
-  header.setUint8(8, 0x57); header.setUint8(9, 0x41); header.setUint8(10, 0x56); header.setUint8(11, 0x45); // "WAVE"
-  
+  header.setUint8(8, 0x57);
+  header.setUint8(9, 0x41);
+  header.setUint8(10, 0x56);
+  header.setUint8(11, 0x45); // "WAVE"
+
   // fmt chunk
-  header.setUint8(12, 0x66); header.setUint8(13, 0x6D); header.setUint8(14, 0x74); header.setUint8(15, 0x20); // "fmt "
+  header.setUint8(12, 0x66);
+  header.setUint8(13, 0x6D);
+  header.setUint8(14, 0x74);
+  header.setUint8(15, 0x20); // "fmt "
   header.setUint32(16, 16, Endian.little); // Subchunk1Size (16 for PCM)
   header.setUint16(20, 1, Endian.little); // AudioFormat (1 for PCM)
   header.setUint16(22, 1, Endian.little); // NumChannels (1 for Mono)
@@ -136,27 +123,31 @@ Uint8List _generateWavHeaderStatic(int pcmLength) {
   header.setUint32(28, 16000 * 2, Endian.little); // ByteRate (SampleRate * 2)
   header.setUint16(32, 2, Endian.little); // BlockAlign (Channels * 2)
   header.setUint16(34, 16, Endian.little); // BitsPerSample (16-bit)
-  
+
   // data chunk
-  header.setUint8(36, 0x64); header.setUint8(37, 0x61); header.setUint8(38, 0x74); header.setUint8(39, 0x61); // "data"
+  header.setUint8(36, 0x64);
+  header.setUint8(37, 0x61);
+  header.setUint8(38, 0x74);
+  header.setUint8(39, 0x61); // "data"
   header.setUint32(40, pcmLength, Endian.little); // Subchunk2Size
-  
+
   return header.buffer.asUint8List();
 }
 
 class RecordingProvider extends ChangeNotifier {
-  final AudioRecorder _audioRecorder = AudioRecorder();
+  final AudioRecorderAdapter _audioRecorder;
   OpenAIService? _aiService;
   OpenAIService? _fastAiService;
   OpenAIService? _groqService;
   OpenAIService? _fallbackTranslationService;
+  String? _configuredGroqKey;
   AIOrchestratorService? _orchestrator;
-  final StreamController<String> _sessionReadyController = StreamController<String>.broadcast();
+  final StreamController<SessionReadyEvent> _sessionReadyController =
+      StreamController<SessionReadyEvent>.broadcast();
 
-  
   StreamSubscription? _fastSub;
   StreamSubscription? _accurateSub;
-  
+
   AIProvider _selectedProvider = AIProvider.groq;
   int _sliceDuration = 5;
   bool _isDarkMode = false;
@@ -165,19 +156,16 @@ class RecordingProvider extends ChangeNotifier {
   AppMode _currentMode = AppMode.exam;
   PathwaysUnit _currentUnit = PathwaysUnit.none;
   int _autoScrollPauseDuration = 60;
-  
+
   final Map<AIProvider, String> _apiKeys = {
     AIProvider.siliconFlow: "",
     AIProvider.groq: "",
     AIProvider.gemini: "",
   };
 
-  
-  String? _lastTranscript;
-  Uint8List _lastAudioTail = Uint8List(0);
   Timer? _sliceTimer;
   bool _isRecording = false;
-  bool _isPaused = false;   // 暂停录音标志（仅在 _isRecording=true 时有意义）
+  bool _isPaused = false; // 暂停录音标志（仅在 _isRecording=true 时有意义）
   bool _isPending = false;
   static const int kTailSize = 25600;
 
@@ -189,17 +177,19 @@ class RecordingProvider extends ChangeNotifier {
   bool _isGeneratingFinalReview = false;
   String? _lastExportedPath;
   // 40秒分段 AI 摘要
-  int _segmentSummaryCounter = 0;
-  final List<String> _segmentTranscriptBuffer = [];
   final List<String> _segmentSummaries = [];
-  bool _isGeneratingSegmentSummary = false;
   static const int _kSlicesPerSegment = 8; // 8 * 5s = 40s
   String? _identifiedLectureContext;
   bool _hasRecoveredCache = false;
   String _openRouterKey = '';
   final List<String> _sessionAudioPaths = []; // 保存当次 session 所有录音切片路径
 
-  List<InsightNote> get notes => _allNotes.reversed.toList();
+  // [Phase 3] 当前活跃的 RecordingSessionContext 实例
+  RecordingSessionContext? _activeContext;
+  RecordingSessionContext? get activeContext => _activeContext;
+
+  List<InsightNote> get notes =>
+      (_activeContext?.notes ?? _allNotes).reversed.toList();
   bool get isRecording => _isRecording;
   bool get isPaused => _isPaused;
   bool get isPending => _isPending;
@@ -218,9 +208,10 @@ class RecordingProvider extends ChangeNotifier {
   String? get lastExportedPath => _lastExportedPath;
   String? get identifiedLectureContext => _identifiedLectureContext;
   bool get hasRecoveredCache => _hasRecoveredCache;
-  
+
   // 添加缺失的getter方法
-  Stream<String> get sessionReadyStream => _sessionReadyController.stream;
+  Stream<SessionReadyEvent> get sessionReadyStream =>
+      _sessionReadyController.stream;
   AppMode get appMode => currentMode;
   AppMode get currentSessionMode => currentMode;
 
@@ -229,10 +220,10 @@ class RecordingProvider extends ChangeNotifier {
   String get geminiKey => _apiKeys[AIProvider.gemini] ?? '';
   String get openRouterKey => _openRouterKey;
 
-  String _prevGroqKey = "";
-  String _prevGeminiKey = "";
-
-  RecordingProvider() { _init(); }
+  RecordingProvider({AudioRecorderAdapter? audioRecorder})
+    : _audioRecorder = audioRecorder ?? RecordAudioRecorderAdapter() {
+    _init();
+  }
 
   Future<void> _init() async {
     await _loadSettings();
@@ -240,11 +231,11 @@ class RecordingProvider extends ChangeNotifier {
     await _checkRecoveryCache();
   }
 
-
   /// Returns clean Chinese + English full transcript for TTS playback.
   /// Only includes actual spoken content — no markdown headers, bullets or AI summaries.
   String get bilingualTtsText {
-    final transcripts = _allNotes.where((n) => !n.isSummary).toList();
+    final sourceNotes = _activeContext?.notes ?? _allNotes;
+    final transcripts = sourceNotes.where((n) => !n.isSummary).toList();
     if (transcripts.isEmpty) return "";
 
     final chineseParts = <String>[];
@@ -273,7 +264,35 @@ class RecordingProvider extends ChangeNotifier {
     return buffer.toString();
   }
 
-    Future<void> updateSettings({
+  /// Formats notes into Chinese paragraph followed by English paragraph for FreeTalk export.
+  static String formatFreeTalkContent(List<InsightNote> notes) {
+    final chinese = <String>[];
+    final english = <String>[];
+    for (final note in notes.where((note) => !note.isSummary)) {
+      final en = note.transcript.trim();
+      if (en.isNotEmpty && en != '...' && !en.startsWith('[')) {
+        english.add(en);
+      }
+      final zh = note.translatedContent?.trim();
+      if (zh != null && zh.isNotEmpty && !zh.startsWith('[')) {
+        chinese.add(zh);
+      }
+    }
+
+    final buffer = StringBuffer();
+    for (final zh in chinese) {
+      buffer.writeln(zh);
+    }
+    if (chinese.isNotEmpty && english.isNotEmpty) {
+      buffer.writeln();
+    }
+    for (final en in english) {
+      buffer.writeln(en);
+    }
+    return buffer.toString();
+  }
+
+  Future<void> updateSettings({
     String? groqKey,
     String? siliconFlowKey,
     String? openRouterKey,
@@ -286,7 +305,6 @@ class RecordingProvider extends ChangeNotifier {
     AppMode? mode,
     PathwaysUnit? unit,
     int? autoScrollPauseDuration,
-
   }) async {
     final prefs = await SharedPreferences.getInstance();
     if (duration != null) {
@@ -294,10 +312,22 @@ class RecordingProvider extends ChangeNotifier {
       await prefs.setInt('slice_duration', clamped);
       _sliceDuration = clamped;
     }
-    if (isDarkMode != null) { await prefs.setBool('is_dark_mode', isDarkMode); _isDarkMode = isDarkMode; }
-    if (enableFinalRecap != null) { await prefs.setBool('enableFinalRecap', enableFinalRecap); _enableFinalRecap = enableFinalRecap; }
-    if (enableLectureDiscovery != null) { await prefs.setBool('enableLectureDiscovery', enableLectureDiscovery); _enableLectureDiscovery = enableLectureDiscovery; }
-    if (mode != null) { await prefs.setInt('app_mode', mode.index); _currentMode = mode; }
+    if (isDarkMode != null) {
+      await prefs.setBool('is_dark_mode', isDarkMode);
+      _isDarkMode = isDarkMode;
+    }
+    if (enableFinalRecap != null) {
+      await prefs.setBool('enableFinalRecap', enableFinalRecap);
+      _enableFinalRecap = enableFinalRecap;
+    }
+    if (enableLectureDiscovery != null) {
+      await prefs.setBool('enableLectureDiscovery', enableLectureDiscovery);
+      _enableLectureDiscovery = enableLectureDiscovery;
+    }
+    if (mode != null) {
+      await prefs.setInt('app_mode', mode.index);
+      _currentMode = mode;
+    }
     if (unit != null) {
       await prefs.setInt('current_unit', unit.index);
       _currentUnit = unit;
@@ -306,30 +336,46 @@ class RecordingProvider extends ChangeNotifier {
       await prefs.setInt('autoScrollPauseDuration', autoScrollPauseDuration);
       _autoScrollPauseDuration = autoScrollPauseDuration;
     }
-    
+
     if (groqKey != null) {
       final trimmedKey = groqKey.trim();
-      await prefs.setString('api_key_${AIProvider.groq.name}', trimmedKey);
+      await CredentialStore.instance.writeKey(
+        CredentialStore.keyGroq,
+        trimmedKey,
+      );
       _apiKeys[AIProvider.groq] = trimmedKey;
-      debugPrint("保存 Groq API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
+      debugPrint("保存 Groq API Key 成功: ${CredentialStore.redact(trimmedKey)}");
     }
     if (siliconFlowKey != null) {
       final trimmedKey = siliconFlowKey.trim();
-      await prefs.setString('api_key_${AIProvider.siliconFlow.name}', trimmedKey);
+      await CredentialStore.instance.writeKey(
+        CredentialStore.keySiliconFlow,
+        trimmedKey,
+      );
       _apiKeys[AIProvider.siliconFlow] = trimmedKey;
-      debugPrint("保存 SiliconFlow API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
+      debugPrint(
+        "保存 SiliconFlow API Key 成功: ${CredentialStore.redact(trimmedKey)}",
+      );
     }
     if (geminiKey != null) {
       final trimmedKey = geminiKey.trim();
-      await prefs.setString('api_key_${AIProvider.gemini.name}', trimmedKey);
+      await CredentialStore.instance.writeKey(
+        CredentialStore.keyGemini,
+        trimmedKey,
+      );
       _apiKeys[AIProvider.gemini] = trimmedKey;
-      debugPrint("保存 Gemini API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
+      debugPrint("保存 Gemini API Key 成功: ${CredentialStore.redact(trimmedKey)}");
     }
     if (openRouterKey != null) {
       final trimmedKey = openRouterKey.trim();
-      await prefs.setString('api_key_openrouter', trimmedKey);
+      await CredentialStore.instance.writeKey(
+        CredentialStore.keyOpenRouter,
+        trimmedKey,
+      );
       _openRouterKey = trimmedKey;
-      debugPrint("保存 OpenRouter API Key 成功，前几位: ${trimmedKey.isNotEmpty ? trimmedKey.substring(0, trimmedKey.length.clamp(0, 10)) : ''}...");
+      debugPrint(
+        "保存 OpenRouter API Key 成功: ${CredentialStore.redact(trimmedKey)}",
+      );
     }
 
     _updateService();
@@ -348,35 +394,38 @@ class RecordingProvider extends ChangeNotifier {
     _currentUnit = PathwaysUnit.values[prefs.getInt('current_unit') ?? 0];
     final pIndex = prefs.getInt('selected_provider') ?? 0;
     _selectedProvider = AIProvider.values[pIndex];
-    _openRouterKey = prefs.getString('api_key_openrouter') ?? '';
-    for (var p in AIProvider.values) {
-      _apiKeys[p] = prefs.getString('api_key_${p.name}') ?? '';
-    }
+
+    _openRouterKey =
+        await CredentialStore.instance.readKey(CredentialStore.keyOpenRouter) ??
+        '';
+    _apiKeys[AIProvider.groq] =
+        await CredentialStore.instance.readKey(CredentialStore.keyGroq) ?? '';
+    _apiKeys[AIProvider.siliconFlow] =
+        await CredentialStore.instance.readKey(
+          CredentialStore.keySiliconFlow,
+        ) ??
+        '';
+    _apiKeys[AIProvider.gemini] =
+        await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
+
     _updateService();
   }
 
   void _updateService() {
     final groqKey = _apiKeys[AIProvider.groq] ?? "";
-    final geminiKey = _apiKeys[AIProvider.gemini] ?? "";
-    final groqChanged = groqKey != _prevGroqKey;
-    final geminiChanged = geminiKey != _prevGeminiKey;
-
-    if (!groqChanged && !geminiChanged && _orchestrator != null) {
+    if (_configuredGroqKey == groqKey &&
+        ((groqKey.isEmpty && _fastAiService == null) ||
+            (groqKey.isNotEmpty && _fastAiService != null))) {
       return;
     }
+    _fastAiService?.dispose();
+    if (!identical(_groqService, _fastAiService)) {
+      _groqService?.dispose();
+    }
+    _configuredGroqKey = groqKey;
 
-    _fastSub?.cancel();
-    _accurateSub?.cancel();
-    _orchestrator?.dispose();
-
-    _prevGroqKey = groqKey;
-    _prevGeminiKey = geminiKey;
-
-    
-    // 1. 初始化 Groq 服务（STT 专用，独立实例避免并发干扰）
-    OpenAIService? groqSTT;
     if (groqKey.isNotEmpty) {
-      groqSTT = OpenAIService(
+      _fastAiService = OpenAIService(
         apiKey: groqKey,
         baseUrl: "https://api.groq.com/openai/v1",
         defaultModel: "openai/gpt-oss-120b",
@@ -388,68 +437,35 @@ class RecordingProvider extends ChangeNotifier {
         defaultModel: "openai/gpt-oss-120b",
         whisperModel: "whisper-large-v3",
       );
-      debugPrint("Groq 服务创建完成 (STT + Chat 各一个独立实例)");
+      _aiService = _groqService;
+      _fallbackTranslationService = _groqService;
+      debugPrint("Groq 服务配置完成");
     } else {
-      groqSTT = null;
-      _groqService = null;
-    }
-
-    // 2. 全量服务使用 Groq
-    if (_groqService != null) {
-      _aiService = _groqService;                      // 翻译/复盘
-      _fastAiService = groqSTT;                       // STT 独立实例
-      _fallbackTranslationService = _groqService;      // 备用翻译
-      debugPrint("全部 AI 服务绑定为: Groq (openai/gpt-oss-120b)");
-    } else {
-      _aiService = null;
       _fastAiService = null;
+      _groqService = null;
+      _aiService = null;
       _fallbackTranslationService = null;
-      debugPrint("警告：Groq 服务不可用，AI 功能将不可用");
-    }
-    
-    if (_aiService != null && _fastAiService != null) {
-      _orchestrator = AIOrchestratorService(
-        sttService: _fastAiService!,
-        translationService: _aiService!,
-        translationFallbackService: _fallbackTranslationService,
-        sessionId: DateTime.now().millisecondsSinceEpoch.toString(),
-        geminiApiKey: _apiKeys[AIProvider.gemini] ?? '',
-      );
-      
-      _fastSub = _orchestrator!.fastEnglishStream.listen((result) {
-        final index = _allNotes.indexWhere((n) => n.id == result.noteId);
-        if (index != -1) {
-          _allNotes[index].transcript = result.content;
-          if (result.content != "[Silence/Empty]" && !result.content.startsWith("[")) {
-            _lastTranscript = result.content;
-          }
-          notifyListeners();
-        }
-      });
-      
-      _accurateSub = _orchestrator!.accurateChineseStream.listen((result) {
-        final index = _allNotes.indexWhere((n) => n.id == result.noteId);
-        if (index != -1) {
-          _allNotes[index].translatedContent = result.content;
-          _saveShadowCache();
-          notifyListeners();
-        }
-      });
+      debugPrint("警告：Groq API Key 未设置，AI 功能将不可用");
     }
   }
 
   Future<void> _initializeAudioSession() async {
     try {
       final session = await AudioSession.instance;
-      await session.configure(const AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker,
-        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-      ));
+      await session.configure(
+        const AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+          avAudioSessionCategoryOptions:
+              AVAudioSessionCategoryOptions.defaultToSpeaker,
+          avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+        ),
+      );
       // setActive may fail if another app holds the session; safe to ignore at init
       await session.setActive(true);
     } catch (e) {
-      debugPrint('[AudioSession] init setActive failed (will retry on record): $e');
+      debugPrint(
+        '[AudioSession] init setActive failed (will retry on record): $e',
+      );
     }
   }
 
@@ -459,13 +475,18 @@ class RecordingProvider extends ChangeNotifier {
       final session = await AudioSession.instance;
       await session.setActive(false);
       await Future.delayed(const Duration(milliseconds: 150));
-      await session.configure(const AudioSessionConfiguration(
-        avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
-        avAudioSessionCategoryOptions: AVAudioSessionCategoryOptions.defaultToSpeaker,
-        avAudioSessionMode: AVAudioSessionMode.spokenAudio,
-      ));
+      await session.configure(
+        const AudioSessionConfiguration(
+          avAudioSessionCategory: AVAudioSessionCategory.playAndRecord,
+          avAudioSessionCategoryOptions:
+              AVAudioSessionCategoryOptions.defaultToSpeaker,
+          avAudioSessionMode: AVAudioSessionMode.spokenAudio,
+        ),
+      );
       await session.setActive(true);
-      debugPrint('[AudioSession] Session reset after recording — ready for next session');
+      debugPrint(
+        '[AudioSession] Session reset after recording — ready for next session',
+      );
     } catch (e) {
       debugPrint('[AudioSession] resetAfterRecording error: $e');
     }
@@ -473,53 +494,128 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> toggleRecording() async {
     if (_isPending) return;
-    _isPending = true; notifyListeners();
-    if (_isRecording) await stopRecording(); else await startRecording();
-    _isPending = false; notifyListeners();
+    _isPending = true;
+    notifyListeners();
+    if (_isRecording)
+      await stopRecording();
+    else
+      await startRecording();
+    _isPending = false;
+    notifyListeners();
   }
 
   Future<void> startRecording() async {
+    unawaited(
+      DiagnosticLogService.instance.record('recording', 'start_requested'),
+    );
     if (await _audioRecorder.hasPermission()) {
-      // 修复 Bug 1: 先停止任何 TTS 播放并重置音频会话，防止麦克风被锁死
       await TtsService().releaseForRecording();
       _updateService();
-      if (_orchestrator == null) {
+      if (_aiService == null || _fastAiService == null) {
         _statusMessage = "Please configure your API Keys in Settings first";
         notifyListeners();
         return;
       }
-      _isRecording = true;
-      _isPaused = false;   // 新录音时重置暂停状态
-      _lastAudioTail = Uint8List(0);
-      _sessionAudioPaths.clear(); // 清空上次 session 的音频切片路径
-      _allNotes.clear();
-      _lastTranscript = null;
-      _segmentSummaryCounter = 0;
-      _segmentTranscriptBuffer.clear();
-      _segmentSummaries.clear();
-      _isGeneratingSegmentSummary = false;
 
+      // [Phase 3 Fix 2, 4, 10] 创建专属 RecordingSessionContext 和底层专有 http.Client
+      final docsDir = await getApplicationDocumentsDirectory();
+      final context = RecordingSessionContext.create(
+        mode: _currentMode,
+        unit: _currentUnit,
+        baseDirectory: docsDir.path,
+      );
+
+      final client = context.sessionHttpClient;
+      final stt = OpenAIService(
+        apiKey: groqKey,
+        baseUrl: "https://api.groq.com/openai/v1",
+        defaultModel: "openai/gpt-oss-120b",
+        whisperModel: "whisper-large-v3",
+        httpClient: client,
+      );
+      final trans = OpenAIService(
+        apiKey: groqKey,
+        baseUrl: "https://api.groq.com/openai/v1",
+        defaultModel: "openai/gpt-oss-120b",
+        whisperModel: "whisper-large-v3",
+        httpClient: client,
+      );
+      context.sttService = stt;
+      context.translationService = trans;
+      context.fallbackTranslationService = null;
+      context.onChanged = () {
+        if (_activeContext == context) notifyListeners();
+      };
+
+      final orchestrator = AIOrchestratorService(
+        sttService: stt,
+        translationService: trans,
+        translationFallbackService: null,
+        sessionId: context.sessionId,
+        geminiApiKey: geminiKey,
+        httpClient: client,
+      );
+
+      context.bindOrchestrator(orchestrator);
+      _activeContext = context;
+      _orchestrator = orchestrator;
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'recording',
+          'session_started',
+          sessionId: context.sessionId,
+          fields: {'mode': context.mode.name, 'sliceSeconds': _sliceDuration},
+        ),
+      );
+
+      _isRecording = true;
+      _isPaused = false;
+      _sessionAudioPaths.clear();
+      _allNotes.clear();
+      _segmentSummaries.clear();
       _finalReviewContent = null;
       _statusMessage = null;
       notifyListeners();
+
       final path = await _getTempPath();
-      await _audioRecorder.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: path);
-      _startSmartSliceTimer();
+      await _audioRecorder.start(
+        const RecordConfig(
+          encoder: AudioEncoder.wav,
+          sampleRate: 16000,
+          numChannels: 1,
+        ),
+        path: path,
+      );
+      _startSmartSliceTimer(context);
     }
   }
 
-  void _startSmartSliceTimer() {
+  void _startSmartSliceTimer(RecordingSessionContext context) {
     _sliceTimer?.cancel();
-    _sliceTimer = Timer.periodic(Duration(seconds: _sliceDuration), (timer) async {
+    _sliceTimer = Timer.periodic(Duration(seconds: _sliceDuration), (
+      timer,
+    ) async {
       try {
-        if (!_isRecording || _isPaused) { timer.cancel(); return; }
+        if (!_isRecording || _isPaused || _activeContext != context) {
+          timer.cancel();
+          return;
+        }
         final path = await _audioRecorder.stop();
-        if (path != null) unawaited(_processAudio(path));
+        if (path != null) {
+          context.runPipeline(() => _processAudio(path, context));
+        }
 
         await Future.delayed(const Duration(milliseconds: 100));
-        if (_isRecording && !_isPaused) {
+        if (_isRecording && !_isPaused && _activeContext == context) {
           final nextPath = await _getTempPath();
-          await _audioRecorder.start(const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1), path: nextPath);
+          await _audioRecorder.start(
+            const RecordConfig(
+              encoder: AudioEncoder.wav,
+              sampleRate: 16000,
+              numChannels: 1,
+            ),
+            path: nextPath,
+          );
         }
       } catch (e) {
         debugPrint("Slice timer error: $e");
@@ -530,86 +626,75 @@ class RecordingProvider extends ChangeNotifier {
   Future<void> stopRecording() async {
     _isRecording = false;
     _sliceTimer?.cancel();
+
+    final context = _activeContext;
+    unawaited(
+      DiagnosticLogService.instance.record(
+        'recording',
+        'stop_requested',
+        sessionId: context?.sessionId,
+      ),
+    );
     final path = await _audioRecorder.stop();
-    if (path != null) await _processAudio(path);
-    if (_orchestrator != null) {
-      await _orchestrator!.flush(onStatus: (msg) {
-        _statusMessage = msg;
-        notifyListeners();
-      });
+    if (path != null && context != null) {
+      context.runPipeline(() => _processAudio(path, context));
+    }
+    context?.sealPipelines();
+    _activeContext = null;
+
+    if (context != null) {
+      final payload = HandoverPayload(
+        context: context,
+        enableFinalRecap: _enableFinalRecap,
+        onDone: (event) {
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'recording',
+              'session_ready',
+              sessionId: event.sessionId,
+              fields: {'mode': event.mode.name},
+            ),
+          );
+          _lastExportedPath = event.exportPath;
+          _sessionReadyController.add(event);
+          notifyListeners();
+        },
+        onStatus: (msg) {
+          _statusMessage = msg;
+          notifyListeners();
+        },
+        onError: (err) {
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'recording',
+              'handover_failed',
+              sessionId: context.sessionId,
+              fields: {'errorType': 'handover'},
+            ),
+          );
+          debugPrint('[Handover Error] $err');
+        },
+      );
+
+      // Submit to SessionBackgroundProcessor — returns immediately (<200ms)
+      unawaited(SessionBackgroundProcessor.instance.submit(payload));
     }
 
-    // 闲谈模式无摘要故跳过
-    if (_currentMode == AppMode.freeTalk) {
-      _statusMessage = "Finalizing free talk...";
-      notifyListeners();
-      await ApiScheduler().untilIdle();
-      await _exportFreeTalkMarkdown();
-      if (_lastExportedPath != null) {
-        _sessionReadyController.add(_lastExportedPath!);
-      }
-      await _resetAudioSessionAfterRecording();
-      return;
-    }
-
-    // 先刷新最后一段未满40秒的缓冲
-    if (_segmentTranscriptBuffer.isNotEmpty) {
-      await _generateSegmentSummary();
-    }
-    // 等待后台正在生成的摘要完成
-    while (_isGeneratingSegmentSummary) {
-      await Future.delayed(const Duration(milliseconds: 100));
-    }
-
-    // ★ 立即用分段摘要组合成即时总结（不等待完整 AI review）
-    if (_segmentSummaries.isNotEmpty) {
-      _finalReviewContent = _segmentSummaries.join("\n\n");
-      _sessionReadyController.add(_finalReviewContent!);
-    }
-
-    // 立即导出 MD 文件（含分段摘要），确保存档立即可见
-    await _exportToMarkdown();
-
-    // [BUG-09 Fix] 短录音（< 40s，无分段摘要）时，_finalReviewContent 由 unawaited 后台任务赋值，
-    // 此处几乎肯定为 null，用它做广播判断会导致弹窗永不弹出。
-    // 修复：_exportToMarkdown() 成功后 _lastExportedPath 已被设置，
-    // 无论 _segmentSummaries 是否为空，统一广播 _lastExportedPath，确保弹窗一定触发。
-    if (_segmentSummaries.isEmpty && _lastExportedPath != null) {
-      _sessionReadyController.add(_lastExportedPath!);
-    }
-
-    // 后台继续生成完整 AI review（不阻塞弹窗），完成后会覆盖更新 MD 文件
-    _statusMessage = "Finalizing full AI review...";
-    notifyListeners();
-    unawaited(_generateFinalReviewInBackground());
-
-    // 修复 Bug 2: 录音结束后重置音频会话，让下次录音可立即开始
+    _resetForNextSession();
     await _resetAudioSessionAfterRecording();
   }
 
-  /// 后台任务：生成完整 AI 总结并导出最终 MD 文件（不阻塞弹窗）
-  Future<void> _generateFinalReviewInBackground() async {
-    try {
-      await ApiScheduler().untilIdle();
-
-      if (_enableFinalRecap) {
-        await generateFinalAcademicReview();
-        // generateFinalAcademicReview 的 finally 中已调用 _exportToMarkdown，覆盖更新
-      } else {
-        // _exportToMarkdown 已在 stopRecording() 中同步执行，无需重复
-      }
-
-      if (_lastExportedPath != null && _finalReviewContent == null) {
-        _sessionReadyController.add(_lastExportedPath!);
-      } else if (_finalReviewContent != null) {
-        _sessionReadyController.add(_finalReviewContent!);
-      }
-    } catch (e) {
-      debugPrint("[Background Final Review Error] $e");
-      if (_lastExportedPath != null) {
-        _sessionReadyController.add(_lastExportedPath!);
-      }
-    }
+  /// [Phase 3] Resets Provider state so next recording session can start immediately.
+  void _resetForNextSession() {
+    _orchestrator = null;
+    _allNotes.clear();
+    _segmentSummaries.clear();
+    _finalReviewContent = null;
+    _shorthandReviewContent = null;
+    _identifiedLectureContext = null;
+    _sessionAudioPaths.clear();
+    _statusMessage = null;
+    notifyListeners();
   }
 
   /// 暂停录音：停止当前切片计时器和录音器，保留所有已有笔记，不做任何导出。
@@ -619,12 +704,10 @@ class RecordingProvider extends ChangeNotifier {
     _sliceTimer?.cancel();
     // 处理暂停前的最后一段音频切片
     final path = await _audioRecorder.stop();
-    if (path != null) unawaited(_processAudio(path));
-    // [BUG-13 Fix] 暂停时重置 40s 摘要计数器：
-    // _sliceTimer 已被取消，_segmentSummaryCounter 若不清零，
-    // 继续录音后 _startSmartSliceTimer() 重启会在错误时机触发摘要。
-    // 重置为 0 让新一轮从干净起点开始，不影响已积累的 _segmentTranscriptBuffer。
-    _segmentSummaryCounter = 0;
+    if (path != null && _activeContext != null) {
+      final context = _activeContext!;
+      context.runPipeline(() => _processAudio(path, context));
+    }
     _statusMessage = "⏸ Paused";
     notifyListeners();
   }
@@ -636,10 +719,16 @@ class RecordingProvider extends ChangeNotifier {
     _statusMessage = null;
     final nextPath = await _getTempPath();
     await _audioRecorder.start(
-      const RecordConfig(encoder: AudioEncoder.wav, sampleRate: 16000, numChannels: 1),
+      const RecordConfig(
+        encoder: AudioEncoder.wav,
+        sampleRate: 16000,
+        numChannels: 1,
+      ),
       path: nextPath,
     );
-    _startSmartSliceTimer();
+    if (_activeContext != null) {
+      _startSmartSliceTimer(_activeContext!);
+    }
     notifyListeners();
   }
 
@@ -666,64 +755,55 @@ class RecordingProvider extends ChangeNotifier {
     return true;
   }
 
-  /// FreeTalk 翻译（使用硅基流动 Qwen）
-  Future<String> _translateFreeTalk(String englishText) async {
-    // Try Gemini first
-    final geminiResult = await _callGemini(
-      'You are a professional translator. Translate the following English text to Chinese. Output ONLY the Chinese translation, no explanations.',
-      englishText,
-    );
-    if (geminiResult != null && geminiResult.isNotEmpty && !geminiResult.startsWith('[')) return geminiResult;
-
-    // Fallback: Groq
+  Future<void> _processAudio(
+    String path,
+    RecordingSessionContext context,
+  ) async {
+    if (context.isDisposed || context.orchestrator == null || path.isEmpty)
+      return;
     try {
-      final result = await _translateViaSiliconFlow(englishText)
-          .timeout(const Duration(seconds: 10));
-      if (result.isNotEmpty && !result.startsWith('[')) return result;
-    } catch (e) {
-      debugPrint("FreeTalk translation failed: $e");
-    }
-    return '[Translation failed]';
-  }
-
-  /// 硅基流动 Qwen（复用现有翻译能力）
-  Future<String> _translateViaSiliconFlow(String text) async {
-    if (_aiService == null) throw Exception('SiliconFlow service not ready');
-    // 注意：_aiService 的 summarize 方法可能不适合直接翻译，但原架构中使用它做翻译
-    // 这里直接调用原翻译逻辑，假设 OpenAIService 提供了 translate 方法。
-    // 如果没有，可以临时使用 summarize 并指定 prompt。
-    final translation = await _aiService!.translate(text);
-    return translation;
-  }
-
-
-  Future<void> _processAudio(String path) async {
-    if (_orchestrator == null) return;
-    if (path.isEmpty) return;
-    try {
-      final stitchResult = await compute(_backgroundStitchTask, StitchData(_lastAudioTail, path, kTailSize));
+      final stitchResult = await compute(
+        _backgroundStitchTask,
+        StitchData(context.lastAudioTail, path, kTailSize),
+      );
       final processedPath = stitchResult['path'] as String;
-      _lastAudioTail = Uint8List.fromList(stitchResult['newTail'] as List<int>);
-      _sessionAudioPaths.add(processedPath); // 收集当次 session 切片路径
+      context.lastAudioTail = Uint8List.fromList(
+        stitchResult['newTail'] as List<int>,
+      );
+      context.addRawAudioPath(processedPath);
 
-      final currentNote = InsightNote(summary: '', transcript: '...', timestamp: DateTime.now(), isProcessing: true);
+      final currentNote = InsightNote(
+        summary: '',
+        transcript: '...',
+        timestamp: DateTime.now(),
+        isProcessing: true,
+      );
       final noteId = currentNote.id;
-      _allNotes.add(currentNote);
-      notifyListeners();
+      context.addNote(currentNote);
+      if (context == _activeContext) {
+        notifyListeners();
+      }
 
       // 提取最近两次的翻译历史作为上下文
       final List<Map<String, String>> historyList = [];
-      final List<InsightNote> nonSummaryNotes = _allNotes
-          .where((n) => !n.isSummary && 
-                        n.transcript.isNotEmpty && 
-                        n.transcript != '...' && 
-                        n.translatedContent != null && 
-                        n.translatedContent!.isNotEmpty &&
-                        !n.translatedContent!.startsWith('['))
+      final List<InsightNote> nonSummaryNotes = context.notes
+          .where(
+            (n) =>
+                !n.isSummary &&
+                n.transcript.isNotEmpty &&
+                n.transcript != '...' &&
+                n.translatedContent != null &&
+                n.translatedContent!.isNotEmpty &&
+                !n.translatedContent!.startsWith('['),
+          )
           .toList();
-      
+
       if (nonSummaryNotes.length >= 2) {
-        for (var i = nonSummaryNotes.length - 2; i < nonSummaryNotes.length; i++) {
+        for (
+          var i = nonSummaryNotes.length - 2;
+          i < nonSummaryNotes.length;
+          i++
+        ) {
           historyList.add({
             'english': nonSummaryNotes[i].transcript,
             'chinese': nonSummaryNotes[i].translatedContent!,
@@ -736,49 +816,93 @@ class RecordingProvider extends ChangeNotifier {
         });
       }
 
-      await _orchestrator!.processAudioSegment(
+      await context.orchestrator!.processAudioSegment(
         noteId,
         processedPath,
-        context: _lastTranscript,
+        context: context.lastTranscript,
         translationHistory: historyList,
         onStatus: (msg) {
-          _statusMessage = msg;
-          notifyListeners();
+          if (context == _activeContext) {
+            _statusMessage = msg;
+            notifyListeners();
+          }
         },
       );
-      
-      final index = _allNotes.indexWhere((n) => n.id == noteId);
+
+      final index = context.notes.indexWhere((n) => n.id == noteId);
       if (index != -1) {
-        _allNotes[index].isProcessing = false;
+        context.notes[index].isProcessing = false;
+        context.lastTranscript = context.notes[index].transcript;
         // 闲谈模式：对每个有效 STT 结果进行实时多平台翻译
-        if (_currentMode == AppMode.freeTalk && _isValidTranscript(_allNotes[index].transcript)) {
-          final translated = await _translateFreeTalk(_allNotes[index].transcript);
-          _allNotes[index].translatedContent = translated;
-          _saveShadowCache();
+        if (context.mode == AppMode.freeTalk &&
+            _isValidTranscript(context.notes[index].transcript)) {
+          await context.saveShadowDraft();
         }
-        notifyListeners();
+        if (context == _activeContext) {
+          notifyListeners();
+        }
 
         // 每40秒分段 AI 摘要积累
-        if (_currentMode != AppMode.freeTalk) {
-          final transcript = _allNotes[index].transcript;
+        if (context.mode != AppMode.freeTalk) {
+          final transcript = context.notes[index].transcript;
           if (_isValidTranscript(transcript)) {
-            _segmentTranscriptBuffer.add(transcript);
-            _segmentSummaryCounter++;
-            if (_segmentSummaryCounter >= _kSlicesPerSegment && !_isGeneratingSegmentSummary) {
-              _segmentSummaryCounter = 0;
-              unawaited(_generateSegmentSummary());
+            context.segmentTranscriptBuffer.add(transcript);
+            context.segmentSummaryCounter++;
+            if (context.segmentSummaryCounter >= _kSlicesPerSegment &&
+                !context.isGeneratingSegmentSummary) {
+              context.segmentSummaryCounter = 0;
+              await _generateSegmentSummaryForContext(context);
             }
           }
         }
       }
-
-
     } catch (e) {
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'recording',
+          'pipeline_failed',
+          sessionId: context.sessionId,
+          fields: {'errorType': e.runtimeType},
+        ),
+      );
       debugPrint("Pipeline Error: $e");
     }
   }
 
   /// 对当前积累的 40 秒切片文本生成分段 AI 摘要
+  Future<void> _generateSegmentSummaryForContext(
+    RecordingSessionContext context,
+  ) async {
+    if (context.isGeneratingSegmentSummary ||
+        context.segmentTranscriptBuffer.isEmpty ||
+        context.translationService == null) {
+      return;
+    }
+    context.isGeneratingSegmentSummary = true;
+    final material = context.segmentTranscriptBuffer.join(' ');
+    context.segmentTranscriptBuffer.clear();
+    try {
+      final summary = await ApiScheduler().enqueue(
+        () => context.translationService!.summarize(
+          material,
+          strategy: PromptStrategy.recap,
+          mode: context.mode,
+          unit: context.unit,
+        ),
+        sessionId: context.sessionId,
+      );
+      if (summary.trim().isNotEmpty) {
+        context.segmentSummaries.add(summary.trim());
+        await context.saveShadowDraft();
+      }
+    } catch (e) {
+      debugPrint('[Segment Summary ${context.sessionId}] $e');
+      context.segmentTranscriptBuffer.insert(0, material);
+    } finally {
+      context.isGeneratingSegmentSummary = false;
+    }
+  }
+
   /// Gemini 通用调用（用于 Groq 兜底）
   Future<String?> _callGemini(String systemPrompt, String userMessage) async {
     final key = _apiKeys[AIProvider.gemini] ?? '';
@@ -787,15 +911,27 @@ class RecordingProvider extends ChangeNotifier {
       final url = Uri.parse(
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$key',
       );
-      final response = await http.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'system_instruction': {'parts': [{'text': systemPrompt}]},
-          'contents': [{'parts': [{'text': userMessage}]}],
-          'generationConfig': {'temperature': 0.5},
-        }),
-      ).timeout(const Duration(seconds: 60));
+      final response = await http
+          .post(
+            url,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'system_instruction': {
+                'parts': [
+                  {'text': systemPrompt},
+                ],
+              },
+              'contents': [
+                {
+                  'parts': [
+                    {'text': userMessage},
+                  ],
+                },
+              ],
+              'generationConfig': {'temperature': 0.5},
+            }),
+          )
+          .timeout(const Duration(seconds: 60));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final candidates = data['candidates'] as List?;
@@ -813,50 +949,13 @@ class RecordingProvider extends ChangeNotifier {
     return null;
   }
 
-  Future<void> _generateSegmentSummary() async {
-    if (_isGeneratingSegmentSummary) return;
-    if (_segmentTranscriptBuffer.isEmpty) return;
-    if (_aiService == null) return;
-    _isGeneratingSegmentSummary = true;
-
-    try {
-      final material = _segmentTranscriptBuffer.join(" ");
-      _segmentTranscriptBuffer.clear();
-
-      final recapPrompt = PromptProvider.getSystemPrompt(PromptStrategy.recap, AIProvider.groq, mode: _currentMode, unit: _currentUnit);
-
-      String? summary;
-      // Gemini first, Groq fallback
-      summary = await _callGemini(recapPrompt, material);
-      if (summary == null || summary.isEmpty || summary.startsWith('[')) {
-        debugPrint("[40s Segment Summary] Gemini failed, trying Groq...");
-        try {
-          summary = await _aiService!.summarize(
-            material,
-            strategy: PromptStrategy.recap,
-            mode: _currentMode,
-            unit: _currentUnit,
-          );
-        } catch (e) {
-          debugPrint("[40s Segment Summary] Groq also failed: $e");
-        }
-      }
-
-      if (summary != null && summary.isNotEmpty && !summary.startsWith('[')) {
-        _segmentSummaries.add(summary);
-        debugPrint("[40s Segment Summary] ✅ ${summary.substring(0, summary.length.clamp(0, 80))}");
-      }
-    } catch (e) {
-      debugPrint("[40s Segment Summary Error] $e");
-    } finally {
-      _isGeneratingSegmentSummary = false;
-    }
-  }
-
   Future<void> _checkRecoveryCache() async {
     final directory = await getTemporaryDirectory();
     final file = File('${directory.path}/shadow_draft.json');
-    if (await file.exists()) { _hasRecoveredCache = true; notifyListeners(); }
+    if (await file.exists()) {
+      _hasRecoveredCache = true;
+      notifyListeners();
+    }
   }
 
   Future<void> recoverFromCache() async {
@@ -866,7 +965,9 @@ class RecordingProvider extends ChangeNotifier {
       final content = await file.readAsString();
       final Map<String, dynamic> data = jsonDecode(content);
       _allNotes.clear();
-      _allNotes.addAll((data['notes'] as List).map((i) => InsightNote.fromJson(i)).toList());
+      _allNotes.addAll(
+        (data['notes'] as List).map((i) => InsightNote.fromJson(i)).toList(),
+      );
       _hasRecoveredCache = false;
       notifyListeners();
     }
@@ -880,74 +981,120 @@ class RecordingProvider extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> _saveShadowCache() async {
-    final directory = await getTemporaryDirectory();
-    final file = File('${directory.path}/shadow_draft.json');
-    final data = {'notes': _allNotes.map((n) => n.toJson()).toList()};
-    await file.writeAsString(jsonEncode(data));
-  }
-
   Future<void> generateFinalAcademicReview() async {
     // ⚠️ Bug fix: 即使 _aiService 为 null 或 AI 调用失败，也必须保证 _exportToMarkdown()
     // 被执行（用 try/finally），否则 Discussion/Lecture 模式在开启 Final Recap 时将
     // 因服务未就绪而导致 MD 文件永远无法生成。
-    _isGeneratingFinalReview = true; notifyListeners();
+    _isGeneratingFinalReview = true;
+    notifyListeners();
     try {
       if (_aiService == null) {
         _finalReviewContent = "[AI service not ready — recap skipped]";
         _shorthandReviewContent = null;
-        debugPrint("[Final Academic Review] _aiService is null, skipping recap.");
+        debugPrint(
+          "[Final Academic Review] _aiService is null, skipping recap.",
+        );
       } else {
-        final material = _allNotes.where((n) => !n.isSummary).map((n) => n.transcript).join(" ");
+        final material = _allNotes
+            .where((n) => !n.isSummary)
+            .map((n) => n.transcript)
+            .join(" ");
         if (material.isEmpty) {
           _finalReviewContent = "Not enough material.";
           _shorthandReviewContent = null;
         } else {
           if (_currentMode == AppMode.exam) {
             // 1. 生成 Exam 考点大纲
-            final examPrompt = PromptProvider.getFinalReviewPrompt(AppMode.exam, _currentUnit);
+            final examPrompt = PromptProvider.getFinalReviewPrompt(
+              AppMode.exam,
+              _currentUnit,
+            );
             final geminiExam = await _callGemini(examPrompt, material);
             if (geminiExam != null && !geminiExam.startsWith('[')) {
               _finalReviewContent = geminiExam;
             } else {
               try {
-                _finalReviewContent = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: AppMode.exam, unit: _currentUnit);
+                _finalReviewContent = await _aiService!.summarize(
+                  material,
+                  strategy: PromptStrategy.recap,
+                  mode: AppMode.exam,
+                  unit: _currentUnit,
+                );
               } catch (_) {
-                _finalReviewContent = await _fallbackTranslationService?.summarize(material, strategy: PromptStrategy.recap, mode: AppMode.exam, unit: _currentUnit) ?? "Exam recap failed.";
+                _finalReviewContent =
+                    await _fallbackTranslationService?.summarize(
+                      material,
+                      strategy: PromptStrategy.recap,
+                      mode: AppMode.exam,
+                      unit: _currentUnit,
+                    ) ??
+                    "Exam recap failed.";
               }
             }
 
             // 2. 生成 Lecture/速记 学术讲座笔记 (用于浮窗显示与导出 Jeff_速记_xxx.md)
-            final shorthandPrompt = PromptProvider.getFinalReviewPrompt(AppMode.lecture, _currentUnit);
-            final geminiShorthand = await _callGemini(shorthandPrompt, material);
+            final shorthandPrompt = PromptProvider.getFinalReviewPrompt(
+              AppMode.lecture,
+              _currentUnit,
+            );
+            final geminiShorthand = await _callGemini(
+              shorthandPrompt,
+              material,
+            );
             if (geminiShorthand != null && !geminiShorthand.startsWith('[')) {
               _shorthandReviewContent = geminiShorthand;
             } else {
               try {
-                _shorthandReviewContent = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: AppMode.lecture, unit: _currentUnit);
+                _shorthandReviewContent = await _aiService!.summarize(
+                  material,
+                  strategy: PromptStrategy.recap,
+                  mode: AppMode.lecture,
+                  unit: _currentUnit,
+                );
               } catch (_) {
-                _shorthandReviewContent = await _fallbackTranslationService?.summarize(material, strategy: PromptStrategy.recap, mode: AppMode.lecture, unit: _currentUnit);
+                _shorthandReviewContent = await _fallbackTranslationService
+                    ?.summarize(
+                      material,
+                      strategy: PromptStrategy.recap,
+                      mode: AppMode.lecture,
+                      unit: _currentUnit,
+                    );
               }
             }
             // 浮窗弹出的总结直接展现【速记】
             // _shorthandReviewContent 已赋值供导出和浮窗展示
           } else {
-            final recapPrompt = PromptProvider.getFinalReviewPrompt(_currentMode, _currentUnit);
+            final recapPrompt = PromptProvider.getFinalReviewPrompt(
+              _currentMode,
+              _currentUnit,
+            );
             final geminiRecap = await _callGemini(recapPrompt, material);
             if (geminiRecap != null && !geminiRecap.startsWith('[')) {
               _finalReviewContent = geminiRecap;
             } else {
               try {
-                _finalReviewContent = await _aiService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
+                _finalReviewContent = await _aiService!.summarize(
+                  material,
+                  strategy: PromptStrategy.recap,
+                  mode: _currentMode,
+                  unit: _currentUnit,
+                );
               } catch (mainError) {
                 if (_fallbackTranslationService != null) {
                   try {
-                    _finalReviewContent = await _fallbackTranslationService!.summarize(material, strategy: PromptStrategy.recap, mode: _currentMode, unit: _currentUnit);
+                    _finalReviewContent = await _fallbackTranslationService!
+                        .summarize(
+                          material,
+                          strategy: PromptStrategy.recap,
+                          mode: _currentMode,
+                          unit: _currentUnit,
+                        );
                   } catch (_) {
                     _finalReviewContent = "Recap failed all services.";
                   }
                 } else {
-                  _finalReviewContent = "Recap failed and no fallback configured.";
+                  _finalReviewContent =
+                      "Recap failed and no fallback configured.";
                 }
               }
             }
@@ -962,67 +1109,42 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
-  /// 闲谈模式专用导出：无任何标题/日期/分隔线，先中文后英文
-  Future<void> _exportFreeTalkMarkdown() async {
-    try {
-      final now = DateTime.now();
-      final filename = "Jeff_FreeTalk_${DateFormat('yyyyMMdd_HHmmss').format(now)}.md";
-      final directory = await getApplicationDocumentsDirectory();
-      final file = File('${directory.path}/$filename');
-
-      final notes = _allNotes.where((n) => !n.isSummary).toList();
-      // 收集有效中文和英文（按顺序）
-      final chineseSentences = <String>[];
-      final englishSentences = <String>[];
-      for (final note in notes) {
-        final en = note.transcript.trim();
-        if (en.isNotEmpty && en != '...' && !en.startsWith('[')) {
-          englishSentences.add(en);
-        }
-        final zh = note.translatedContent?.trim();
-        if (zh != null && zh.isNotEmpty && !zh.startsWith('[')) {
-          chineseSentences.add(zh);
-        }
-      }
-
-      final buffer = StringBuffer();
-      for (final zh in chineseSentences) {
-        buffer.writeln(zh);
-      }
-      if (chineseSentences.isNotEmpty && englishSentences.isNotEmpty) {
-        buffer.writeln();
-      }
-      for (final en in englishSentences) {
-        buffer.writeln(en);
-      }
-
-      await file.writeAsString(buffer.toString());
-      debugPrint("\x1B[32m[FreeTalk Export OK] ${file.absolute.path}\x1B[0m");
-      _uploadToSupabase(file, 'freetalk');
-      _lastExportedPath = file.absolute.path;
-      notifyListeners();
-    } catch (e) {
-      debugPrint("[FreeTalk Export Error] $e");
-    }
-  }
-
   String _highlightText(String text) {
     String result = text;
     // Numbers / statistics
     result = result.replaceAllMapped(
-      RegExp(r'(\d+(?:\.\d+)?\s*(?:%|percent|million|billion|thousand|trillion))', caseSensitive: false),
+      RegExp(
+        r'(\d+(?:\.\d+)?\s*(?:%|percent|million|billion|thousand|trillion))',
+        caseSensitive: false,
+      ),
       (m) => '==${m[1]}==',
     );
     // Academic signal words
     const signalWords = [
-      'however', 'therefore', 'because of', 'as a result', 'consequently',
-      'in contrast', 'on the other hand', 'for example', 'for instance',
-      'in addition', 'moreover', 'furthermore', 'nevertheless',
-      'notably', 'importantly', 'specifically', 'in particular',
+      'however',
+      'therefore',
+      'because of',
+      'as a result',
+      'consequently',
+      'in contrast',
+      'on the other hand',
+      'for example',
+      'for instance',
+      'in addition',
+      'moreover',
+      'furthermore',
+      'nevertheless',
+      'notably',
+      'importantly',
+      'specifically',
+      'in particular',
     ];
     for (final word in signalWords) {
       result = result.replaceAllMapped(
-        RegExp('(?<![=])\\b${RegExp.escape(word)}\\b(?![=])', caseSensitive: false),
+        RegExp(
+          '(?<![=])\\b${RegExp.escape(word)}\\b(?![=])',
+          caseSensitive: false,
+        ),
         (m) => '==${m[0]}==',
       );
     }
@@ -1071,7 +1193,11 @@ class RecordingProvider extends ChangeNotifier {
       final dateStr = DateFormat('yyyyMMdd_HHmm').format(now);
       final isDiscussion = _currentMode == AppMode.discussion;
       final isExam = _currentMode == AppMode.exam;
-      final prefix = isDiscussion ? "Jeff_Discussion" : isExam ? "Jeff_Exam" : "Jeff_Notes";
+      final prefix = isDiscussion
+          ? "Jeff_Discussion"
+          : isExam
+          ? "Jeff_Exam"
+          : "Jeff_Notes";
       final filename = "${prefix}_$dateStr.md";
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$filename');
@@ -1081,15 +1207,21 @@ class RecordingProvider extends ChangeNotifier {
       if (isDiscussion) {
         sb.writeln("# Group Discussion Session");
         sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
-        sb.writeln("**Context:** ${_identifiedLectureContext ?? 'Group Discussion'}");
+        sb.writeln(
+          "**Context:** ${_identifiedLectureContext ?? 'Group Discussion'}",
+        );
       } else if (isExam) {
         sb.writeln("# Exam Listening Session");
         sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
-        sb.writeln("**Context:** ${_identifiedLectureContext ?? 'Exam Listening'}");
+        sb.writeln(
+          "**Context:** ${_identifiedLectureContext ?? 'Exam Listening'}",
+        );
       } else {
         sb.writeln("# Academic Lecture Session");
         sb.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
-        sb.writeln("**Context:** ${_identifiedLectureContext ?? 'General Academic Lecture'}");
+        sb.writeln(
+          "**Context:** ${_identifiedLectureContext ?? 'General Academic Lecture'}",
+        );
       }
       sb.writeln();
 
@@ -1097,13 +1229,13 @@ class RecordingProvider extends ChangeNotifier {
       if (_finalReviewContent != null && _finalReviewContent!.isNotEmpty) {
         sb.writeln("---");
         sb.writeln();
-      if (isDiscussion) {
-        sb.writeln("## Part 1 · AI Discussion Recap");
-      } else if (isExam) {
-        sb.writeln("## Part 1 · Exam Answer Card");
-      } else {
-        sb.writeln("## Part 1 · AI Academic Review");
-      }
+        if (isDiscussion) {
+          sb.writeln("## Part 1 · AI Discussion Recap");
+        } else if (isExam) {
+          sb.writeln("## Part 1 · Exam Answer Card");
+        } else {
+          sb.writeln("## Part 1 · AI Academic Review");
+        }
         sb.writeln();
         sb.writeln(_finalReviewContent);
         sb.writeln();
@@ -1126,7 +1258,8 @@ class RecordingProvider extends ChangeNotifier {
           if (engText.isEmpty ||
               engText == '...' ||
               engText.startsWith('[Silence') ||
-              engText.startsWith('[Error')) continue;
+              engText.startsWith('[Error'))
+            continue;
 
           englishSegments.add(engText);
 
@@ -1144,27 +1277,38 @@ class RecordingProvider extends ChangeNotifier {
 
         sb.writeln("### 英文全文 (English Transcript)");
         sb.writeln();
-        sb.writeln(_highlightText(_applyVocabularyHighlight(englishSegments.join(" "), _currentUnit)));
+        sb.writeln(
+          _highlightText(
+            _applyVocabularyHighlight(englishSegments.join(" "), _currentUnit),
+          ),
+        );
         sb.writeln();
       }
-
 
       await file.writeAsString(sb.toString());
       debugPrint("\x1B[32m[Export OK] ${file.absolute.path}\x1B[0m");
 
       // ── Exam 模式下，额外独立保存一份《Jeff_速记_yyyyMMdd_HHmm.md》（浮窗同款学术速记） ──
-      final shorthandContentToUse = (_shorthandReviewContent != null && _shorthandReviewContent!.isNotEmpty)
+      final shorthandContentToUse =
+          (_shorthandReviewContent != null &&
+              _shorthandReviewContent!.isNotEmpty)
           ? _shorthandReviewContent
           : _generateFallbackShorthandFromTranscripts();
 
-      if (isExam && shorthandContentToUse != null && shorthandContentToUse.isNotEmpty) {
+      if (isExam &&
+          shorthandContentToUse != null &&
+          shorthandContentToUse.isNotEmpty) {
         try {
           final shorthandFilename = "Jeff_速记_$dateStr.md";
           final shorthandFile = File('${directory.path}/$shorthandFilename');
           final StringBuffer sbShort = StringBuffer();
           sbShort.writeln("# Academic Shorthand Notes (学术速记)");
-          sbShort.writeln("**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}");
-          sbShort.writeln("**Context:** ${_identifiedLectureContext ?? 'Academic Lecture Shorthand'}");
+          sbShort.writeln(
+            "**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}",
+          );
+          sbShort.writeln(
+            "**Context:** ${_identifiedLectureContext ?? 'Academic Lecture Shorthand'}",
+          );
           sbShort.writeln();
           sbShort.writeln("---");
           sbShort.writeln();
@@ -1186,10 +1330,16 @@ class RecordingProvider extends ChangeNotifier {
             for (int i = 0; i < transcripts.length; i++) {
               final note = transcripts[i];
               final engText = note.transcript.trim();
-              if (engText.isEmpty || engText == '...' || engText.startsWith('[Silence') || engText.startsWith('[Error')) continue;
+              if (engText.isEmpty ||
+                  engText == '...' ||
+                  engText.startsWith('[Silence') ||
+                  engText.startsWith('[Error'))
+                continue;
               englishSegments.add(engText);
               final zhText = note.translatedContent?.trim();
-              if (zhText != null && zhText.isNotEmpty && !zhText.startsWith('[')) {
+              if (zhText != null &&
+                  zhText.isNotEmpty &&
+                  !zhText.startsWith('[')) {
                 chineseSegments.add(zhText);
               }
             }
@@ -1202,12 +1352,21 @@ class RecordingProvider extends ChangeNotifier {
 
             sbShort.writeln("### 英文全文 (English Transcript)");
             sbShort.writeln();
-            sbShort.writeln(_highlightText(_applyVocabularyHighlight(englishSegments.join(" "), _currentUnit)));
+            sbShort.writeln(
+              _highlightText(
+                _applyVocabularyHighlight(
+                  englishSegments.join(" "),
+                  _currentUnit,
+                ),
+              ),
+            );
             sbShort.writeln();
           }
 
           await shorthandFile.writeAsString(sbShort.toString());
-          debugPrint("\x1B[32m[Shorthand Export OK] ${shorthandFile.absolute.path}\x1B[0m");
+          debugPrint(
+            "\x1B[32m[Shorthand Export OK] ${shorthandFile.absolute.path}\x1B[0m",
+          );
           await _uploadToSupabase(shorthandFile, 'notes');
         } catch (shorthandError) {
           debugPrint("[Shorthand Export Error] $shorthandError");
@@ -1221,7 +1380,11 @@ class RecordingProvider extends ChangeNotifier {
         await _stitchSessionAudioFiles(_sessionAudioPaths, wavPath);
       }
 
-      final module = isDiscussion ? 'discussion' : isExam ? 'exam' : 'listening';
+      final module = isDiscussion
+          ? 'discussion'
+          : isExam
+          ? 'exam'
+          : 'listening';
       await _uploadToSupabase(file, module);
       _lastExportedPath = file.absolute.path;
       notifyListeners();
@@ -1230,7 +1393,10 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
-  Future<void> _stitchSessionAudioFiles(List<String> paths, String outputPath) async {
+  Future<void> _stitchSessionAudioFiles(
+    List<String> paths,
+    String outputPath,
+  ) async {
     try {
       final List<int> allPcm = [];
       for (final p in paths) {
@@ -1246,7 +1412,9 @@ class RecordingProvider extends ChangeNotifier {
         final header = _generateWavHeaderStatic(allPcm.length);
         final stitchedBytes = Uint8List.fromList([...header, ...allPcm]);
         await File(outputPath).writeAsBytes(stitchedBytes);
-        debugPrint('[SessionAudio] Successfully stitched ${paths.length} audio slices to $outputPath');
+        debugPrint(
+          '[SessionAudio] Successfully stitched ${paths.length} audio slices to $outputPath',
+        );
       }
     } catch (e) {
       debugPrint('[SessionAudio] Stitch error: $e');
@@ -1264,7 +1432,9 @@ class RecordingProvider extends ChangeNotifier {
         userId = SupabaseConfig.currentUserId;
       } catch (_) {
         await SupabaseConfig.signInAnonymously();
-        try { userId = SupabaseConfig.currentUserId; } catch (_) {}
+        try {
+          userId = SupabaseConfig.currentUserId;
+        } catch (_) {}
       }
 
       final map = <String, dynamic>{
@@ -1285,8 +1455,12 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
-  Future<String> generateEssayMatrix(String finalTopic, {String essayType = 'Argumentative'}) async {
-    const systemPrompt = """You are a simple, accessible English essay generator for English learners.
+  Future<String> generateEssayMatrix(
+    String finalTopic, {
+    String essayType = 'Argumentative',
+  }) async {
+    const systemPrompt =
+        """You are a simple, accessible English essay generator for English learners.
 Your task is to generate a standardized 5-paragraph essay based on the user's provided topic, followed by its precise Chinese translation.
 
 ### CORE CONCEPT (THE THREE CORE ASPECTS):
@@ -1345,25 +1519,27 @@ Part 2: The sentence-by-sentence Chinese translation.""";
           "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$geminiKey",
         );
 
-        final response = await http.post(
-          url,
-          headers: {"Content-Type": "application/json"},
-          body: jsonEncode({
-            "system_instruction": {
-              "parts": [{"text": systemPrompt}],
-            },
-            "contents": [
-              {
-                "parts": [
-                  {"text": "Type: $essayType\nTopic: $finalTopic"},
+        final response = await http
+            .post(
+              url,
+              headers: {"Content-Type": "application/json"},
+              body: jsonEncode({
+                "system_instruction": {
+                  "parts": [
+                    {"text": systemPrompt},
+                  ],
+                },
+                "contents": [
+                  {
+                    "parts": [
+                      {"text": "Type: $essayType\nTopic: $finalTopic"},
+                    ],
+                  },
                 ],
-              },
-            ],
-            "generationConfig": {
-              "temperature": 0.7,
-            },
-          }),
-        ).timeout(const Duration(seconds: 120));
+                "generationConfig": {"temperature": 0.7},
+              }),
+            )
+            .timeout(const Duration(seconds: 120));
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -1378,9 +1554,13 @@ Part 2: The sentence-by-sentence Chinese translation.""";
             }
           }
         }
-        debugPrint("[Essay] Gemini failed (${response.statusCode}), falling back to SiliconFlow Qwen...");
+        debugPrint(
+          "[Essay] Gemini failed (${response.statusCode}), falling back to SiliconFlow Qwen...",
+        );
       } catch (e) {
-        debugPrint("[Essay] Gemini exception: $e, falling back to SiliconFlow Qwen...");
+        debugPrint(
+          "[Essay] Gemini exception: $e, falling back to SiliconFlow Qwen...",
+        );
       }
     } else {
       debugPrint("[Essay] No Gemini key configured, using SiliconFlow Qwen...");
@@ -1389,29 +1569,38 @@ Part 2: The sentence-by-sentence Chinese translation.""";
     // Fallback: SiliconFlow Qwen via OpenAI-compatible API
     final siliconKey = siliconFlowKey.trim();
     if (siliconKey.isEmpty) {
-      throw Exception("Gemini API Key not configured and no SiliconFlow key available. Please add a key in Settings.");
+      throw Exception(
+        "Gemini API Key not configured and no SiliconFlow key available. Please add a key in Settings.",
+      );
     }
 
     final url = Uri.parse("https://api.siliconflow.cn/v1/chat/completions");
-    final response = await http.post(
-      url,
-      headers: {
-        "Authorization": "Bearer $siliconKey",
-        "Content-Type": "application/json",
-      },
-      body: jsonEncode({
-        "model": "Qwen/Qwen2.5-7B-Instruct",
-        "messages": [
-          {"role": "system", "content": systemPrompt},
-          {"role": "user", "content": "Type: $essayType\nTopic: $finalTopic"},
-        ],
-        "temperature": 0.7,
-        "max_tokens": 4096,
-      }),
-    ).timeout(const Duration(seconds: 120));
+    final response = await http
+        .post(
+          url,
+          headers: {
+            "Authorization": "Bearer $siliconKey",
+            "Content-Type": "application/json",
+          },
+          body: jsonEncode({
+            "model": "Qwen/Qwen2.5-7B-Instruct",
+            "messages": [
+              {"role": "system", "content": systemPrompt},
+              {
+                "role": "user",
+                "content": "Type: $essayType\nTopic: $finalTopic",
+              },
+            ],
+            "temperature": 0.7,
+            "max_tokens": 4096,
+          }),
+        )
+        .timeout(const Duration(seconds: 120));
 
     if (response.statusCode != 200) {
-      throw Exception("SiliconFlow Qwen error ${response.statusCode}: ${response.body}");
+      throw Exception(
+        "SiliconFlow Qwen error ${response.statusCode}: ${response.body}",
+      );
     }
 
     final data = jsonDecode(response.body);
@@ -1427,6 +1616,10 @@ Part 2: The sentence-by-sentence Chinese translation.""";
     _fastSub?.cancel();
     _accurateSub?.cancel();
     _orchestrator?.dispose();
+    _fastAiService?.dispose();
+    if (!identical(_groqService, _fastAiService)) {
+      _groqService?.dispose();
+    }
     _sliceTimer?.cancel();
     _audioRecorder.dispose();
     _sessionReadyController.close();

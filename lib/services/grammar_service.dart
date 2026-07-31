@@ -1,7 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'credential_store.dart';
 import '../prompt_provider.dart';
 import '../models.dart';
 
@@ -11,10 +11,8 @@ class GrammarService {
   static const String _geminiModel = 'gemini-2.5-flash';
 
   static Future<String?> _callAI(String systemPrompt, String userMessage) async {
-    final prefs = await SharedPreferences.getInstance();
-
     // Try Gemini first
-    final geminiKey = prefs.getString('api_key_gemini') ?? '';
+    final geminiKey = await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
     if (geminiKey.isNotEmpty) {
       try {
         final url = Uri.parse(
@@ -48,7 +46,7 @@ class GrammarService {
     }
 
     // Fallback: Groq
-    final groqKey = prefs.getString('api_key_groq');
+    final groqKey = await CredentialStore.instance.readKey(CredentialStore.keyGroq);
     if (groqKey == null || groqKey.isEmpty) return '请先在设置中配置 Groq 或 Gemini API Key';
 
     try {

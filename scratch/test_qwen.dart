@@ -1,8 +1,9 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:http/http.dart' as http;
 
 Future<void> main() async {
-  final apiKey = "sk-xvqruvbtbbcqobglijorfqczmvpfvikouftvapeautkipitq";
+  final apiKey = Platform.environment['SILICONFLOW_API_KEY'] ?? "";
   final baseUrl = "https://api.siliconflow.cn/v1";
   final model = "Qwen/Qwen2.5-7B-Instruct";
 

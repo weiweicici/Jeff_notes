@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import '../widgets/academic_markdown.dart';
 import '../services/reading_quiz_service.dart';
 import '../services/supabase_config.dart';
+import '../services/reading_content_parser.dart';
 
 class ReadingDetailScreen extends StatefulWidget {
   final String id;
@@ -57,13 +58,7 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
 
   /// 提取课文正文（去掉练习部分），确保 AI 只处理课文
   String get _readingText {
-    final idx = widget.contentMd.indexOf('\n## 📝 练习');
-    if (idx == -1) {
-      // 也可能以 --- 或 ## 分隔
-      final fallback = widget.contentMd.indexOf('\n---\n');
-      return fallback == -1 ? widget.contentMd : widget.contentMd.substring(0, fallback);
-    }
-    return widget.contentMd.substring(0, idx);
+    return ReadingContentParser.extractArticle(widget.contentMd);
   }
 
   Future<void> _generateQuiz() async {
@@ -72,10 +67,11 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
       _quizResult = null;
     });
     final result = await ReadingQuizService.generateQuiz(_readingText);
-    if (mounted) setState(() {
-      _quizResult = result;
-      _loadingQuiz = false;
-    });
+    if (mounted)
+      setState(() {
+        _quizResult = result;
+        _loadingQuiz = false;
+      });
   }
 
   Future<void> _getSummary() async {
@@ -84,10 +80,11 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
       _summaryResult = null;
     });
     final result = await ReadingQuizService.getSummary(_readingText);
-    if (mounted) setState(() {
-      _summaryResult = result;
-      _loadingSummary = false;
-    });
+    if (mounted)
+      setState(() {
+        _summaryResult = result;
+        _loadingSummary = false;
+      });
   }
 
   Future<void> _getVocabulary() async {
@@ -96,10 +93,11 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
       _vocabResult = null;
     });
     final result = await ReadingQuizService.getVocabulary(_readingText);
-    if (mounted) setState(() {
-      _vocabResult = result;
-      _loadingVocab = false;
-    });
+    if (mounted)
+      setState(() {
+        _vocabResult = result;
+        _loadingVocab = false;
+      });
   }
 
   void _openTranslateSheet() {
@@ -113,10 +111,11 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
           _translationResult = null;
         });
         final result = await ReadingQuizService.getTranslation(text);
-        if (mounted) setState(() {
-          _translationResult = result;
-          _loadingTranslation = false;
-        });
+        if (mounted)
+          setState(() {
+            _translationResult = result;
+            _loadingTranslation = false;
+          });
       },
     );
   }
@@ -132,16 +131,19 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
           _paraphraseResult = null;
         });
         final result = await ReadingQuizService.getParaphrase(text);
-        if (mounted) setState(() {
-          _paraphraseResult = result;
-          _loadingParaphrase = false;
-        });
+        if (mounted)
+          setState(() {
+            _paraphraseResult = result;
+            _loadingParaphrase = false;
+          });
       },
     );
   }
 
   void _handleTranslateSelection(String text) async {
-    debugPrint('[ReadingDetail] _handleTranslateSelection called, text length=${text.length}, preview="${text.length > 50 ? text.substring(0, 50) : text}"');
+    debugPrint(
+      '[ReadingDetail] _handleTranslateSelection called, text length=${text.length}, preview="${text.length > 50 ? text.substring(0, 50) : text}"',
+    );
     final result = await ReadingQuizService.getTranslation(text);
     if (!mounted) return;
     if (!context.mounted) return;
@@ -184,7 +186,9 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
   }
 
   void _handleParaphraseSelection(String text) async {
-    debugPrint('[ReadingDetail] _handleParaphraseSelection called, text length=${text.length}, preview="${text.length > 50 ? text.substring(0, 50) : text}"');
+    debugPrint(
+      '[ReadingDetail] _handleParaphraseSelection called, text length=${text.length}, preview="${text.length > 50 ? text.substring(0, 50) : text}"',
+    );
     final result = await ReadingQuizService.getParaphrase(text);
     if (!mounted) return;
     if (!context.mounted) return;
@@ -239,7 +243,9 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
       builder: (ctx) => Padding(
         padding: EdgeInsets.only(
           bottom: MediaQuery.of(ctx).viewInsets.bottom,
-          left: 16, right: 16, top: 16,
+          left: 16,
+          right: 16,
+          top: 16,
         ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -247,7 +253,12 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
           children: [
             Text(title, style: Theme.of(ctx).textTheme.titleLarge),
             const SizedBox(height: 8),
-            Text(hint, style: Theme.of(ctx).textTheme.bodySmall?.copyWith(color: Colors.grey)),
+            Text(
+              hint,
+              style: Theme.of(
+                ctx,
+              ).textTheme.bodySmall?.copyWith(color: Colors.grey),
+            ),
             const SizedBox(height: 8),
             SizedBox(
               height: 300,
@@ -305,20 +316,25 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
     appendSection('转述', _paraphraseResult);
 
     final now = DateTime.now();
-    final filename = 'Jeff_Reading_${DateFormat('yyyyMMdd_HHmm').format(now)}.md';
+    final filename =
+        'Jeff_Reading_${DateFormat('yyyyMMdd_HHmm').format(now)}.md';
     final dir = await getApplicationDocumentsDirectory();
     final file = File('${dir.path}/$filename');
     await file.writeAsString(buffer.toString());
 
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('已导出: $filename')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已导出: $filename')));
     }
   }
 
   Future<void> _delete() async {
-    await SupabaseConfig.client.from('archives').delete().eq('id', widget.id).eq('user_id', SupabaseConfig.currentUserId);
+    await SupabaseConfig.client
+        .from('archives')
+        .delete()
+        .eq('id', widget.id)
+        .eq('user_id', SupabaseConfig.currentUserId);
     if (mounted) Navigator.pop(context);
   }
 
@@ -335,7 +351,10 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
                 title: const Text('修改标题'),
                 content: TextField(controller: controller, autofocus: true),
                 actions: [
-                  TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+                  TextButton(
+                    onPressed: () => Navigator.pop(ctx),
+                    child: const Text('取消'),
+                  ),
                   TextButton(
                     onPressed: () => Navigator.pop(ctx, controller.text.trim()),
                     child: const Text('确定'),
@@ -344,7 +363,11 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
               ),
             );
             if (newTitle != null && newTitle.isNotEmpty) {
-              await SupabaseConfig.client.from('archives').update({'title': newTitle}).eq('id', widget.id).eq('user_id', SupabaseConfig.currentUserId);
+              await SupabaseConfig.client
+                  .from('archives')
+                  .update({'title': newTitle})
+                  .eq('id', widget.id)
+                  .eq('user_id', SupabaseConfig.currentUserId);
               if (mounted) setState(() => _title = newTitle);
             }
           },
@@ -417,9 +440,7 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
                     [const md.FencedCodeBlockSyntax()],
                     [md.EmojiSyntax(), HighlightSyntax()],
                   ),
-                  builders: {
-                    'highlight': HighlightBuilder(context),
-                  },
+                  builders: {'highlight': HighlightBuilder(context)},
                 ),
               )
             else
@@ -430,22 +451,35 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
                     width: double.infinity,
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: Theme.of(context).colorScheme.surfaceContainerHighest.withAlpha(80),
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest.withAlpha(80),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: TextField(
                       controller: _textController,
                       readOnly: true,
                       maxLines: null,
-                      style: const TextStyle(fontFamily: 'Menlo', fontSize: 13, height: 1.5),
-                      decoration: const InputDecoration(border: InputBorder.none, isDense: true, contentPadding: EdgeInsets.zero),
-                contextMenuBuilder: (context, editableTextState) {
-                  final text = editableTextState.textEditingValue.text;
-                  final sel = editableTextState.textEditingValue.selection;
-                  final selectedText = sel.isValid && sel.start != sel.end
-                      ? text.substring(sel.start, sel.end)
-                      : '';
-                  debugPrint('[ReadingDetail] TextField contextMenuBuilder, selectedText length=${selectedText.length}');
+                      style: const TextStyle(
+                        fontFamily: 'Menlo',
+                        fontSize: 13,
+                        height: 1.5,
+                      ),
+                      decoration: const InputDecoration(
+                        border: InputBorder.none,
+                        isDense: true,
+                        contentPadding: EdgeInsets.zero,
+                      ),
+                      contextMenuBuilder: (context, editableTextState) {
+                        final text = editableTextState.textEditingValue.text;
+                        final sel =
+                            editableTextState.textEditingValue.selection;
+                        final selectedText = sel.isValid && sel.start != sel.end
+                            ? text.substring(sel.start, sel.end)
+                            : '';
+                        debugPrint(
+                          '[ReadingDetail] TextField contextMenuBuilder, selectedText length=${selectedText.length}',
+                        );
                         return AdaptiveTextSelectionToolbar.buttonItems(
                           anchors: editableTextState.contextMenuAnchors,
                           buttonItems: [
@@ -477,58 +511,74 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
             // 第一行按钮
             Row(
               children: [
-                Expanded(child: _actionBtn(
-                  icon: Icons.quiz,
-                  label: 'AI 出题',
-                  loading: _loadingQuiz,
-                  onPressed: _generateQuiz,
-                )),
+                Expanded(
+                  child: _actionBtn(
+                    icon: Icons.quiz,
+                    label: 'AI 出题',
+                    loading: _loadingQuiz,
+                    onPressed: _generateQuiz,
+                  ),
+                ),
                 const SizedBox(width: 8),
-                Expanded(child: _actionBtn(
-                  icon: Icons.summarize,
-                  label: '摘要',
-                  loading: _loadingSummary,
-                  onPressed: _getSummary,
-                )),
+                Expanded(
+                  child: _actionBtn(
+                    icon: Icons.summarize,
+                    label: '摘要',
+                    loading: _loadingSummary,
+                    onPressed: _getSummary,
+                  ),
+                ),
                 const SizedBox(width: 8),
-                Expanded(child: _actionBtn(
-                  icon: Icons.book,
-                  label: '生词',
-                  loading: _loadingVocab,
-                  onPressed: _getVocabulary,
-                )),
+                Expanded(
+                  child: _actionBtn(
+                    icon: Icons.book,
+                    label: '生词',
+                    loading: _loadingVocab,
+                    onPressed: _getVocabulary,
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 8),
             // 第二行按钮
             Row(
               children: [
-                Expanded(child: _actionBtn(
-                  icon: Icons.translate,
-                  label: '翻译',
-                  loading: _loadingTranslation,
-                  onPressed: _openTranslateSheet,
-                )),
+                Expanded(
+                  child: _actionBtn(
+                    icon: Icons.translate,
+                    label: '翻译',
+                    loading: _loadingTranslation,
+                    onPressed: _openTranslateSheet,
+                  ),
+                ),
                 const SizedBox(width: 8),
-                Expanded(child: _actionBtn(
-                  icon: Icons.replay,
-                  label: '转述',
-                  loading: _loadingParaphrase,
-                  onPressed: _openParaphraseSheet,
-                )),
+                Expanded(
+                  child: _actionBtn(
+                    icon: Icons.replay,
+                    label: '转述',
+                    loading: _loadingParaphrase,
+                    onPressed: _openParaphraseSheet,
+                  ),
+                ),
                 const SizedBox(width: 8),
-                Expanded(child: OutlinedButton.icon(
-                  onPressed: _exportMarkdown,
-                  icon: const Icon(Icons.file_download, size: 18),
-                  label: const Text('导出', style: TextStyle(fontSize: 13)),
-                )),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _exportMarkdown,
+                    icon: const Icon(Icons.file_download, size: 18),
+                    label: const Text('导出', style: TextStyle(fontSize: 13)),
+                  ),
+                ),
               ],
             ),
             const SizedBox(height: 24),
             // 结果区域
             if (_translationResult != null) ...[
               const Divider(),
-              _sectionHeader('中文翻译', Icons.translate, () => setState(() => _translationResult = null)),
+              _sectionHeader(
+                '中文翻译',
+                Icons.translate,
+                () => setState(() => _translationResult = null),
+              ),
               const SizedBox(height: 8),
               MarkdownBody(
                 data: _translationResult!,
@@ -539,15 +589,17 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
                   [const md.FencedCodeBlockSyntax()],
                   [md.EmojiSyntax(), HighlightSyntax()],
                 ),
-                builders: {
-                  'highlight': HighlightBuilder(context),
-                },
+                builders: {'highlight': HighlightBuilder(context)},
               ),
               const SizedBox(height: 16),
             ],
             if (_paraphraseResult != null) ...[
               const Divider(),
-              _sectionHeader('转述', Icons.replay, () => setState(() => _paraphraseResult = null)),
+              _sectionHeader(
+                '转述',
+                Icons.replay,
+                () => setState(() => _paraphraseResult = null),
+              ),
               const SizedBox(height: 8),
               MarkdownBody(
                 data: _paraphraseResult!,
@@ -558,15 +610,17 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
                   [const md.FencedCodeBlockSyntax()],
                   [md.EmojiSyntax(), HighlightSyntax()],
                 ),
-                builders: {
-                  'highlight': HighlightBuilder(context),
-                },
+                builders: {'highlight': HighlightBuilder(context)},
               ),
               const SizedBox(height: 16),
             ],
             if (_quizResult != null) ...[
               const Divider(),
-              _sectionHeader('阅读理解题', Icons.quiz, () => setState(() => _quizResult = null)),
+              _sectionHeader(
+                '阅读理解题',
+                Icons.quiz,
+                () => setState(() => _quizResult = null),
+              ),
               const SizedBox(height: 8),
               MarkdownBody(
                 data: _quizResult!,
@@ -577,15 +631,17 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
                   [const md.FencedCodeBlockSyntax()],
                   [md.EmojiSyntax(), HighlightSyntax()],
                 ),
-                builders: {
-                  'highlight': HighlightBuilder(context),
-                },
+                builders: {'highlight': HighlightBuilder(context)},
               ),
               const SizedBox(height: 16),
             ],
             if (_summaryResult != null) ...[
               const Divider(),
-              _sectionHeader('全文摘要', Icons.summarize, () => setState(() => _summaryResult = null)),
+              _sectionHeader(
+                '全文摘要',
+                Icons.summarize,
+                () => setState(() => _summaryResult = null),
+              ),
               const SizedBox(height: 8),
               MarkdownBody(
                 data: _summaryResult!,
@@ -596,15 +652,17 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
                   [const md.FencedCodeBlockSyntax()],
                   [md.EmojiSyntax(), HighlightSyntax()],
                 ),
-                builders: {
-                  'highlight': HighlightBuilder(context),
-                },
+                builders: {'highlight': HighlightBuilder(context)},
               ),
               const SizedBox(height: 16),
             ],
             if (_vocabResult != null) ...[
               const Divider(),
-              _sectionHeader('核心词汇', Icons.book, () => setState(() => _vocabResult = null)),
+              _sectionHeader(
+                '核心词汇',
+                Icons.book,
+                () => setState(() => _vocabResult = null),
+              ),
               const SizedBox(height: 8),
               MarkdownBody(
                 data: _vocabResult!,
@@ -615,9 +673,7 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
                   [const md.FencedCodeBlockSyntax()],
                   [md.EmojiSyntax(), HighlightSyntax()],
                 ),
-                builders: {
-                  'highlight': HighlightBuilder(context),
-                },
+                builders: {'highlight': HighlightBuilder(context)},
               ),
               const SizedBox(height: 16),
             ],
@@ -637,11 +693,15 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
       onPressed: loading ? null : onPressed,
       icon: loading
           ? const SizedBox(
-              width: 16, height: 16,
+              width: 16,
+              height: 16,
               child: CircularProgressIndicator(strokeWidth: 2),
             )
           : Icon(icon, size: 18),
-      label: Text(loading ? '...' : label, style: const TextStyle(fontSize: 13)),
+      label: Text(
+        loading ? '...' : label,
+        style: const TextStyle(fontSize: 13),
+      ),
     );
   }
 
@@ -650,7 +710,10 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
       children: [
         Icon(icon, size: 20),
         const SizedBox(width: 8),
-        Text(title, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+        Text(
+          title,
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+        ),
         const Spacer(),
         IconButton(
           icon: const Icon(Icons.close, size: 18),

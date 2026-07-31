@@ -3,15 +3,20 @@
 class TextSanitizer {
   static String clean(String input) {
     if (input.isEmpty) return "";
-    
+
     String result = input;
-    
+
     // 1. [Architect: Anti-Hallucination] 强制剔除中、日文字符，防止噪音干扰
     final cjkRegex = RegExp(r'[\u4e00-\u9fa5\u3040-\u30ff\u31f0-\u31ff]+');
     result = result.replaceAll(cjkRegex, '');
 
-    // 2. 剔除系统标记与幽灵括号
-    final systemMarkers = RegExp(r'[\[\(].*?[\]\)]');
+    // 2. 只移除明确的转写噪声标记，保留 [Figure 1]、(see Appendix)
+    // 等有语义的结构化注释。
+    final systemMarkers = RegExp(
+      r'\[(?:music|applause|silence|noise|inaudible|error[^\]]*)\]'
+      r'|\((?:inaudible|unclear|background noise)\)',
+      caseSensitive: false,
+    );
     result = result.replaceAll(systemMarkers, '');
 
     // 3. 清理异常重复标点与不可见乱码
@@ -34,7 +39,11 @@ class TextSanitizer {
     for (int i = 0; i < words.length; i++) {
       String current = words[i].trim();
       if (current.isEmpty) continue;
-      if (result.isNotEmpty && current.toLowerCase() == result.last.toLowerCase()) {
+      final repeatedTwice =
+          result.length >= 2 &&
+          current.toLowerCase() == result.last.toLowerCase() &&
+          current.toLowerCase() == result[result.length - 2].toLowerCase();
+      if (repeatedTwice) {
         continue;
       }
       result.add(current);
@@ -57,7 +66,10 @@ class TextSanitizer {
 
     for (int i = 1; i <= maxSearch; i++) {
       // 提取 prev 的末尾 i 个词
-      String tail = prevWords.sublist(prevWords.length - i).join(' ').toLowerCase();
+      String tail = prevWords
+          .sublist(prevWords.length - i)
+          .join(' ')
+          .toLowerCase();
       // 提取 current 的开头 i 个词
       if (i <= currWords.length) {
         String head = currWords.sublist(0, i).join(' ').toLowerCase();

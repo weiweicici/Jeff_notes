@@ -37,7 +37,13 @@ class AIOrchestratorService {
   bool _isTranslating = false;
   bool _isDisposed = false;
 
+  // [Phase 3] 翻译批次完成信号，用于 drain() 等待正在进行的批次
+  Completer<void>? _translationBatchCompleter;
+
   final String _geminiApiKey;
+
+  // [Phase 3] 每实例独立 http.Client，dispose() 时关闭以终止底层 HTTP 连接
+  final http.Client _httpClient;
 
   AIOrchestratorService({
     required this.sttService,
@@ -45,7 +51,9 @@ class AIOrchestratorService {
     this.translationFallbackService,
     required this.sessionId,
     String geminiApiKey = '',
-  }) : _geminiApiKey = geminiApiKey;
+    http.Client? httpClient,
+  })  : _geminiApiKey = geminiApiKey,
+        _httpClient = httpClient ?? http.Client();
 
   Future<String?> _callGemini(String text) async {
     if (_geminiApiKey.isEmpty) return null;
@@ -53,7 +61,8 @@ class AIOrchestratorService {
       final url = Uri.parse(
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
       );
-      final response = await http.post(
+      // [Phase 3] 使用实例级 client（关闭 client 即可终止此会话的请求）
+      final response = await _httpClient.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -92,7 +101,8 @@ class AIOrchestratorService {
       final url = Uri.parse(
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
       );
-      final response = await http.post(
+      // [Phase 3] 使用实例级 client
+      final response = await _httpClient.post(
         url,
         headers: {'Content-Type': 'application/json'},
         body: jsonEncode({
@@ -373,7 +383,12 @@ class AIOrchestratorService {
       }
     } finally {
       _isTranslating = false;
-      
+
+      // [Phase 3] 通知 drain() 此批次已完成
+      final batchDone = _translationBatchCompleter;
+      _translationBatchCompleter = null;
+      if (batchDone != null && !batchDone.isCompleted) batchDone.complete();
+
       // 如果在翻译期间有新数据累积，检查是否需要再次触发
       if (_translationBuffer.length >= batchSize) {
         unawaited(_processTranslationBatch(onStatus: onStatus));
@@ -390,9 +405,53 @@ class AIOrchestratorService {
     }
   }
 
+  /// [Phase 3: Closed-Loop Session Drain]
+  /// 等待该实例所有在途 STT、翻译批次与 ApiScheduler 任务全部归零。
+  Future<void> drain({Duration timeout = const Duration(seconds: 90)}) async {
+    final stopwatch = Stopwatch()..start();
+
+    while (true) {
+      // 1. 若缓冲区有数据，强制触发批次翻译
+      if (_translationBuffer.isNotEmpty && !_isTranslating) {
+        await flush();
+      }
+
+      // 2. 若当前正在翻译，等待当前批次 Completer
+      if (_isTranslating) {
+        _translationBatchCompleter ??= Completer<void>();
+        final remaining = timeout - stopwatch.elapsed;
+        if (remaining <= Duration.zero) {
+          throw TimeoutException('Orchestrator translation batch timed out for session $sessionId');
+        }
+        try {
+          await _translationBatchCompleter!.future.timeout(remaining);
+        } on TimeoutException {
+          throw TimeoutException('Orchestrator translation batch timed out for session $sessionId');
+        }
+      }
+
+      // 3. 等待 ApiScheduler 中该 session 的所有排队与在途 Future settle
+      final remaining = timeout - stopwatch.elapsed;
+      if (remaining <= Duration.zero) {
+        throw TimeoutException('ApiScheduler drain timed out for session $sessionId');
+      }
+
+      await ApiScheduler().drain(sessionId, timeout: remaining);
+
+      // 4. 判断闭环 quiescence 状态：没有在途翻译，且缓冲区为空
+      if (!_isTranslating && _translationBuffer.isEmpty) {
+        break;
+      }
+    }
+  }
+
   void dispose() {
     _isDisposed = true;
     _fastEnglishController.close();
     _accurateChineseController.close();
+    // [Phase 3] 关闭实例 client 以终止此会话的任何挂起 HTTP 请求
+    try {
+      _httpClient.close();
+    } catch (_) {}
   }
 }

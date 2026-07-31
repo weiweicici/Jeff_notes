@@ -14,6 +14,8 @@ import '../widgets/tts_player_bar.dart';
 import '../models.dart'; // 包含 AIProvider 和 AppMode 枚举
 import '../recording_provider.dart'; // 放在其他导入之后，避免冲突
 import '../services/tts_service.dart';
+import '../models/session_ready_event.dart';
+import '../services/diagnostic_log_service.dart';
 
 class NotesScreen extends StatefulWidget {
   const NotesScreen({super.key});
@@ -23,7 +25,8 @@ class NotesScreen extends StatefulWidget {
 
 class _NotesScreenState extends State<NotesScreen> {
   final ScrollController _scrollController = ScrollController();
-  StreamSubscription<String>? _sessionReadySub;
+  StreamSubscription<SessionReadyEvent>? _sessionReadySub;
+  final Set<String> _shownFinalSessionIds = {};
   String? _pendingSummaryContent;
   bool _isSummaryPanelExpanded = false;
 
@@ -45,33 +48,45 @@ class _NotesScreenState extends State<NotesScreen> {
   void initState() {
     super.initState();
     final provider = context.read<RecordingProvider>();
-    _sessionReadySub = provider.sessionReadyStream.listen((content) {
-      if (!mounted) return;
+    _sessionReadySub = provider.sessionReadyStream.listen(
+      (event) {
+        if (!mounted) return;
 
-      final path = provider.lastExportedPath;
-      // 优先使用 content（分段摘要或 AI review），没有时读取 MD 文件内容
-      if (content.isNotEmpty) {
-        setState(() {
-          _pendingSummaryContent = content;
-        });
-        _showFinalReviewModalWithContent(context, content);
-      } else if (path != null && File(path).existsSync()) {
-        try {
-          final fileContent = File(path).readAsStringSync();
-          setState(() {
-            _pendingSummaryContent = fileContent;
-          });
-          _showFinalReviewModalWithContent(context, fileContent);
-        } catch (_) {
-          Navigator.pushReplacement(
-            context,
-            MaterialPageRoute(
-              builder: (_) => NoteDetailScreen(file: File(path)),
-            ),
-          );
+        // [Phase 4 Section 4.7] 只有 Lecture 模式且 isFinal == true 且未显示过 Modal 时才去重弹出
+        if (event.mode != AppMode.lecture || !event.isFinal) return;
+        if (_shownFinalSessionIds.contains(event.sessionId)) return;
+
+        // 并发弹窗保护：showDialog 前立即登记 sessionId
+        _shownFinalSessionIds.add(event.sessionId);
+        if (_shownFinalSessionIds.length > 100) {
+          _shownFinalSessionIds.remove(_shownFinalSessionIds.first);
         }
-      }
-    },
+
+        final content = event.content;
+        final path = event.exportPath;
+
+        if (content.isNotEmpty) {
+          setState(() {
+            _pendingSummaryContent = content;
+          });
+          _showFinalReviewModalWithContent(context, content);
+        } else if (path.isNotEmpty && File(path).existsSync()) {
+          try {
+            final fileContent = File(path).readAsStringSync();
+            setState(() {
+              _pendingSummaryContent = fileContent;
+            });
+            _showFinalReviewModalWithContent(context, fileContent);
+          } catch (_) {
+            Navigator.pushReplacement(
+              context,
+              MaterialPageRoute(
+                builder: (_) => NoteDetailScreen(file: File(path)),
+              ),
+            );
+          }
+        }
+      },
       onError: (error) {
         debugPrint("sessionReadyStream error: $error");
       },
@@ -92,9 +107,8 @@ class _NotesScreenState extends State<NotesScreen> {
   void _showSettingsDialog(BuildContext context) {
     showDialog(
       context: context,
-      builder: (context) => _SettingsDialog(
-        provider: context.read<RecordingProvider>(),
-      ),
+      builder: (context) =>
+          _SettingsDialog(provider: context.read<RecordingProvider>()),
     );
   }
 
@@ -109,8 +123,13 @@ class _NotesScreenState extends State<NotesScreen> {
         inSection = true;
         continue;
       }
-      if (inSection && (t.startsWith('### ') || t.startsWith('## ') || t.startsWith('# '))) {
-        final isContinuation = t.contains('中文全文') || t.contains('中文翻译') || t.contains('Part 2') || t.contains('翻译');
+      if (inSection &&
+          (t.startsWith('### ') || t.startsWith('## ') || t.startsWith('# '))) {
+        final isContinuation =
+            t.contains('中文全文') ||
+            t.contains('中文翻译') ||
+            t.contains('Part 2') ||
+            t.contains('翻译');
         if (!isContinuation) break;
         continue;
       }
@@ -122,7 +141,11 @@ class _NotesScreenState extends State<NotesScreen> {
     // 兜底：提取含 >=3 个汉字的行
     final chineseLines = lines.where((line) {
       final t = line.trim();
-      if (t.isEmpty || t.startsWith('#') || t.startsWith('**') || t.startsWith('---')) return false;
+      if (t.isEmpty ||
+          t.startsWith('#') ||
+          t.startsWith('**') ||
+          t.startsWith('---'))
+        return false;
       return RegExp(r'[\u4e00-\u9fff\u3400-\u4dbf]').allMatches(t).length >= 3;
     }).toList();
     return chineseLines.join('\n\n');
@@ -135,12 +158,20 @@ class _NotesScreenState extends State<NotesScreen> {
     final captured = <String>[];
     for (final line in lines) {
       final t = line.trim();
-      if (t.contains('英文全文') || t.contains('English Transcript') || t.contains('English Essay') || t.contains('Part 1')) {
+      if (t.contains('英文全文') ||
+          t.contains('English Transcript') ||
+          t.contains('English Essay') ||
+          t.contains('Part 1')) {
         inSection = true;
         continue;
       }
-      if (inSection && (t.startsWith('### ') || t.startsWith('## ') || t.startsWith('# '))) {
-        final isContinuation = t.contains('英文全文') || t.contains('English Transcript') || t.contains('English Essay') || t.contains('Part 1');
+      if (inSection &&
+          (t.startsWith('### ') || t.startsWith('## ') || t.startsWith('# '))) {
+        final isContinuation =
+            t.contains('英文全文') ||
+            t.contains('English Transcript') ||
+            t.contains('English Essay') ||
+            t.contains('Part 1');
         if (!isContinuation) break;
         continue;
       }
@@ -194,13 +225,21 @@ class _NotesScreenState extends State<NotesScreen> {
     bool _playerExpanded = false;
     Timer? _playerAutoHideTimer;
 
-    Timer _startScrollTimer(ScrollController controller, {required void Function(void Function()) setModalState}) {
+    Timer _startScrollTimer(
+      ScrollController controller, {
+      required void Function(void Function()) setModalState,
+    }) {
       return Timer.periodic(const Duration(milliseconds: 50), (timer) {
-        if (!controller.hasClients) { timer.cancel(); return; }
+        if (!controller.hasClients) {
+          timer.cancel();
+          return;
+        }
         final maxScroll = controller.position.maxScrollExtent;
         if (maxScroll <= 0) return;
-        const ticksPerScreen = 60 * 1000 ~/ 50; // 1200 ticks @ 50ms = 60s per viewport
-        final increment = controller.position.viewportDimension / ticksPerScreen;
+        const ticksPerScreen =
+            60 * 1000 ~/ 50; // 1200 ticks @ 50ms = 60s per viewport
+        final increment =
+            controller.position.viewportDimension / ticksPerScreen;
         final currentScroll = controller.position.pixels;
         if (currentScroll >= maxScroll) {
           controller.jumpTo(0);
@@ -210,7 +249,12 @@ class _NotesScreenState extends State<NotesScreen> {
       });
     }
 
-    void _toggleAutoScrollVia(Offset downPos, Offset upPos, ScrollController ctrl, void Function(void Function()) sms) {
+    void _toggleAutoScrollVia(
+      Offset downPos,
+      Offset upPos,
+      ScrollController ctrl,
+      void Function(void Function()) sms,
+    ) {
       if ((upPos - downPos).distance > 10.0) return;
       sms(() {
         isAutoScrolling = !isAutoScrolling;
@@ -223,14 +267,17 @@ class _NotesScreenState extends State<NotesScreen> {
           scrollTimer?.cancel();
           scrollTimer = null;
           resumeTimer?.cancel();
-          resumeTimer = Timer(Duration(seconds: provider.autoScrollPauseDuration), () {
-            sms(() {
-              if (!isAutoScrolling) {
-                isAutoScrolling = true;
-                scrollTimer = _startScrollTimer(ctrl, setModalState: sms);
-              }
-            });
-          });
+          resumeTimer = Timer(
+            Duration(seconds: provider.autoScrollPauseDuration),
+            () {
+              sms(() {
+                if (!isAutoScrolling) {
+                  isAutoScrolling = true;
+                  scrollTimer = _startScrollTimer(ctrl, setModalState: sms);
+                }
+              });
+            },
+          );
         }
       });
     }
@@ -248,14 +295,19 @@ class _NotesScreenState extends State<NotesScreen> {
             if (!_timerStarted && scrollController.hasClients) {
               _timerStarted = true;
               WidgetsBinding.instance.addPostFrameCallback((_) {
-                scrollTimer = _startScrollTimer(scrollController, setModalState: setModalState);
+                scrollTimer = _startScrollTimer(
+                  scrollController,
+                  setModalState: setModalState,
+                );
               });
             }
 
             return Container(
               decoration: BoxDecoration(
                 color: Theme.of(context).scaffoldBackgroundColor,
-                borderRadius: const BorderRadius.vertical(top: Radius.circular(24)),
+                borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(24),
+                ),
               ),
               child: Column(
                 children: [
@@ -263,172 +315,243 @@ class _NotesScreenState extends State<NotesScreen> {
                     width: 40,
                     height: 4,
                     margin: const EdgeInsets.symmetric(vertical: 12),
-                    decoration: BoxDecoration(color: Colors.grey[300], borderRadius: BorderRadius.circular(2)),
-                  ),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () {
-                _toggleAutoScrollVia(const Offset(0, 0), const Offset(0, 0), scrollController, setModalState);
-              },
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
-                color: isAutoScrolling
-                    ? Colors.blue.withOpacity(0.08)
-                    : Colors.orange.withOpacity(0.08),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(
-                      isAutoScrolling ? Icons.keyboard_double_arrow_down : Icons.pause_circle_outline,
-                      size: 14,
-                      color: isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],
+                    decoration: BoxDecoration(
+                      color: Colors.grey[300],
+                      borderRadius: BorderRadius.circular(2),
                     ),
-                    const SizedBox(width: 6),
-                    Text(
-                      isAutoScrolling ? '⏬ 自动滚屏中 · 点击暂停' : '⏸ 已暂停 · ${provider.autoScrollPauseDuration}秒后自动恢复',
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: isAutoScrolling ? Colors.blueAccent[200] : Colors.orange[300],
-                        fontWeight: FontWeight.w600,
+                  ),
+                  GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onTap: () {
+                      _toggleAutoScrollVia(
+                        const Offset(0, 0),
+                        const Offset(0, 0),
+                        scrollController,
+                        setModalState,
+                      );
+                    },
+                    child: Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 6,
+                      ),
+                      color: isAutoScrolling
+                          ? Colors.blue.withOpacity(0.08)
+                          : Colors.orange.withOpacity(0.08),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(
+                            isAutoScrolling
+                                ? Icons.keyboard_double_arrow_down
+                                : Icons.pause_circle_outline,
+                            size: 14,
+                            color: isAutoScrolling
+                                ? Colors.blueAccent[200]
+                                : Colors.orange[300],
+                          ),
+                          const SizedBox(width: 6),
+                          Text(
+                            isAutoScrolling
+                                ? '⏬ 自动滚屏中 · 点击暂停'
+                                : '⏸ 已暂停 · ${provider.autoScrollPauseDuration}秒后自动恢复',
+                            style: TextStyle(
+                              fontSize: 11,
+                              color: isAutoScrolling
+                                  ? Colors.blueAccent[200]
+                                  : Colors.orange[300],
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
-                  ],
-                ),
-              ),
-            ),
-          if (provider.identifiedLectureContext != null)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-              color: const Color(0xFFFF9800).withOpacity(0.15),
-              child: Row(
-                children: [
-                  const Icon(Icons.radar, size: 16, color: Color(0xFFFF9800)),
-                  const SizedBox(width: 8),
+                  ),
+                  if (provider.identifiedLectureContext != null)
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 16,
+                        vertical: 8,
+                      ),
+                      color: const Color(0xFFFF9800).withOpacity(0.15),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.radar,
+                            size: 16,
+                            color: Color(0xFFFF9800),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              "Radar: ${provider.identifiedLectureContext}",
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.bold,
+                                color: Color(0xFFFF9800),
+                              ),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
                   Expanded(
-                    child: Text(
-                      "Radar: ${provider.identifiedLectureContext}",
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Color(0xFFFF9800)),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                    child: NotificationListener<UserScrollNotification>(
+                      onNotification: (notification) {
+                        if (isAutoScrolling) {
+                          _toggleAutoScrollVia(
+                            const Offset(0, 0),
+                            const Offset(0, 0),
+                            scrollController,
+                            setModalState,
+                          );
+                        }
+                        return false;
+                      },
+                      child: ListView(
+                        controller: scrollController,
+                        padding: const EdgeInsets.all(24),
+                        children: [
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(
+                                provider.currentSessionMode ==
+                                        AppMode.discussion
+                                    ? 'DISCUSSION SUMMARY'
+                                    : provider.currentSessionMode ==
+                                          AppMode.exam
+                                    ? 'EXAM RECAP'
+                                    : 'ACADEMIC RECAP',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
+                                  letterSpacing: 2,
+                                  color:
+                                      provider.currentSessionMode ==
+                                          AppMode.discussion
+                                      ? Colors.deepPurpleAccent
+                                      : Colors.blueAccent,
+                                ),
+                              ),
+                              Row(
+                                children: [
+                                  IconButton(
+                                    onPressed: () => Navigator.pop(context),
+                                    icon: const Icon(Icons.close),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 8),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              setModalState(() {
+                                _playerExpanded = !_playerExpanded;
+                                if (_playerExpanded) {
+                                  _playerAutoHideTimer?.cancel();
+                                  _playerAutoHideTimer = Timer(
+                                    const Duration(seconds: 10),
+                                    () {
+                                      setModalState(
+                                        () => _playerExpanded = false,
+                                      );
+                                    },
+                                  );
+                                } else {
+                                  _playerAutoHideTimer?.cancel();
+                                }
+                              });
+                            },
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 16,
+                                vertical: 8,
+                              ),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.withOpacity(0.06),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    _playerExpanded
+                                        ? Icons.expand_less
+                                        : Icons.expand_more,
+                                    size: 16,
+                                    color: Colors.grey[600],
+                                  ),
+                                  const SizedBox(width: 6),
+                                  const Icon(
+                                    Icons.headphones,
+                                    size: 14,
+                                    color: Colors.blueAccent,
+                                  ),
+                                  const SizedBox(width: 6),
+                                  Text(
+                                    _playerExpanded ? '点击收起播放器' : '🎧 TTS 播放器',
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: Colors.grey[600],
+                                      fontWeight: FontWeight.w500,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          if (_playerExpanded) ...[
+                            const SizedBox(height: 8),
+                            TtsPlayerBar(
+                              chineseText: chineseForTts,
+                              englishText: englishForTts,
+                              siliconFlowKey: provider.siliconFlowKey,
+                            ),
+                          ],
+                          const SizedBox(height: 12),
+                          GestureDetector(
+                            behavior: HitTestBehavior.opaque,
+                            onTap: () {
+                              _toggleAutoScrollVia(
+                                const Offset(0, 0),
+                                const Offset(0, 0),
+                                scrollController,
+                                setModalState,
+                              );
+                            },
+                            child: MarkdownBody(
+                              data: content,
+                              softLineBreak: true,
+                              styleSheet: getAcademicMarkdownStyle(context),
+                              selectable: false,
+                              extensionSet: md.ExtensionSet(
+                                [const md.FencedCodeBlockSyntax()],
+                                [md.EmojiSyntax(), HighlightSyntax()],
+                              ),
+                              builders: {
+                                'highlight': HighlightBuilder(context),
+                              },
+                            ),
+                          ),
+                          const SizedBox(height: 40),
+                        ],
+                      ),
                     ),
                   ),
                 ],
               ),
-            ),
-
-          Expanded(
-            child: NotificationListener<UserScrollNotification>(
-              onNotification: (notification) {
-                if (isAutoScrolling) {
-                  _toggleAutoScrollVia(const Offset(0, 0), const Offset(0, 0), scrollController, setModalState);
-                }
-                return false;
-              },
-              child: ListView(
-                controller: scrollController,
-                padding: const EdgeInsets.all(24),
-                children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            provider.currentSessionMode == AppMode.discussion ? 'DISCUSSION SUMMARY' : provider.currentSessionMode == AppMode.exam ? 'EXAM RECAP' : 'ACADEMIC RECAP', 
-                            style: TextStyle(
-                              fontSize: 12, 
-                              fontWeight: FontWeight.w900, 
-                              letterSpacing: 2, 
-                              color: provider.currentSessionMode == AppMode.discussion ? Colors.deepPurpleAccent : Colors.blueAccent
-                            )
-                          ),
-                          Row(
-                            children: [
-                              IconButton(onPressed: () => Navigator.pop(context), icon: const Icon(Icons.close)),
-                            ],
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-            GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onTap: () {
-                          setModalState(() {
-                            _playerExpanded = !_playerExpanded;
-                            if (_playerExpanded) {
-                              _playerAutoHideTimer?.cancel();
-                              _playerAutoHideTimer = Timer(const Duration(seconds: 10), () {
-                                setModalState(() => _playerExpanded = false);
-                              });
-                            } else {
-                              _playerAutoHideTimer?.cancel();
-                            }
-                          });
-                        },
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.withOpacity(0.06),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Row(
-                            children: [
-                              Icon(
-                                _playerExpanded ? Icons.expand_less : Icons.expand_more,
-                                size: 16,
-                                color: Colors.grey[600],
-                              ),
-                              const SizedBox(width: 6),
-                              const Icon(Icons.headphones, size: 14, color: Colors.blueAccent),
-                              const SizedBox(width: 6),
-                              Text(
-                                _playerExpanded ? '点击收起播放器' : '🎧 TTS 播放器',
-                                style: TextStyle(fontSize: 12, color: Colors.grey[600], fontWeight: FontWeight.w500),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                      if (_playerExpanded) ...[
-                        const SizedBox(height: 8),
-                        TtsPlayerBar(
-                          chineseText: chineseForTts,
-                          englishText: englishForTts,
-                          siliconFlowKey: provider.siliconFlowKey,
-                        ),
-                      ],
-                      const SizedBox(height: 12),
-                      GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: () {
-                          _toggleAutoScrollVia(const Offset(0, 0), const Offset(0, 0), scrollController, setModalState);
-                        },
-                        child: MarkdownBody(
-                          data: content,
-                          softLineBreak: true,
-                          styleSheet: getAcademicMarkdownStyle(context),
-                          selectable: false,
-                          extensionSet: md.ExtensionSet(
-                            [const md.FencedCodeBlockSyntax()],
-                            [md.EmojiSyntax(), HighlightSyntax()],
-                          ),
-                          builders: {
-                            'highlight': HighlightBuilder(context),
-                          },
-                        ),
-                      ),
-                      const SizedBox(height: 40),
-                    ],
-                  ),
-            ),
-          ),
-          ],
+            );
+          },
         ),
-      );
-    },
-  ),
-  ),
-).whenComplete(() {
+      ),
+    ).whenComplete(() {
       scrollTimer?.cancel();
       resumeTimer?.cancel();
       _playerAutoHideTimer?.cancel();
@@ -449,18 +572,48 @@ class _NotesScreenState extends State<NotesScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                const Text('Jeff Notes', style: TextStyle(fontWeight: FontWeight.w900, letterSpacing: -1)),
+                const Text(
+                  'Jeff Notes',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w900,
+                    letterSpacing: -1,
+                  ),
+                ),
                 if (provider.isRecording)
                   Row(
                     children: [
                       // 录音状态标签：暂停中显示橙色 PAUSED，录音中显示蓝色 TRACKING
                       if (provider.isPaused)
-                        const Text('PAUSED', style: TextStyle(fontSize: 8, color: Colors.orange, fontWeight: FontWeight.w900, letterSpacing: 1.5))
+                        const Text(
+                          'PAUSED',
+                          style: TextStyle(
+                            fontSize: 8,
+                            color: Colors.orange,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.5,
+                          ),
+                        )
                       else
-                        Text('TRACKING', style: TextStyle(fontSize: 8, color: Colors.blueAccent[200], fontWeight: FontWeight.w900, letterSpacing: 1.5)),
-                      if (!provider.isPaused && provider.statusMessage != null) ...[
+                        Text(
+                          'TRACKING',
+                          style: TextStyle(
+                            fontSize: 8,
+                            color: Colors.blueAccent[200],
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.5,
+                          ),
+                        ),
+                      if (!provider.isPaused &&
+                          provider.statusMessage != null) ...[
                         const SizedBox(width: 8),
-                        Text('• ${provider.statusMessage}', style: const TextStyle(fontSize: 8, color: Colors.white54, letterSpacing: 0.5)),
+                        Text(
+                          '• ${provider.statusMessage}',
+                          style: const TextStyle(
+                            fontSize: 8,
+                            color: Colors.white54,
+                            letterSpacing: 0.5,
+                          ),
+                        ),
                       ],
                     ],
                   ),
@@ -479,11 +632,15 @@ class _NotesScreenState extends State<NotesScreen> {
                   await provider.togglePause();
                 },
                 icon: Icon(
-                  provider.isPaused ? Icons.play_arrow_rounded : Icons.pause_rounded,
+                  provider.isPaused
+                      ? Icons.play_arrow_rounded
+                      : Icons.pause_rounded,
                   color: Colors.white,
                 ),
                 style: IconButton.styleFrom(
-                  backgroundColor: provider.isPaused ? Colors.green : Colors.orange,
+                  backgroundColor: provider.isPaused
+                      ? Colors.green
+                      : Colors.orange,
                 ),
                 tooltip: provider.isPaused ? '继续录音' : '暂停录音',
               ),
@@ -500,12 +657,20 @@ class _NotesScreenState extends State<NotesScreen> {
                 color: Colors.white,
               ),
               style: IconButton.styleFrom(
-                backgroundColor: provider.isRecording ? Colors.redAccent : (isDark ? Colors.blueAccent : Colors.black),
+                backgroundColor: provider.isRecording
+                    ? Colors.redAccent
+                    : (isDark ? Colors.blueAccent : Colors.black),
               ),
             ),
           ),
           IconButton(
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (context) => const HistoryScreen(initialModuleFilter: 'notes'))),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) =>
+                    const HistoryScreen(initialModuleFilter: 'notes'),
+              ),
+            ),
             icon: const Icon(Icons.history_edu),
           ),
           IconButton(
@@ -517,7 +682,9 @@ class _NotesScreenState extends State<NotesScreen> {
       ),
       body: Column(
         children: [
-          if (_pendingSummaryContent != null && provider.currentSessionMode != AppMode.discussion && provider.currentSessionMode != AppMode.freeTalk)
+          if (_pendingSummaryContent != null &&
+              provider.currentSessionMode != AppMode.discussion &&
+              provider.currentSessionMode != AppMode.freeTalk)
             GestureDetector(
               onTap: () {
                 final content = _pendingSummaryContent!;
@@ -529,7 +696,10 @@ class _NotesScreenState extends State<NotesScreen> {
               child: Container(
                 width: double.infinity,
                 margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                padding: const EdgeInsets.symmetric(
+                  vertical: 14,
+                  horizontal: 16,
+                ),
                 decoration: BoxDecoration(
                   gradient: LinearGradient(
                     colors: provider.currentSessionMode == AppMode.discussion
@@ -539,10 +709,11 @@ class _NotesScreenState extends State<NotesScreen> {
                   borderRadius: BorderRadius.circular(12),
                   boxShadow: [
                     BoxShadow(
-                      color: (provider.currentSessionMode == AppMode.discussion
-                              ? Colors.deepPurpleAccent
-                              : Colors.blueAccent)
-                          .withOpacity(0.3),
+                      color:
+                          (provider.currentSessionMode == AppMode.discussion
+                                  ? Colors.deepPurpleAccent
+                                  : Colors.blueAccent)
+                              .withOpacity(0.3),
                       offset: const Offset(0, 4),
                       blurRadius: 10,
                     ),
@@ -551,7 +722,9 @@ class _NotesScreenState extends State<NotesScreen> {
                 child: Row(
                   children: [
                     Icon(
-                      provider.currentSessionMode == AppMode.discussion ? Icons.forum : Icons.school,
+                      provider.currentSessionMode == AppMode.discussion
+                          ? Icons.forum
+                          : Icons.school,
                       color: Colors.white,
                       size: 20,
                     ),
@@ -580,14 +753,31 @@ class _NotesScreenState extends State<NotesScreen> {
                 ? Container(
                     width: double.infinity,
                     color: Colors.blue.withOpacity(0.1),
-                    padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 16),
+                    padding: const EdgeInsets.symmetric(
+                      vertical: 12,
+                      horizontal: 16,
+                    ),
                     child: Row(
                       children: [
                         const Icon(Icons.restore, color: Colors.blue),
                         const SizedBox(width: 12),
-                        const Expanded(child: Text("Unfinished lecture found. Recover?", style: TextStyle(fontWeight: FontWeight.bold))),
-                        TextButton(onPressed: () => provider.dismissRecovery(), child: const Text("Dismiss", style: TextStyle(color: Colors.grey))),
-                        ElevatedButton(onPressed: () => provider.recoverFromCache(), child: const Text("Recover")),
+                        const Expanded(
+                          child: Text(
+                            "Unfinished lecture found. Recover?",
+                            style: TextStyle(fontWeight: FontWeight.bold),
+                          ),
+                        ),
+                        TextButton(
+                          onPressed: () => provider.dismissRecovery(),
+                          child: const Text(
+                            "Dismiss",
+                            style: TextStyle(color: Colors.grey),
+                          ),
+                        ),
+                        ElevatedButton(
+                          onPressed: () => provider.recoverFromCache(),
+                          child: const Text("Recover"),
+                        ),
                       ],
                     ),
                   )
@@ -598,21 +788,35 @@ class _NotesScreenState extends State<NotesScreen> {
             selector: (_, p) => p.notes.where((n) => n.isSummary).toList(),
             builder: (context, summaries, _) {
               if (summaries.isEmpty) return const SizedBox.shrink();
-              final latestSummary = summaries.first; 
-              final isAcademic = provider.currentSessionMode != AppMode.discussion && provider.currentSessionMode != AppMode.freeTalk;
+              final latestSummary = summaries.first;
+              final isAcademic =
+                  provider.currentSessionMode != AppMode.discussion &&
+                  provider.currentSessionMode != AppMode.freeTalk;
               final isExpanded = _isSummaryPanelExpanded;
 
               return AnimatedContainer(
                 duration: const Duration(milliseconds: 200),
                 constraints: BoxConstraints(
-                  maxHeight: isExpanded ? MediaQuery.of(context).size.height * 0.3 : 48.0,
+                  maxHeight: isExpanded
+                      ? MediaQuery.of(context).size.height * 0.3
+                      : 48.0,
                 ),
                 width: double.infinity,
                 decoration: BoxDecoration(
-                  color: isDark ? Colors.grey[900]?.withOpacity(0.95) : Colors.grey[50]?.withOpacity(0.95),
-                  border: Border(bottom: BorderSide(color: isDark ? Colors.white10 : Colors.black12)),
+                  color: isDark
+                      ? Colors.grey[900]?.withOpacity(0.95)
+                      : Colors.grey[50]?.withOpacity(0.95),
+                  border: Border(
+                    bottom: BorderSide(
+                      color: isDark ? Colors.white10 : Colors.black12,
+                    ),
+                  ),
                   boxShadow: [
-                    BoxShadow(color: Colors.black.withOpacity(0.1), offset: const Offset(0, 4), blurRadius: 10),
+                    BoxShadow(
+                      color: Colors.black.withOpacity(0.1),
+                      offset: const Offset(0, 4),
+                      blurRadius: 10,
+                    ),
                   ],
                 ),
                 child: Column(
@@ -626,31 +830,42 @@ class _NotesScreenState extends State<NotesScreen> {
                         });
                       },
                       child: Padding(
-                        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 14),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 18,
+                          vertical: 14,
+                        ),
                         child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
                             Row(
                               children: [
                                 Icon(
-                                  isAcademic ? Icons.school : Icons.forum, 
-                                  size: 14, 
-                                  color: isAcademic ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200]
+                                  isAcademic ? Icons.school : Icons.forum,
+                                  size: 14,
+                                  color: isAcademic
+                                      ? Colors.blueAccent[200]
+                                      : Colors.deepPurpleAccent[200],
                                 ),
                                 const SizedBox(width: 8),
                                 Text(
-                                  isAcademic ? 'LATEST ACADEMIC INSIGHT' : 'DISCUSSION SNAPSHOT', 
+                                  isAcademic
+                                      ? 'LATEST ACADEMIC INSIGHT'
+                                      : 'DISCUSSION SNAPSHOT',
                                   style: TextStyle(
-                                    fontSize: 10, 
-                                    fontWeight: FontWeight.w900, 
-                                    color: isAcademic ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200], 
-                                    letterSpacing: 1.5
-                                  )
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w900,
+                                    color: isAcademic
+                                        ? Colors.blueAccent[200]
+                                        : Colors.deepPurpleAccent[200],
+                                    letterSpacing: 1.5,
+                                  ),
                                 ),
                               ],
                             ),
                             Icon(
-                              isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
+                              isExpanded
+                                  ? Icons.keyboard_arrow_up
+                                  : Icons.keyboard_arrow_down,
                               size: 16,
                               color: Colors.grey,
                             ),
@@ -665,14 +880,17 @@ class _NotesScreenState extends State<NotesScreen> {
                           child: MarkdownBody(
                             data: latestSummary.summary,
                             softLineBreak: true,
-                            styleSheet: getAcademicMarkdownStyle(context).copyWith(
-                              p: const TextStyle(fontSize: 14, height: 1.3),
-                              strong: TextStyle(
-                                color: isAcademic ? Colors.blueAccent[200] : Colors.deepPurpleAccent[200],
-                                fontWeight: FontWeight.w900,
-                                fontSize: 14,
-                              ),
-                            ),
+                            styleSheet: getAcademicMarkdownStyle(context)
+                                .copyWith(
+                                  p: const TextStyle(fontSize: 14, height: 1.3),
+                                  strong: TextStyle(
+                                    color: isAcademic
+                                        ? Colors.blueAccent[200]
+                                        : Colors.deepPurpleAccent[200],
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: 14,
+                                  ),
+                                ),
                           ),
                         ),
                       ),
@@ -696,8 +914,11 @@ class _NotesScreenState extends State<NotesScreen> {
                 }
                 if (prev.isRecording != next.isRecording) return true;
                 // 翻译异步到达（切片数相同但内容有变化）：触发重绘 + 滚动
-                if (next.transcripts.isNotEmpty && prev.transcripts.isNotEmpty) {
-                  final prevMap = {for (final n in prev.transcripts) n.id: n.translatedContent};
+                if (next.transcripts.isNotEmpty &&
+                    prev.transcripts.isNotEmpty) {
+                  final prevMap = {
+                    for (final n in prev.transcripts) n.id: n.translatedContent,
+                  };
                   final hasNewTranslation = next.transcripts.any(
                     (note) => prevMap[note.id] != note.translatedContent,
                   );
@@ -716,17 +937,40 @@ class _NotesScreenState extends State<NotesScreen> {
                     child: Column(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        Icon(Icons.mic_none, size: 48, color: isDark ? Colors.white10 : Colors.black12),
+                        Icon(
+                          Icons.mic_none,
+                          size: 48,
+                          color: isDark ? Colors.white10 : Colors.black12,
+                        ),
                         const SizedBox(height: 16),
-                        Text('Ready for Lecture', style: TextStyle(color: isDark ? Colors.white24 : Colors.black12, fontWeight: FontWeight.bold)),
+                        Text(
+                          'Ready for Lecture',
+                          style: TextStyle(
+                            color: isDark ? Colors.white24 : Colors.black12,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                         const SizedBox(height: 24),
                         TextButton.icon(
-                          icon: Icon(Icons.history_edu, size: 18, color: isDark ? Colors.white54 : Colors.black45),
-                          label: Text('查看历史记录', style: TextStyle(color: isDark ? Colors.white54 : Colors.black45)),
+                          icon: Icon(
+                            Icons.history_edu,
+                            size: 18,
+                            color: isDark ? Colors.white54 : Colors.black45,
+                          ),
+                          label: Text(
+                            '查看历史记录',
+                            style: TextStyle(
+                              color: isDark ? Colors.white54 : Colors.black45,
+                            ),
+                          ),
                           onPressed: () {
                             Navigator.push(
                               context,
-                              MaterialPageRoute(builder: (context) => const HistoryScreen(initialModuleFilter: 'notes')),
+                              MaterialPageRoute(
+                                builder: (context) => const HistoryScreen(
+                                  initialModuleFilter: 'notes',
+                                ),
+                              ),
                             );
                           },
                         ),
@@ -761,16 +1005,21 @@ class _NotesScreenState extends State<NotesScreen> {
                                   fontSize: 18,
                                   height: 1.5,
                                   fontWeight: FontWeight.w600,
-                                  color: isDark ? Colors.white.withOpacity(0.9) : Colors.black87,
+                                  color: isDark
+                                      ? Colors.white.withOpacity(0.9)
+                                      : Colors.black87,
                                 ),
                               ),
-                              if (note.translatedContent != null && note.translatedContent!.isNotEmpty) ...[
+                              if (note.translatedContent != null &&
+                                  note.translatedContent!.isNotEmpty) ...[
                                 const SizedBox(height: 10),
                                 Text(
                                   note.translatedContent!,
                                   style: TextStyle(
                                     fontSize: 15,
-                                    color: isDark ? Colors.white60 : Colors.black54,
+                                    color: isDark
+                                        ? Colors.white60
+                                        : Colors.black54,
                                   ),
                                 ),
                               ],
@@ -883,17 +1132,28 @@ class _SettingsDialogState extends State<_SettingsDialog> {
 
   String _unitLabel(PathwaysUnit u) {
     switch (u) {
-      case PathwaysUnit.none: return '通用模式（无课本绑定）';
-      case PathwaysUnit.unit1: return 'Unit 1: 消费心理学';
-      case PathwaysUnit.unit2: return 'Unit 2: 基因科学';
-      case PathwaysUnit.unit3: return 'Unit 3: 人口迁徙';
-      case PathwaysUnit.unit4: return 'Unit 4: 气候变化';
-      case PathwaysUnit.unit5: return 'Unit 5: 成功与领导力';
-      case PathwaysUnit.unit6: return 'Unit 6: 设计思维';
-      case PathwaysUnit.unit7: return 'Unit 7: 生态保护';
-      case PathwaysUnit.unit8: return 'Unit 8: 传统与现代医学';
-      case PathwaysUnit.unit9: return 'Unit 9: 考古与历史';
-      case PathwaysUnit.unit10: return 'Unit 10: 情感与情绪';
+      case PathwaysUnit.none:
+        return '通用模式（无课本绑定）';
+      case PathwaysUnit.unit1:
+        return 'Unit 1: 消费心理学';
+      case PathwaysUnit.unit2:
+        return 'Unit 2: 基因科学';
+      case PathwaysUnit.unit3:
+        return 'Unit 3: 人口迁徙';
+      case PathwaysUnit.unit4:
+        return 'Unit 4: 气候变化';
+      case PathwaysUnit.unit5:
+        return 'Unit 5: 成功与领导力';
+      case PathwaysUnit.unit6:
+        return 'Unit 6: 设计思维';
+      case PathwaysUnit.unit7:
+        return 'Unit 7: 生态保护';
+      case PathwaysUnit.unit8:
+        return 'Unit 8: 传统与现代医学';
+      case PathwaysUnit.unit9:
+        return 'Unit 9: 考古与历史';
+      case PathwaysUnit.unit10:
+        return 'Unit 10: 情感与情绪';
     }
   }
 
@@ -911,37 +1171,52 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               value: _tempDuration,
               decoration: const InputDecoration(labelText: 'STT Frequency'),
               items: [5, 6, 7, 8]
-                  .map((d) => DropdownMenuItem(value: d, child: Text('$d seconds')))
+                  .map(
+                    (d) =>
+                        DropdownMenuItem(value: d, child: Text('$d seconds')),
+                  )
                   .toList(),
-              onChanged: (val) { if (val != null) setState(() => _tempDuration = val); },
+              onChanged: (val) {
+                if (val != null) setState(() => _tempDuration = val);
+              },
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<AppMode>(
               value: _tempMode,
               decoration: const InputDecoration(labelText: 'Recording Mode'),
-              items: AppMode.values.map((m) => DropdownMenuItem(
-                value: m,
-                child: Text(
-                  m == AppMode.exam
-                      ? '📝 Exam Listening'
-                      : m == AppMode.lecture
-                          ? '🎓 Academic Lecture'
-                          : m == AppMode.discussion
-                              ? '👥 Group Discussion'
-                              : 'Free Talk',
-                ),
-              )).toList(),
-              onChanged: (val) { if (val != null) setState(() => _tempMode = val); },
+              items: AppMode.values
+                  .map(
+                    (m) => DropdownMenuItem(
+                      value: m,
+                      child: Text(
+                        m == AppMode.exam
+                            ? '📝 Exam Listening'
+                            : m == AppMode.lecture
+                            ? '🎓 Academic Lecture'
+                            : m == AppMode.discussion
+                            ? '👥 Group Discussion'
+                            : 'Free Talk',
+                      ),
+                    ),
+                  )
+                  .toList(),
+              onChanged: (val) {
+                if (val != null) setState(() => _tempMode = val);
+              },
             ),
             const SizedBox(height: 16),
             DropdownButtonFormField<PathwaysUnit>(
               value: _tempUnit,
               decoration: const InputDecoration(labelText: 'Pathways Unit'),
-              items: PathwaysUnit.values.map((u) => DropdownMenuItem(
-                value: u,
-                child: Text(_unitLabel(u)),
-              )).toList(),
-              onChanged: (val) { if (val != null) setState(() => _tempUnit = val); },
+              items: PathwaysUnit.values
+                  .map(
+                    (u) =>
+                        DropdownMenuItem(value: u, child: Text(_unitLabel(u))),
+                  )
+                  .toList(),
+              onChanged: (val) {
+                if (val != null) setState(() => _tempUnit = val);
+              },
             ),
             const SizedBox(height: 12),
             SwitchListTile(
@@ -960,7 +1235,8 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               title: const Text('Academic Radar (Discovery)'),
               value: _tempEnableLectureDiscovery,
               contentPadding: EdgeInsets.zero,
-              onChanged: (val) => setState(() => _tempEnableLectureDiscovery = val),
+              onChanged: (val) =>
+                  setState(() => _tempEnableLectureDiscovery = val),
             ),
             const SizedBox(height: 8),
             const Divider(),
@@ -983,7 +1259,8 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                     max: 300,
                     divisions: 29,
                     label: '${_tempAutoScrollPause}秒',
-                    onChanged: (v) => setState(() => _tempAutoScrollPause = v.round()),
+                    onChanged: (v) =>
+                        setState(() => _tempAutoScrollPause = v.round()),
                   ),
                 ),
                 const Text('300秒'),
@@ -992,7 +1269,10 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             Center(
               child: Text(
                 '当前：$_tempAutoScrollPause 秒',
-                style: TextStyle(fontSize: 12, color: isDark ? Colors.white54 : Colors.black54),
+                style: TextStyle(
+                  fontSize: 12,
+                  color: isDark ? Colors.white54 : Colors.black54,
+                ),
               ),
             ),
             const SizedBox(height: 8),
@@ -1013,9 +1293,15 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               decoration: InputDecoration(
                 labelText: 'Groq API Key',
                 helperText: 'Required: for Whisper speech-to-text (STT)',
-                helperStyle: TextStyle(fontSize: 10, color: isDark ? Colors.white38 : Colors.black38),
+                helperStyle: TextStyle(
+                  fontSize: 10,
+                  color: isDark ? Colors.white38 : Colors.black38,
+                ),
                 suffixIcon: IconButton(
-                  icon: Icon(_obscureGroq ? Icons.visibility_off : Icons.visibility, size: 20),
+                  icon: Icon(
+                    _obscureGroq ? Icons.visibility_off : Icons.visibility,
+                    size: 20,
+                  ),
                   onPressed: () => setState(() => _obscureGroq = !_obscureGroq),
                 ),
               ),
@@ -1027,10 +1313,19 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               decoration: InputDecoration(
                 labelText: 'OpenRouter API Key',
                 helperText: 'Required: for Gemini translation & recap',
-                helperStyle: TextStyle(fontSize: 10, color: isDark ? Colors.white38 : Colors.black38),
+                helperStyle: TextStyle(
+                  fontSize: 10,
+                  color: isDark ? Colors.white38 : Colors.black38,
+                ),
                 suffixIcon: IconButton(
-                  icon: Icon(_obscureOpenRouter ? Icons.visibility_off : Icons.visibility, size: 20),
-                  onPressed: () => setState(() => _obscureOpenRouter = !_obscureOpenRouter),
+                  icon: Icon(
+                    _obscureOpenRouter
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                    size: 20,
+                  ),
+                  onPressed: () =>
+                      setState(() => _obscureOpenRouter = !_obscureOpenRouter),
                 ),
               ),
             ),
@@ -1041,10 +1336,20 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               decoration: InputDecoration(
                 labelText: 'SiliconFlow API Key',
                 helperText: 'Optional: for Qwen summaries & backup translation',
-                helperStyle: TextStyle(fontSize: 10, color: isDark ? Colors.white38 : Colors.black38),
+                helperStyle: TextStyle(
+                  fontSize: 10,
+                  color: isDark ? Colors.white38 : Colors.black38,
+                ),
                 suffixIcon: IconButton(
-                  icon: Icon(_obscureSiliconFlow ? Icons.visibility_off : Icons.visibility, size: 20),
-                  onPressed: () => setState(() => _obscureSiliconFlow = !_obscureSiliconFlow),
+                  icon: Icon(
+                    _obscureSiliconFlow
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                    size: 20,
+                  ),
+                  onPressed: () => setState(
+                    () => _obscureSiliconFlow = !_obscureSiliconFlow,
+                  ),
                 ),
               ),
             ),
@@ -1054,15 +1359,78 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               obscureText: _obscureGemini,
               decoration: InputDecoration(
                 labelText: 'Gemini API Key',
-                helperText: 'Recommended: for Gemini 2.0 Flash HD Speech Synthesis',
-                helperStyle: TextStyle(fontSize: 10, color: isDark ? Colors.white38 : Colors.black38),
+                helperText:
+                    'Recommended: for Gemini 2.0 Flash HD Speech Synthesis',
+                helperStyle: TextStyle(
+                  fontSize: 10,
+                  color: isDark ? Colors.white38 : Colors.black38,
+                ),
                 suffixIcon: IconButton(
-                  icon: Icon(_obscureGemini ? Icons.visibility_off : Icons.visibility, size: 20),
-                  onPressed: () => setState(() => _obscureGemini = !_obscureGemini),
+                  icon: Icon(
+                    _obscureGemini ? Icons.visibility_off : Icons.visibility,
+                    size: 20,
+                  ),
+                  onPressed: () =>
+                      setState(() => _obscureGemini = !_obscureGemini),
                 ),
               ),
             ),
             const SizedBox(height: 8),
+            const Divider(height: 32),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Text(
+                'Test diagnostic log',
+                style: Theme.of(context).textTheme.titleSmall,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Includes operation stages, session IDs, Bluetooth route types, '
+              'and error types. It excludes note text, transcripts, API keys, '
+              'cookies, and server response bodies.',
+              style: TextStyle(
+                fontSize: 11,
+                color: isDark ? Colors.white54 : Colors.black54,
+              ),
+            ),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              children: [
+                OutlinedButton.icon(
+                  icon: const Icon(Icons.copy, size: 18),
+                  label: const Text('Copy log'),
+                  onPressed: () async {
+                    final log = await DiagnosticLogService.instance
+                        .readForSharing();
+                    if (!context.mounted) return;
+                    await Clipboard.setData(ClipboardData(text: log));
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(
+                        content: Text(
+                          log.isEmpty
+                              ? 'The diagnostic log is empty.'
+                              : 'Diagnostic log copied.',
+                        ),
+                      ),
+                    );
+                  },
+                ),
+                TextButton.icon(
+                  icon: const Icon(Icons.delete_outline, size: 18),
+                  label: const Text('Clear log'),
+                  onPressed: () async {
+                    await DiagnosticLogService.instance.clear();
+                    if (!context.mounted) return;
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('Diagnostic log cleared.')),
+                    );
+                  },
+                ),
+              ],
+            ),
           ],
         ),
       ),

@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
-import 'package:shared_preferences/shared_preferences.dart';
+import 'credential_store.dart';
 import '../models/vocab_card.dart';
 
 class VocabExtractorService {
@@ -14,8 +14,7 @@ class VocabExtractorService {
   }) async {
     if (fullText.trim().isEmpty) return [];
 
-    final prefs = await SharedPreferences.getInstance();
-    final geminiKey = prefs.getString('api_key_gemini') ?? '';
+    final geminiKey = await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
 
     final prompt = """You are an expert English linguist and academic exam coach. Analyze the following text and extract 4 to 6 key items consisting of:
 1. High-frequency academic vocabulary words or collocations/phrases.
@@ -85,8 +84,9 @@ $fullText""";
       }
     }
 
-    // Fallback: Groq
-    final groqKey = prefs.getString('api_key_groq') ?? prefs.getString('api_key_siliconflow') ?? '';
+    // Fallback: Groq or SiliconFlow
+    final groqKey = await CredentialStore.instance.readKey(CredentialStore.keyGroq) ??
+                    await CredentialStore.instance.readKey(CredentialStore.keySiliconFlow) ?? '';
     if (groqKey.isEmpty) {
       throw Exception('请先在设置页面配置 API Key');
     }
