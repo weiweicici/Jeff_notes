@@ -355,7 +355,7 @@ class SessionBackgroundProcessor {
       );
       await _writeAtomically(
         shorthandFile,
-        _formatExamShorthand(ctx, now, transcripts),
+        _formatExamShorthand(ctx, transcripts),
       );
       if (!await shorthandFile.exists() || await shorthandFile.length() == 0) {
         throw FileSystemException(
@@ -368,60 +368,49 @@ class SessionBackgroundProcessor {
 
   String _formatExamShorthand(
     RecordingSessionContext ctx,
-    DateTime now,
     List<InsightNote> transcripts,
   ) {
     final shorthand = ctx.shorthandReviewContent?.trim();
-    final sb = StringBuffer()
-      ..writeln('# Academic Shorthand Notes (学术速记)')
-      ..writeln('**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}')
-      ..writeln(
-        '**Context:** ${ctx.identifiedLectureContext ?? 'Academic Lecture Shorthand'}',
-      )
-      ..writeln()
-      ..writeln('---')
-      ..writeln()
-      ..writeln('## Part 1 · Academic Shorthand Notes (Pathways 3)')
-      ..writeln();
+    final sb = StringBuffer();
 
     if (shorthand != null && shorthand.isNotEmpty) {
-      sb.writeln(shorthand);
+      sb.writeln(_compactShorthandLayout(shorthand));
     } else {
-      for (var i = 0; i < transcripts.length; i++) {
-        final english = transcripts[i].transcript.trim();
-        if (english.isEmpty || english == '...' || english.startsWith('[')) {
-          continue;
-        }
-        sb.writeln('- **Point ${i + 1}**: $english');
-        final chinese = transcripts[i].translatedContent?.trim();
-        if (chinese != null && chinese.isNotEmpty && !chinese.startsWith('[')) {
-          sb.writeln('  - *翻译*: $chinese');
-        }
-      }
+      debugPrint(
+        '[SessionBGP] Shorthand generation unavailable for ${ctx.sessionId}',
+      );
+      sb
+        ..writeln('【30秒理解·可播放】')
+        ..writeln('AI速记整理未完成；请直接使用后方中英文全文，避免把未整理的6秒切片误当成完整笔记。')
+        ..writeln('━━━━━━━━━━━━')
+        ..writeln('【二听】')
+        ..writeln('?（待核对）最终速记生成失败，请根据全文核对讲座结构与关键细节。')
+        ..writeln('━━━━━━━━━━━━')
+        ..writeln('【符号】')
+        ..writeln('→ 导致/过程/结果｜↑ 提高｜↓ 减少｜＋ 包含｜/ 并列')
+        ..writeln('= 定义｜✓ 已确认/赞同｜✗ 否定｜? 二听核对｜w/o 没有');
     }
-
-    sb
-      ..writeln()
-      ..writeln('---')
-      ..writeln()
-      ..writeln('## Part 2 · Full Script')
-      ..writeln();
 
     final chineseTranscript = TranscriptAssembler.chinese(transcripts);
     final englishTranscript = TranscriptAssembler.english(transcripts);
 
     sb
-      ..writeln('### 中文全文 (Chinese Transcript)')
-      ..writeln()
+      ..writeln('━━━━━━━━━━━━')
+      ..writeln('【中文全文】')
       ..writeln(chineseTranscript)
-      ..writeln()
-      ..writeln('### 英文全文 (English Transcript)')
-      ..writeln()
+      ..writeln('━━━━━━━━━━━━')
+      ..writeln('【英文全文】')
       ..writeln(
         _highlightText(_applyVocabHighlight(englishTranscript, ctx.unit)),
       );
     return sb.toString();
   }
+
+  String _compactShorthandLayout(String content) => content
+      .split('\n')
+      .where((line) => line.trim().isNotEmpty)
+      .join('\n')
+      .trim();
 
   Future<void> _writeAtomically(File file, String content) async {
     final tempFile = File('${file.path}.tmp');

@@ -209,76 +209,94 @@ Keep the whole response under 320 English-equivalent words. Do not output a
 transcript, predicted questions, greetings, or explanations.''';
   }
 
-  static String getLectureFirstPassPrompt(PathwaysUnit unit) =>
-      '''# Role
-You are producing a polished first-listening note sheet for a student using
+  static String getLectureFirstPassPrompt(PathwaysUnit unit) {
+    final selectedUnit = unit == PathwaysUnit.none
+        ? 'No textbook unit is selected. Detect the lecture structure from the audio.'
+        : 'Selected study unit: ${_getUnitName(unit)}. Use its note-taking skill only when supported by the audio.';
+    return '''# Role
+You produce an ultra-compact first-listening shorthand sheet for a student using
 Pathways 3: Listening, Speaking, and Critical Thinking, Third Edition, Level 3.
 
 # Goal
-The student must understand the whole unseen lecture after one listening and
-read a clean, complete note sheet during an optional second listening. Treat
-this as a self-sufficient final result: a second recording may never happen.
+After one listening, the student must immediately understand the lecture and
+have usable notes even if the audio is never played again. During an optional
+second listening, the student should only need to verify explicitly marked gaps.
+$selectedUnit
 
 # Evidence Rules
-1. The FULL TRANSCRIPT is the source of truth. Use the rolling draft only as a
-   structural aid and correct it whenever the full transcript disagrees.
-2. Never invent facts, numbers, names, purposes, or textbook content.
-3. Mark uncertainty as `[? heard form / alternative]`; do not hide it behind
-   polished prose.
-4. Preserve every exam-relevant number, date, percentage, name, term,
-   definition, contrast, cause, process step, example, correction and conclusion.
-5. English is primary for notes. Add concise Chinese only for difficult terms
-   or complex logic. Do not translate every bullet.
+1. FULL TRANSCRIPT is the factual authority. The rolling draft is only a
+   structural aid; correct it whenever the full transcript disagrees.
+2. Never invent textbook content, names, countries, numbers, actions, results,
+   purposes, examples, technical mechanisms, or likely exam answers.
+3. Mark uncertain content with `?（待核对）` and the uncertain heard form. Never
+   silently repair it from outside knowledge.
+4. Prioritize country/place, number/age, action, result, definition, cause,
+   contrast, process, speaker purpose and conclusion. Keep a person's name only
+   when clearly heard or structurally important.
+5. For every case, preserve the complete exam-useful chain when supported:
+   country/place + number/age + problem + action + result/significance.
 
 # Pathways 3 Level 3 Skills
 $_allLevel3ListeningSkills
 
-# Exact Markdown Output
-## 第一遍快速理解
-[150-250 Chinese characters: topic, progression, evidence and conclusion]
+# Bilingual Shorthand Rules
+1. The 30-second overview is natural Chinese suitable for TTS playback. Write
+   80-140 Chinese characters covering topic, progression, decisive evidence and
+   conclusion; it must not become a detailed review essay.
+2. All shorthand content is English-first. Immediately after the first use of
+   each English keyword or short phrase, add a concise Chinese aid in full-width
+   parentheses, for example `environmental fatigue（环境疲劳）`.
+3. Chinese is only a comprehension scaffold. Except for the 30-second overview
+   and verification instructions, do not write a Chinese-only note line.
+4. Use compact note forms and symbols: `→`, `↑`, `↓`, `＋`, `/`, `=`, `✓`, `✗`,
+   `?`, `b/c`, `w/`, `w/o`, `vs`. Explain a symbol inline at its first important
+   use, such as `→（导致）` or `↑（提高）`.
+5. Use 3-6 divisions with 2-4 lines each. For a case-driven lecture, divide by
+   case; for other lectures choose exactly one suitable label from
+   `Main Points（要点）`, `Process（流程）`, `Comparison（对比）`, or
+   `Cause & Effect（因果）`. Do not force an Examples section when none exists.
 
-## One-Screen Quick View
-- **Main Idea:** [one compact English line] —— [one short Chinese line]
-- **Structure:** [A → B → C → conclusion]
-- **Core 1:** [one line]
-- **Core 2:** [one line]
-- **Core 3:** [one line]
-- **Key Evidence:** [one or two decisive examples/numbers]
-- **Verify if Replayed:** [top three uncertainties, or `No critical gaps`]
+# Compact Layout — Mandatory
+1. Output no blank lines anywhere, including after labels and before the
+   transcript boundary.
+2. Do not use Markdown headings (`#`, `##`, `###`), Markdown horizontal rules
+   (`---`), bullets, tables, bold, emojis, code fences, greetings or commentary.
+3. Put `━━━━━━━━━━━━` on one line between main blocks.
+4. A division heading must itself be the separator, formatted exactly as
+   `── English label（中文） · key number if useful ──`.
+5. Keep the complete shorthand compact enough for roughly one to two phone
+   screens. Remove repetition before removing an exam-relevant fact.
+6. Do not output the Chinese or English transcript. The app appends those fixed
+   playback sections after this response.
 
-## Topic, Main Idea & Speaker Purpose
-- **Topic:** ...
-- **Main Idea:** ...
-- **Purpose / Attitude:** ...
-
-## Complete First-Pass Notes
-### MP1 · [descriptive title]
-- [essential claim]
-  - [supporting detail/evidence]
-### MP2 · [descriptive title]
-- ...
-### MP3 · [if supported]
-- ...
-[Use 3-5 main-point sections and 8-15 essential bullets total.]
-
-## Logic & Organization
-- **Cause → Effect:** ...
-- **Contrast:** ...
-- **Sequence / Process:** ...
-[Omit inapplicable lines.]
-
-## Numbers, Names & Key Terms
-- ...
-
-## Evidence & Examples
-- ...
-
-## Uncertain / Missing
-- [? ...]
-[Write `No critical gaps detected` if none.]
-
-Do not include the full Chinese or English transcript; the app appends fixed
-playback sections after this response.''';
+# Exact Output Contract
+【30秒理解·可播放】
+[one compact natural-Chinese paragraph; no manual blank line]
+━━━━━━━━━━━━
+【Purpose（目的）】
+[English shorthand（中文辅助）→（关系说明）English shorthand（中文辅助）]
+[optional second purpose/structure line only when necessary]
+━━━━━━━━━━━━
+【Examples（案例）】
+── Country/topic（中文） · number if important ──
+[problem/definition in English shorthand（中文辅助）]
+[action/process in English shorthand（中文辅助）→ result（结果）]
+[significance only when supported]
+[repeat compact divisions; replace Examples with the one adaptive label above
+when the lecture is not case-driven]
+━━━━━━━━━━━━
+【Conclusion（结论）】
+[speaker's conclusion/attitude in English shorthand with concise Chinese aids]
+━━━━━━━━━━━━
+【二听】
+?（待核对）[only the highest-value uncertain item, one per line]
+✓（已确认）[the most important confirmed mapping, only when useful]
+[write `✓（已确认）no critical gaps（无关键缺口）` if there is no uncertainty]
+━━━━━━━━━━━━
+【符号】
+→ 导致/过程/结果｜↑ 提高｜↓ 减少｜＋ 包含｜/ 并列
+= 定义｜✓ 已确认/赞同｜✗ 否定｜? 二听核对｜w/o 没有''';
+  }
 
   static String getFinalExamFirstPassPrompt(PathwaysUnit unit) =>
       '''# Role
@@ -408,6 +426,13 @@ $injection
     final unitName = _getUnitName(unit);
     final unitTopic = _getUnitTopic(unit);
     final isUnitSelected = unit != PathwaysUnit.none;
+
+    // Exam mode requests the dedicated answer-card prompt below. Lecture mode
+    // is also used to generate the companion Jeff_速记 document, so every AI
+    // provider must share the same compact shorthand contract.
+    if (mode == AppMode.lecture) {
+      return getLectureFirstPassPrompt(unit);
+    }
 
     if (mode == AppMode.exam) {
       return """# Role

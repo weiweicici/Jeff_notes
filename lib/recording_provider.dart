@@ -1218,21 +1218,22 @@ class RecordingProvider extends ChangeNotifier {
   String _generateFallbackShorthandFromTranscripts() {
     final transcripts = _allNotes.where((n) => !n.isSummary).toList();
     if (transcripts.isEmpty) return "";
-    final buffer = StringBuffer();
-    buffer.writeln("### Key Discussion / Audio Points (逐字要点)");
-    buffer.writeln();
-    for (int i = 0; i < transcripts.length; i++) {
-      final t = transcripts[i].transcript.trim();
-      final zh = transcripts[i].translatedContent?.trim();
-      if (t.isNotEmpty && t != '...' && !t.startsWith('[')) {
-        buffer.writeln("- **Point ${i + 1}**: $t");
-        if (zh != null && zh.isNotEmpty && !zh.startsWith('[')) {
-          buffer.writeln("  - *翻译*: $zh");
-        }
-      }
-    }
-    return buffer.toString();
+    return '【30秒理解·可播放】\n'
+        'AI速记整理未完成；请直接使用后方中英文全文，避免把未整理的6秒切片误当成完整笔记。\n'
+        '━━━━━━━━━━━━\n'
+        '【二听】\n'
+        '?（待核对）最终速记生成失败，请根据全文核对讲座结构与关键细节。\n'
+        '━━━━━━━━━━━━\n'
+        '【符号】\n'
+        '→ 导致/过程/结果｜↑ 提高｜↓ 减少｜＋ 包含｜/ 并列\n'
+        '= 定义｜✓ 已确认/赞同｜✗ 否定｜? 二听核对｜w/o 没有';
   }
+
+  String _compactShorthandLayout(String content) => content
+      .split('\n')
+      .where((line) => line.trim().isNotEmpty)
+      .join('\n')
+      .trim();
 
   Future<void> _exportToMarkdown() async {
     try {
@@ -1349,28 +1350,10 @@ class RecordingProvider extends ChangeNotifier {
           final shorthandFilename = "Jeff_速记_$dateStr.md";
           final shorthandFile = File('${directory.path}/$shorthandFilename');
           final StringBuffer sbShort = StringBuffer();
-          sbShort.writeln("# Academic Shorthand Notes (学术速记)");
-          sbShort.writeln(
-            "**Date:** ${DateFormat('yyyy-MM-dd HH:mm').format(now)}",
-          );
-          sbShort.writeln(
-            "**Context:** ${_identifiedLectureContext ?? 'Academic Lecture Shorthand'}",
-          );
-          sbShort.writeln();
-          sbShort.writeln("---");
-          sbShort.writeln();
-          sbShort.writeln("## Part 1 · Academic Shorthand Notes (Pathways 3)");
-          sbShort.writeln();
-          sbShort.writeln(shorthandContentToUse);
-          sbShort.writeln();
+          sbShort.writeln(_compactShorthandLayout(shorthandContentToUse));
 
           final transcripts = _allNotes.where((n) => !n.isSummary).toList();
           if (transcripts.isNotEmpty) {
-            sbShort.writeln("---");
-            sbShort.writeln();
-            sbShort.writeln("## Part 2 · Full Script");
-            sbShort.writeln();
-
             final List<String> chineseSegments = [];
             final List<String> englishSegments = [];
 
@@ -1391,14 +1374,11 @@ class RecordingProvider extends ChangeNotifier {
               }
             }
 
-            sbShort.writeln("### 中文全文 (Chinese Transcript)");
-            sbShort.writeln();
+            sbShort.writeln("━━━━━━━━━━━━");
+            sbShort.writeln("【中文全文】");
             sbShort.writeln(chineseSegments.join(" "));
-            sbShort.writeln();
-            sbShort.writeln();
-
-            sbShort.writeln("### 英文全文 (English Transcript)");
-            sbShort.writeln();
+            sbShort.writeln("━━━━━━━━━━━━");
+            sbShort.writeln("【英文全文】");
             sbShort.writeln(
               _highlightText(
                 _applyVocabularyHighlight(
@@ -1407,7 +1387,6 @@ class RecordingProvider extends ChangeNotifier {
                 ),
               ),
             );
-            sbShort.writeln();
           }
 
           await shorthandFile.writeAsString(sbShort.toString());

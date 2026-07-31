@@ -34,8 +34,20 @@ void main() {
         AIProvider.groq,
         mode: AppMode.lecture,
       );
-      expect(lecture, contains('One-Screen Quick View'));
-      expect(lecture, contains('8-15 essential bullets'));
+      expect(lecture, contains('【30秒理解·可播放】'));
+      expect(lecture, contains('【Purpose（目的）】'));
+      expect(lecture, contains('【二听】'));
+      expect(lecture, contains('【符号】'));
+      expect(lecture, contains('Output no blank lines anywhere'));
+      expect(lecture, contains('English-first'));
+      expect(lecture, contains('━━━━━━━━━━━━'));
+      expect(lecture, isNot(contains('One-Screen Quick View')));
+
+      final directGeminiShorthand = PromptProvider.getFinalReviewPrompt(
+        AppMode.lecture,
+        PathwaysUnit.none,
+      );
+      expect(directGeminiShorthand, lecture);
     });
 
     test(

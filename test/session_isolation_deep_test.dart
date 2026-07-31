@@ -276,8 +276,16 @@ void main() {
           '${tempDir.path}/Jeff_速记_exam_double_export_test.md',
         );
         expect(shorthand.existsSync(), isTrue);
-        expect(await shorthand.readAsString(), contains('Academic Shorthand'));
-        expect(await shorthand.readAsString(), contains('重要概念'));
+        final shorthandText = await shorthand.readAsString();
+        expect(shorthandText, startsWith('【30秒理解·可播放】'));
+        expect(shorthandText, contains('【中文全文】'));
+        expect(shorthandText, contains('这节课解释了一个重要概念。'));
+        expect(shorthandText, contains('【英文全文】'));
+        expect(shorthandText, contains('━━━━━━━━━━━━'));
+        expect(shorthandText, isNot(contains('Academic Shorthand')));
+        expect(shorthandText, isNot(contains('Part 1')));
+        expect(shorthandText, isNot(contains('**Point')));
+        expect(shorthandText, isNot(contains('\n\n')));
       },
     );
   });

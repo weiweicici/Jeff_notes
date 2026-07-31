@@ -175,6 +175,14 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
         continue;
       }
 
+      // Compact shorthand documents use bracket labels instead of Markdown
+      // headings so the page stays dense. Stop before the English transcript.
+      if (inChineseSection &&
+          (trimmed.contains('英文全文') ||
+              trimmed.contains('English Transcript'))) {
+        break;
+      }
+
       // 2. 遇到无关下一个主标题 → 停止收集
       if (inChineseSection &&
           (trimmed.startsWith('### ') ||
@@ -190,7 +198,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       }
 
       // 3. 过滤掉纯分隔线行（如 --- / ===）
-      if (trimmed.startsWith('---') || trimmed.startsWith('===')) {
+      if (trimmed.startsWith('---') ||
+          trimmed.startsWith('===') ||
+          trimmed.startsWith('━━━')) {
         continue;
       }
 
@@ -257,7 +267,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       }
 
       // 过滤分隔线
-      if (trimmed.startsWith('---') || trimmed.startsWith('===')) {
+      if (trimmed.startsWith('---') ||
+          trimmed.startsWith('===') ||
+          trimmed.startsWith('━━━')) {
         continue;
       }
 
