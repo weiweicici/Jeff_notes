@@ -111,7 +111,7 @@ class AIOrchestratorService {
   Future<String?> generateSummaryWithGemini({
     required String systemPrompt,
     required String userMessage,
-    int maxOutputTokens = 2400,
+    int maxOutputTokens = 3200,
   }) async {
     if (_geminiApiKey.isEmpty || _isDisposed) return null;
     try {
@@ -138,6 +138,7 @@ class AIOrchestratorService {
               'generationConfig': {
                 'temperature': 0.15,
                 'maxOutputTokens': maxOutputTokens,
+                'thinkingConfig': {'thinkingBudget': 0},
               },
             }),
           )
@@ -152,7 +153,15 @@ class AIOrchestratorService {
       final data = jsonDecode(response.body);
       final candidates = data['candidates'] as List?;
       if (candidates == null || candidates.isEmpty) return null;
-      final parts = candidates[0]['content']?['parts'] as List?;
+      final candidate = Map<String, dynamic>.from(candidates.first as Map);
+      final finishReason = candidate['finishReason'] as String?;
+      if (finishReason != null && finishReason != 'STOP') {
+        debugPrint(
+          '[Orchestrator Gemini Summary] Rejected finishReason=$finishReason',
+        );
+        return null;
+      }
+      final parts = candidate['content']?['parts'] as List?;
       if (parts == null || parts.isEmpty) return null;
       final text = parts
           .map((part) => part is Map ? part['text'] : null)

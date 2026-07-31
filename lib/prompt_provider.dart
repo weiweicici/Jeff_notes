@@ -251,8 +251,10 @@ $_allLevel3ListeningSkills
 4. Use compact note forms and symbols: `→`, `↑`, `↓`, `＋`, `/`, `=`, `✓`, `✗`,
    `?`, `b/c`, `w/`, `w/o`, `vs`. Explain a symbol inline at its first important
    use, such as `→（导致）` or `↑（提高）`.
-5. Use 3-6 divisions with 2-4 lines each. For a case-driven lecture, divide by
-   case; for other lectures choose exactly one suitable label from
+5. For a case-driven lecture, count every distinct case before writing and
+   output exactly one division for every case. Never omit a case to meet the
+   phone-screen target; compress each case instead. For other lectures, use 3-6
+   divisions and choose exactly one suitable label from
    `Main Points（要点）`, `Process（流程）`, `Comparison（对比）`, or
    `Cause & Effect（因果）`. Do not force an Examples section when none exists.
 

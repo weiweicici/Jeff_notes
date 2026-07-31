@@ -46,6 +46,7 @@ void main() {
       expect(lecture, contains('Output no blank lines anywhere'));
       expect(lecture, contains('English-first'));
       expect(lecture, contains('━━━━━━━━━━━━'));
+      expect(lecture, contains('every distinct case'));
       expect(lecture, isNot(contains('One-Screen Quick View')));
 
       final directGeminiShorthand = PromptProvider.getFinalReviewPrompt(
@@ -136,6 +137,7 @@ void main() {
               jsonEncode({
                 'candidates': [
                   {
+                    'finishReason': 'STOP',
                     'content': {
                       'parts': [
                         {'text': '【30秒理解·可播放】\n测试内容'},
@@ -176,7 +178,55 @@ void main() {
           'SYSTEM-SHORTHAND-CONTRACT',
         );
         expect(requestBody['generationConfig']['maxOutputTokens'], 1800);
+        expect(
+          requestBody['generationConfig']['thinkingConfig']['thinkingBudget'],
+          0,
+        );
       },
     );
+
+    test('Gemini summary fallback rejects MAX_TOKENS output', () async {
+      final client = MockClient((request) async {
+        return http.Response.bytes(
+          utf8.encode(
+            jsonEncode({
+              'candidates': [
+                {
+                  'finishReason': 'MAX_TOKENS',
+                  'content': {
+                    'parts': [
+                      {'text': '【30秒理解·可播放】\n只有半份内容'},
+                    ],
+                  },
+                },
+              ],
+            }),
+          ),
+          200,
+          headers: {'content-type': 'application/json; charset=utf-8'},
+        );
+      });
+      final service = OpenAIService(
+        apiKey: 'test',
+        baseUrl: 'https://example.invalid',
+        defaultModel: 'test',
+        httpClient: client,
+      );
+      final orchestrator = AIOrchestratorService(
+        sttService: service,
+        translationService: service,
+        sessionId: 'gemini_truncation_test',
+        geminiApiKey: 'test-key',
+        httpClient: client,
+      );
+      addTearDown(orchestrator.dispose);
+
+      final result = await orchestrator.generateSummaryWithGemini(
+        systemPrompt: 'SYSTEM-SHORTHAND-CONTRACT',
+        userMessage: 'TRANSCRIPT',
+      );
+
+      expect(result, isNull);
+    });
   });
 }

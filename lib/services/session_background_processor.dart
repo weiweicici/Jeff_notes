@@ -244,7 +244,7 @@ class SessionBackgroundProcessor {
         material: material,
         mode: AppMode.lecture,
         diagnosticName: 'shorthand',
-        maxGeminiOutputTokens: 1800,
+        maxGeminiOutputTokens: 3200,
       );
       if (_isUsableAiContent(shorthand)) {
         ctx.shorthandReviewContent = shorthand!.trim();
@@ -269,8 +269,14 @@ class SessionBackgroundProcessor {
           mode: mode,
           unit: ctx.unit,
         );
-        if (_isUsableAiContent(result)) return result.trim();
-        primaryError = StateError('empty_or_invalid_response');
+        if (_isValidGeneratedContent(result, mode: mode)) {
+          return result.trim();
+        }
+        primaryError = StateError(
+          mode == AppMode.lecture
+              ? 'incomplete_shorthand_structure'
+              : 'empty_or_invalid_response',
+        );
       } catch (error) {
         primaryError = error;
       }
@@ -298,7 +304,7 @@ class SessionBackgroundProcessor {
       userMessage: material,
       maxOutputTokens: maxGeminiOutputTokens,
     );
-    if (_isUsableAiContent(geminiResult)) {
+    if (_isValidGeneratedContent(geminiResult, mode: mode)) {
       unawaited(
         DiagnosticLogService.instance.record(
           'ai',
@@ -308,6 +314,16 @@ class SessionBackgroundProcessor {
         ),
       );
       return geminiResult!.trim();
+    }
+    if (_isUsableAiContent(geminiResult)) {
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'ai',
+          '${diagnosticName}_candidate_rejected',
+          sessionId: ctx.sessionId,
+          fields: {'provider': 'gemini', 'reason': 'incomplete_structure'},
+        ),
+      );
     }
 
     final fallback = ctx.fallbackTranslationService;
@@ -319,7 +335,7 @@ class SessionBackgroundProcessor {
           mode: mode,
           unit: ctx.unit,
         );
-        if (_isUsableAiContent(result)) {
+        if (_isValidGeneratedContent(result, mode: mode)) {
           unawaited(
             DiagnosticLogService.instance.record(
               'ai',
@@ -349,7 +365,7 @@ class SessionBackgroundProcessor {
           mode: mode,
           unit: ctx.unit,
         );
-        if (_isUsableAiContent(result)) {
+        if (_isValidGeneratedContent(result, mode: mode)) {
           unawaited(
             DiagnosticLogService.instance.record(
               'ai',
@@ -383,6 +399,24 @@ class SessionBackgroundProcessor {
     return trimmed.isNotEmpty && !trimmed.startsWith('[');
   }
 
+  bool _isValidGeneratedContent(String? content, {required AppMode mode}) {
+    if (!_isUsableAiContent(content)) return false;
+    if (mode != AppMode.lecture) return true;
+    final value = content!;
+    final hasAdaptiveNotes =
+        value.contains('【Examples（案例）】') ||
+        value.contains('【Main Points（要点）】') ||
+        value.contains('【Process（流程）】') ||
+        value.contains('【Comparison（对比）】') ||
+        value.contains('【Cause & Effect（因果）】');
+    return value.contains('【30秒理解·可播放】') &&
+        value.contains('【Purpose（目的）】') &&
+        hasAdaptiveNotes &&
+        value.contains('【Conclusion（结论）】') &&
+        value.contains('【二听】') &&
+        value.contains('【符号】');
+  }
+
   bool _isRetryableAiFailure(Object error) {
     final message = error.toString().toLowerCase();
     return message.contains('429') ||
@@ -392,10 +426,14 @@ class SessionBackgroundProcessor {
         message.contains('504') ||
         message.contains('network') ||
         message.contains('socket') ||
-        message.contains('connection');
+        message.contains('connection') ||
+        message.contains('incomplete_shorthand_structure');
   }
 
   String _safeAiFailureCode(Object error) {
+    if (error.toString().contains('incomplete_shorthand_structure')) {
+      return 'incomplete_structure';
+    }
     final status = RegExp(r'\b[45]\d\d\b').firstMatch(error.toString());
     return status?.group(0) ?? error.runtimeType.toString();
   }
