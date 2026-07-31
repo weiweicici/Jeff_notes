@@ -1,8 +1,13 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
+import 'package:jeff_notes/ai_orchestrator_service.dart';
 import 'package:jeff_notes/models.dart';
+import 'package:jeff_notes/openai_service.dart';
 import 'package:jeff_notes/prompt_provider.dart';
 import 'package:jeff_notes/services/transcript_assembler.dart';
 import 'package:jeff_notes/services/wav_stitch_service.dart';
@@ -119,5 +124,59 @@ void main() {
         Uint8List.fromList(<int>[1, 2, 3, 4, 5, 6, 7, 8]),
       );
     });
+
+    test(
+      'Gemini summary fallback preserves the shorthand system prompt',
+      () async {
+        late Map<String, dynamic> requestBody;
+        final client = MockClient((request) async {
+          requestBody = jsonDecode(request.body) as Map<String, dynamic>;
+          return http.Response.bytes(
+            utf8.encode(
+              jsonEncode({
+                'candidates': [
+                  {
+                    'content': {
+                      'parts': [
+                        {'text': '【30秒理解·可播放】\n测试内容'},
+                      ],
+                    },
+                  },
+                ],
+              }),
+            ),
+            200,
+            headers: {'content-type': 'application/json; charset=utf-8'},
+          );
+        });
+        final service = OpenAIService(
+          apiKey: 'test',
+          baseUrl: 'https://example.invalid',
+          defaultModel: 'test',
+          httpClient: client,
+        );
+        final orchestrator = AIOrchestratorService(
+          sttService: service,
+          translationService: service,
+          sessionId: 'gemini_summary_test',
+          geminiApiKey: 'test-key',
+          httpClient: client,
+        );
+        addTearDown(orchestrator.dispose);
+
+        final result = await orchestrator.generateSummaryWithGemini(
+          systemPrompt: 'SYSTEM-SHORTHAND-CONTRACT',
+          userMessage: 'TRANSCRIPT',
+          maxOutputTokens: 1800,
+        );
+
+        expect(result, '【30秒理解·可播放】\n测试内容');
+        expect(
+          requestBody['system_instruction']['parts'][0]['text'],
+          'SYSTEM-SHORTHAND-CONTRACT',
+        );
+        expect(requestBody['generationConfig']['maxOutputTokens'], 1800);
+      },
+    );
   });
 }

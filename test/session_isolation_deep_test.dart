@@ -3,8 +3,44 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/api_scheduler.dart';
 import 'package:jeff_notes/models.dart';
 import 'package:jeff_notes/models/recording_session_context.dart';
+import 'package:jeff_notes/openai_service.dart';
 import 'package:jeff_notes/services/shadow_draft_service.dart';
 import 'package:jeff_notes/services/session_background_processor.dart';
+
+class _RetryingSummaryService extends OpenAIService {
+  _RetryingSummaryService()
+    : super(
+        apiKey: 'test',
+        baseUrl: 'https://example.invalid',
+        defaultModel: 'test',
+      );
+
+  int callCount = 0;
+
+  @override
+  Future<String> summarize(
+    String text, {
+    PromptStrategy strategy = PromptStrategy.general,
+    AIProvider provider = AIProvider.groq,
+    AppMode mode = AppMode.lecture,
+    PathwaysUnit unit = PathwaysUnit.none,
+  }) async {
+    callCount++;
+    if (mode == AppMode.exam) return 'Exam review generated';
+    if (callCount == 2) throw Exception('Summarize error 429');
+    return '【30秒理解·可播放】\n'
+        '这是一份成功重试后生成的紧凑速记。\n'
+        '━━━━━━━━━━━━\n'
+        '【Purpose（目的）】\n'
+        'retry（重试）→ success（成功）\n'
+        '━━━━━━━━━━━━\n'
+        '【二听】\n'
+        '✓（已确认）no critical gaps（无关键缺口）\n'
+        '━━━━━━━━━━━━\n'
+        '【符号】\n'
+        '→ 导致/过程/结果';
+  }
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -288,5 +324,41 @@ void main() {
         expect(shorthandText, isNot(contains('\n\n')));
       },
     );
+
+    test('8. Shorthand retries primary service after a 429 failure', () async {
+      final context = RecordingSessionContext.create(
+        mode: AppMode.exam,
+        unit: PathwaysUnit.unit8,
+        baseDirectory: tempDir.path,
+        customSessionId: 'shorthand_retry_test',
+      );
+      context.addNote(
+        InsightNote(
+          summary: 'Plant medicine',
+          transcript: 'Plant chemicals can be reproduced in a laboratory.',
+          translatedContent: '植物化学物质可以在实验室中重新合成。',
+          timestamp: DateTime.now(),
+        ),
+      );
+      final service = _RetryingSummaryService();
+      context.translationService = service;
+      addTearDown(service.dispose);
+
+      await SessionBackgroundProcessor.instance.submit(
+        HandoverPayload(
+          context: context,
+          enableFinalRecap: true,
+          onDone: (_) {},
+          onStatus: (_) {},
+        ),
+      );
+
+      final shorthand = File('${tempDir.path}/Jeff_速记_shorthand_retry_test.md');
+      final content = await shorthand.readAsString();
+      expect(service.callCount, 3);
+      expect(content, contains('成功重试后生成的紧凑速记'));
+      expect(content, isNot(contains('AI速记整理未完成')));
+      expect(content, isNot(contains('\n\n')));
+    });
   });
 }

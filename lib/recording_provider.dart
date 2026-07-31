@@ -544,9 +544,18 @@ class RecordingProvider extends ChangeNotifier {
         whisperModel: "whisper-large-v3",
         httpClient: client,
       );
+      final siliconKey = siliconFlowKey.trim();
+      final fallbackTrans = siliconKey.isEmpty
+          ? null
+          : OpenAIService(
+              apiKey: siliconKey,
+              baseUrl: 'https://api.siliconflow.cn/v1',
+              defaultModel: 'Qwen/Qwen2.5-7B-Instruct',
+              httpClient: client,
+            );
       context.sttService = stt;
       context.translationService = trans;
-      context.fallbackTranslationService = null;
+      context.fallbackTranslationService = fallbackTrans;
       context.onChanged = () {
         if (_activeContext == context) notifyListeners();
       };
@@ -554,7 +563,7 @@ class RecordingProvider extends ChangeNotifier {
       final orchestrator = AIOrchestratorService(
         sttService: stt,
         translationService: trans,
-        translationFallbackService: null,
+        translationFallbackService: fallbackTrans,
         sessionId: context.sessionId,
         geminiApiKey: geminiKey,
         httpClient: client,

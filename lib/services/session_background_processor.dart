@@ -227,42 +227,177 @@ class SessionBackgroundProcessor {
       return;
     }
 
-    final isExam = ctx.mode == AppMode.exam;
-    // Call service via context
-    if (ctx.translationService != null) {
+    final finalReview = await _generateReviewWithFailover(
+      ctx,
+      material: material,
+      mode: ctx.mode,
+      diagnosticName: 'final_review',
+      maxGeminiOutputTokens: ctx.mode == AppMode.exam ? 4096 : 2400,
+    );
+    if (_isUsableAiContent(finalReview)) {
+      ctx.finalReviewContent = finalReview!.trim();
+    }
+
+    if (ctx.mode == AppMode.exam) {
+      final shorthand = await _generateReviewWithFailover(
+        ctx,
+        material: material,
+        mode: AppMode.lecture,
+        diagnosticName: 'shorthand',
+        maxGeminiOutputTokens: 1800,
+      );
+      if (_isUsableAiContent(shorthand)) {
+        ctx.shorthandReviewContent = shorthand!.trim();
+      }
+    }
+  }
+
+  Future<String?> _generateReviewWithFailover(
+    RecordingSessionContext ctx, {
+    required String material,
+    required AppMode mode,
+    required String diagnosticName,
+    required int maxGeminiOutputTokens,
+  }) async {
+    Object? primaryError;
+    final primary = ctx.translationService;
+    if (primary != null) {
       try {
-        ctx.finalReviewContent = await ctx.translationService!.summarize(
+        final result = await primary.summarize(
           material,
           strategy: PromptStrategy.recap,
-          mode: ctx.mode,
+          mode: mode,
           unit: ctx.unit,
         );
-      } catch (e) {
-        debugPrint('[SessionBGP] Final review main service error: $e');
-        if (ctx.fallbackTranslationService != null) {
-          try {
-            ctx.finalReviewContent = await ctx.fallbackTranslationService!
-                .summarize(
-                  material,
-                  strategy: PromptStrategy.recap,
-                  mode: ctx.mode,
-                  unit: ctx.unit,
-                );
-          } catch (_) {}
+        if (_isUsableAiContent(result)) return result.trim();
+        primaryError = StateError('empty_or_invalid_response');
+      } catch (error) {
+        primaryError = error;
+      }
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'ai',
+          '${diagnosticName}_primary_failed',
+          sessionId: ctx.sessionId,
+          fields: {'reason': _safeAiFailureCode(primaryError)},
+        ),
+      );
+      debugPrint(
+        '[SessionBGP] $diagnosticName primary failed: '
+        '${_safeAiFailureCode(primaryError)}',
+      );
+    }
+
+    final geminiResult = await ctx.orchestrator?.generateSummaryWithGemini(
+      systemPrompt: PromptProvider.getSystemPrompt(
+        PromptStrategy.recap,
+        AIProvider.gemini,
+        mode: mode,
+        unit: ctx.unit,
+      ),
+      userMessage: material,
+      maxOutputTokens: maxGeminiOutputTokens,
+    );
+    if (_isUsableAiContent(geminiResult)) {
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'ai',
+          '${diagnosticName}_recovered',
+          sessionId: ctx.sessionId,
+          fields: {'provider': 'gemini'},
+        ),
+      );
+      return geminiResult!.trim();
+    }
+
+    final fallback = ctx.fallbackTranslationService;
+    if (fallback != null && !identical(fallback, primary)) {
+      try {
+        final result = await fallback.summarize(
+          material,
+          strategy: PromptStrategy.recap,
+          mode: mode,
+          unit: ctx.unit,
+        );
+        if (_isUsableAiContent(result)) {
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'ai',
+              '${diagnosticName}_recovered',
+              sessionId: ctx.sessionId,
+              fields: {'provider': 'siliconflow'},
+            ),
+          );
+          return result.trim();
         }
+      } catch (error) {
+        debugPrint(
+          '[SessionBGP] $diagnosticName fallback failed: '
+          '${_safeAiFailureCode(error)}',
+        );
       }
     }
 
-    if (isExam && ctx.translationService != null) {
+    if (primary != null &&
+        primaryError != null &&
+        _isRetryableAiFailure(primaryError)) {
+      await Future<void>.delayed(const Duration(seconds: 3));
       try {
-        ctx.shorthandReviewContent = await ctx.translationService!.summarize(
+        final result = await primary.summarize(
           material,
           strategy: PromptStrategy.recap,
-          mode: AppMode.lecture,
+          mode: mode,
           unit: ctx.unit,
         );
-      } catch (_) {}
+        if (_isUsableAiContent(result)) {
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'ai',
+              '${diagnosticName}_recovered',
+              sessionId: ctx.sessionId,
+              fields: {'provider': 'primary_retry'},
+            ),
+          );
+          return result.trim();
+        }
+      } catch (error) {
+        debugPrint(
+          '[SessionBGP] $diagnosticName retry failed: '
+          '${_safeAiFailureCode(error)}',
+        );
+      }
     }
+
+    unawaited(
+      DiagnosticLogService.instance.record(
+        'ai',
+        '${diagnosticName}_failed_all',
+        sessionId: ctx.sessionId,
+      ),
+    );
+    return null;
+  }
+
+  bool _isUsableAiContent(String? content) {
+    final trimmed = content?.trim() ?? '';
+    return trimmed.isNotEmpty && !trimmed.startsWith('[');
+  }
+
+  bool _isRetryableAiFailure(Object error) {
+    final message = error.toString().toLowerCase();
+    return message.contains('429') ||
+        message.contains('500') ||
+        message.contains('502') ||
+        message.contains('503') ||
+        message.contains('504') ||
+        message.contains('network') ||
+        message.contains('socket') ||
+        message.contains('connection');
+  }
+
+  String _safeAiFailureCode(Object error) {
+    final status = RegExp(r'\b[45]\d\d\b').firstMatch(error.toString());
+    return status?.group(0) ?? error.runtimeType.toString();
   }
 
   Future<void> _writeMarkdownFile(

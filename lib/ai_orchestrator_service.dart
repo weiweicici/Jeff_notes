@@ -24,10 +24,12 @@ class AIOrchestratorService {
   final String sessionId;
 
   final _fastEnglishController = StreamController<PipelineResult>.broadcast();
-  final _accurateChineseController = StreamController<PipelineResult>.broadcast();
+  final _accurateChineseController =
+      StreamController<PipelineResult>.broadcast();
 
   Stream<PipelineResult> get fastEnglishStream => _fastEnglishController.stream;
-  Stream<PipelineResult> get accurateChineseStream => _accurateChineseController.stream;
+  Stream<PipelineResult> get accurateChineseStream =>
+      _accurateChineseController.stream;
 
   final List<String> _translationBuffer = [];
   final List<String> _bufferIds = [];
@@ -52,8 +54,8 @@ class AIOrchestratorService {
     required this.sessionId,
     String geminiApiKey = '',
     http.Client? httpClient,
-  })  : _geminiApiKey = geminiApiKey,
-        _httpClient = httpClient ?? http.Client();
+  }) : _geminiApiKey = geminiApiKey,
+       _httpClient = httpClient ?? http.Client();
 
   Future<String?> _callGemini(String text) async {
     if (_geminiApiKey.isEmpty) return null;
@@ -62,15 +64,30 @@ class AIOrchestratorService {
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
       );
       // [Phase 3] 使用实例级 client（关闭 client 即可终止此会话的请求）
-      final response = await _httpClient.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'system_instruction': {'parts': [{'text': 'You are a professional translator. Translate the following English to Chinese. Output ONLY the Chinese translation, no explanations.'}]},
-          'contents': [{'parts': [{'text': text}]}],
-          'generationConfig': {'temperature': 0.1},
-        }),
-      ).timeout(const Duration(seconds: 30));
+      final response = await _httpClient
+          .post(
+            url,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'system_instruction': {
+                'parts': [
+                  {
+                    'text':
+                        'You are a professional translator. Translate the following English to Chinese. Output ONLY the Chinese translation, no explanations.',
+                  },
+                ],
+              },
+              'contents': [
+                {
+                  'parts': [
+                    {'text': text},
+                  ],
+                },
+              ],
+              'generationConfig': {'temperature': 0.1},
+            }),
+          )
+          .timeout(const Duration(seconds: 30));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         final candidates = data['candidates'] as List?;
@@ -78,7 +95,8 @@ class AIOrchestratorService {
           final parts = candidates[0]['content']?['parts'] as List?;
           if (parts != null && parts.isNotEmpty) {
             final result = parts[0]['text'] as String?;
-            if (result != null && result.trim().isNotEmpty) return result.trim();
+            if (result != null && result.trim().isNotEmpty)
+              return result.trim();
           }
         }
       }
@@ -86,6 +104,70 @@ class AIOrchestratorService {
       debugPrint('[Orchestrator Gemini] Error: $e');
     }
     return null;
+  }
+
+  /// Uses the session-scoped Gemini connection as a provider-independent
+  /// fallback for final reviews. No transcript or response body is logged.
+  Future<String?> generateSummaryWithGemini({
+    required String systemPrompt,
+    required String userMessage,
+    int maxOutputTokens = 2400,
+  }) async {
+    if (_geminiApiKey.isEmpty || _isDisposed) return null;
+    try {
+      final url = Uri.parse(
+        'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
+      );
+      final response = await _httpClient
+          .post(
+            url,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'system_instruction': {
+                'parts': [
+                  {'text': systemPrompt},
+                ],
+              },
+              'contents': [
+                {
+                  'parts': [
+                    {'text': userMessage},
+                  ],
+                },
+              ],
+              'generationConfig': {
+                'temperature': 0.15,
+                'maxOutputTokens': maxOutputTokens,
+              },
+            }),
+          )
+          .timeout(const Duration(seconds: 120));
+      if (response.statusCode != 200) {
+        debugPrint(
+          '[Orchestrator Gemini Summary] Failed status ${response.statusCode}',
+        );
+        return null;
+      }
+
+      final data = jsonDecode(response.body);
+      final candidates = data['candidates'] as List?;
+      if (candidates == null || candidates.isEmpty) return null;
+      final parts = candidates[0]['content']?['parts'] as List?;
+      if (parts == null || parts.isEmpty) return null;
+      final text = parts
+          .map((part) => part is Map ? part['text'] : null)
+          .whereType<String>()
+          .join('\n')
+          .replaceAll(RegExp(r'```[a-zA-Z]*\n?|```'), '')
+          .trim();
+      return text.isEmpty ? null : text;
+    } on TimeoutException {
+      debugPrint('[Orchestrator Gemini Summary] Timeout');
+      return null;
+    } catch (error) {
+      debugPrint('[Orchestrator Gemini Summary] Error: ${error.runtimeType}');
+      return null;
+    }
   }
 
   /// [STT 降级兜底] 当 Groq STT 失败/429/超时，调用 Gemini 2.5 Flash 进行多模态音频转写
@@ -102,34 +184,36 @@ class AIOrchestratorService {
         'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=$_geminiApiKey',
       );
       // [Phase 3] 使用实例级 client
-      final response = await _httpClient.post(
-        url,
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({
-          'system_instruction': {
-            'parts': [
-              {
-                'text':
-                    'You are an expert English speech-to-text transcriber. Transcribe the given audio slice into raw English text. Output ONLY the clean transcribed English text with no markdown, no quotes, no explanations, and no conversational filler. If the audio contains only silence or background noise, output NOTHING.'
-              }
-            ]
-          },
-          'contents': [
-            {
-              'parts': [
+      final response = await _httpClient
+          .post(
+            url,
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'system_instruction': {
+                'parts': [
+                  {
+                    'text':
+                        'You are an expert English speech-to-text transcriber. Transcribe the given audio slice into raw English text. Output ONLY the clean transcribed English text with no markdown, no quotes, no explanations, and no conversational filler. If the audio contains only silence or background noise, output NOTHING.',
+                  },
+                ],
+              },
+              'contents': [
                 {
-                  'inline_data': {
-                    'mime_type': 'audio/wav',
-                    'data': base64Audio,
-                  }
+                  'parts': [
+                    {
+                      'inline_data': {
+                        'mime_type': 'audio/wav',
+                        'data': base64Audio,
+                      },
+                    },
+                    {'text': 'Transcribe this English audio recording slice.'},
+                  ],
                 },
-                {'text': 'Transcribe this English audio recording slice.'}
-              ]
-            }
-          ],
-          'generationConfig': {'temperature': 0.1},
-        }),
-      ).timeout(const Duration(seconds: 25));
+              ],
+              'generationConfig': {'temperature': 0.1},
+            }),
+          )
+          .timeout(const Duration(seconds: 25));
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
@@ -151,7 +235,9 @@ class AIOrchestratorService {
           }
         }
       } else {
-        debugPrint('[Orchestrator Gemini STT] Failed status ${response.statusCode}: ${response.body}');
+        debugPrint(
+          '[Orchestrator Gemini STT] Failed status ${response.statusCode}: ${response.body}',
+        );
       }
     } catch (e) {
       debugPrint('[Orchestrator Gemini STT] Error: $e');
@@ -172,15 +258,17 @@ class AIOrchestratorService {
   List<Map<String, String>>? _latestHistory;
 
   Future<void> processAudioSegment(
-    String noteId, 
-    String filePath, 
-    {String? context, List<Map<String, String>>? translationHistory, Function(String)? onStatus}
-  ) async {
+    String noteId,
+    String filePath, {
+    String? context,
+    List<Map<String, String>>? translationHistory,
+    Function(String)? onStatus,
+  }) async {
     if (_isDisposed) return;
     _latestHistory = translationHistory;
     try {
       onStatus?.call("STT requesting...");
-      
+
       // 1. STT 阶段（快车道）：Groq 主服务 → Gemini 2.5 Flash 自动降级兜底
       String? rawEnglish;
       try {
@@ -190,7 +278,9 @@ class AIOrchestratorService {
           sessionId: sessionId,
         );
       } catch (sttErr) {
-        debugPrint("[Orchestrator STT] Main Groq STT failed: $sttErr. Trying Gemini 2.5 Flash fallback...");
+        debugPrint(
+          "[Orchestrator STT] Main Groq STT failed: $sttErr. Trying Gemini 2.5 Flash fallback...",
+        );
         onStatus?.call("STT failover to Gemini...");
         rawEnglish = await _transcribeGemini(filePath);
       }
@@ -213,13 +303,16 @@ class AIOrchestratorService {
         _addFastEnglish(PipelineResult(noteId, "[Silence]"));
         return;
       }
-      
+
       onStatus?.call("Cleaning text...");
       String cleanEnglish = await compute(TextSanitizer.clean, rawEnglish);
-      
+
       // 2. 去重逻辑
       if (context != null && context.isNotEmpty && context != "...") {
-        final merged = TextSanitizer.mergeOverlappingText(context, cleanEnglish);
+        final merged = TextSanitizer.mergeOverlappingText(
+          context,
+          cleanEnglish,
+        );
         if (merged.length > context.length) {
           cleanEnglish = merged.substring(context.length).trim();
         }
@@ -245,16 +338,16 @@ class AIOrchestratorService {
         // 非阻塞：启动翻译，不阻断 STT 快车道
         unawaited(_processTranslationBatch(onStatus: onStatus));
       } else {
-        onStatus?.call("Buffering... (${_translationBuffer.length}/$batchSize)");
+        onStatus?.call(
+          "Buffering... (${_translationBuffer.length}/$batchSize)",
+        );
       }
-
     } catch (e, st) {
       debugPrint("[Orchestrator Error $noteId] $e\n$st");
       onStatus?.call("Pipeline Error");
       _addFastEnglish(PipelineResult(noteId, "[Error:$e]"));
     }
   }
-
 
   Future<void> _processTranslationBatch({Function(String)? onStatus}) async {
     if (_translationBuffer.isEmpty || _isTranslating || _isDisposed) return;
@@ -266,49 +359,60 @@ class AIOrchestratorService {
     _translationBuffer.clear();
     _bufferIds.clear();
 
-
     try {
       // [Fix] 先做 TerminologyInterceptor，用安全的方式，任何异常都有降级
       String fullEnglish = batch.join(" ");
-      
+
       String textToTranslate;
       Map<String, String> lookupTable;
-      
+
       try {
         final interceptResult = TerminologyInterceptor.encode(fullEnglish);
         textToTranslate = interceptResult.safeText;
         lookupTable = interceptResult.lookupTable;
       } catch (e) {
         // TerminologyInterceptor 失败时降级：直接翻译原始英文
-        debugPrint("[Orchestrator] TerminologyInterceptor failed, using raw text: $e");
+        debugPrint(
+          "[Orchestrator] TerminologyInterceptor failed, using raw text: $e",
+        );
         textToTranslate = fullEnglish;
         lookupTable = {};
       }
 
       if (_isDisposed) return;
       onStatus?.call("Calling translation API...");
-      
+
       String translatedText;
       try {
         translatedText = await ApiScheduler().enqueue(
-          () => translationService.translate(textToTranslate, history: _latestHistory),
+          () => translationService.translate(
+            textToTranslate,
+            history: _latestHistory,
+          ),
           priority: 1,
           sessionId: sessionId,
         );
       } catch (mainError) {
-        debugPrint("[Orchestrator] Main translation service failed: $mainError");
+        debugPrint(
+          "[Orchestrator] Main translation service failed: $mainError",
+        );
         bool geminiTried = false;
         if (translationFallbackService != null) {
           try {
             onStatus?.call("Main failed. Using fallback...");
             debugPrint("[Orchestrator] Attempting translation fallback...");
             translatedText = await ApiScheduler().enqueue(
-              () => translationFallbackService!.translate(textToTranslate, history: _latestHistory),
+              () => translationFallbackService!.translate(
+                textToTranslate,
+                history: _latestHistory,
+              ),
               priority: 1,
               sessionId: sessionId,
             );
           } catch (fallbackError) {
-            debugPrint("[Orchestrator] Fallback also failed, trying Gemini: $fallbackError");
+            debugPrint(
+              "[Orchestrator] Fallback also failed, trying Gemini: $fallbackError",
+            );
             onStatus?.call("Fallback failed. Trying Gemini...");
             final geminiResult = await _callGemini(textToTranslate);
             if (geminiResult != null) {
@@ -340,12 +444,12 @@ class AIOrchestratorService {
       if (_isDisposed) return;
 
       // 还原术语
-      final finalChinese = lookupTable.isEmpty 
-          ? translatedText 
+      final finalChinese = lookupTable.isEmpty
+          ? translatedText
           : TerminologyInterceptor.decode(translatedText, lookupTable);
 
       onStatus?.call("Chinese ready");
-      
+
       // [Architect: Batch Distribution] 将翻译后的完整段落按比例分割回填给 batch 内每个 noteId
       final sentences = finalChinese
           .split(RegExp(r'(?<=[。！？.!?])\s*'))
@@ -372,7 +476,6 @@ class AIOrchestratorService {
           }
         }
       }
-      
     } catch (e) {
       debugPrint("[Translation Batch Error] $e");
       onStatus?.call("Translation failed");
@@ -421,19 +524,25 @@ class AIOrchestratorService {
         _translationBatchCompleter ??= Completer<void>();
         final remaining = timeout - stopwatch.elapsed;
         if (remaining <= Duration.zero) {
-          throw TimeoutException('Orchestrator translation batch timed out for session $sessionId');
+          throw TimeoutException(
+            'Orchestrator translation batch timed out for session $sessionId',
+          );
         }
         try {
           await _translationBatchCompleter!.future.timeout(remaining);
         } on TimeoutException {
-          throw TimeoutException('Orchestrator translation batch timed out for session $sessionId');
+          throw TimeoutException(
+            'Orchestrator translation batch timed out for session $sessionId',
+          );
         }
       }
 
       // 3. 等待 ApiScheduler 中该 session 的所有排队与在途 Future settle
       final remaining = timeout - stopwatch.elapsed;
       if (remaining <= Duration.zero) {
-        throw TimeoutException('ApiScheduler drain timed out for session $sessionId');
+        throw TimeoutException(
+          'ApiScheduler drain timed out for session $sessionId',
+        );
       }
 
       await ApiScheduler().drain(sessionId, timeout: remaining);

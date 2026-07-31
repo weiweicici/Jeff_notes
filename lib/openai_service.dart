@@ -210,6 +210,11 @@ class OpenAIService {
     if (_isDisposed) throw Exception("Service disposed");
     try {
       final url = Uri.parse("$baseUrl/chat/completions");
+      final maxTokens = strategy == PromptStrategy.recap
+          ? mode == AppMode.lecture
+                ? 1800
+                : 4096
+          : 1600;
       final response = await _client
           .post(
             url,
@@ -232,7 +237,7 @@ class OpenAIService {
                 {'role': 'user', 'content': text},
               ],
               'temperature': strategy == PromptStrategy.recap ? 0.15 : 0.2,
-              'max_tokens': strategy == PromptStrategy.recap ? 4096 : 1600,
+              'max_tokens': maxTokens,
             }),
           )
           .timeout(
