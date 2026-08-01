@@ -10,6 +10,7 @@ import '../utils/pdf_service.dart';
 import '../services/reading_quiz_service.dart';
 import '../widgets/academic_markdown.dart';
 import '../widgets/tts_player_bar.dart';
+import '../widgets/tap_page_turn_region.dart';
 import '../services/supabase_config.dart';
 import '../services/tts_service.dart';
 import '../services/vocab_service.dart';
@@ -114,28 +115,14 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     );
   }
 
-  Future<void> _pageForward() async {
+  void _saveCurrentReadingOffset() {
     if (!_scrollController.hasClients) return;
-    final position = _scrollController.position;
-    final maxScroll = position.maxScrollExtent;
-    if (position.pixels >= maxScroll - 1) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('已到末页'), duration: Duration(seconds: 1)),
-        );
-      }
-      return;
-    }
-    final target = (position.pixels + position.viewportDimension * 0.88).clamp(
-      0.0,
-      maxScroll,
+    unawaited(
+      _recordingProvider.saveReadingOffset(
+        widget.file.path,
+        _scrollController.position.pixels,
+      ),
     );
-    await _scrollController.animateTo(
-      target,
-      duration: const Duration(milliseconds: 180),
-      curve: Curves.easeOut,
-    );
-    unawaited(_recordingProvider.saveReadingOffset(widget.file.path, target));
   }
 
   void _startAutoScrollTimer() {
@@ -871,9 +858,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
               ),
               Expanded(
                 child: _showRendered
-                    ? GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _pageForward,
+                    ? TapPageTurnRegion(
+                        controller: _scrollController,
+                        onPageChanged: _saveCurrentReadingOffset,
                         child: ListView.builder(
                           controller: _scrollController,
                           padding: const EdgeInsets.fromLTRB(20, 12, 20, 48),
@@ -915,9 +902,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                           },
                         ),
                       )
-                    : GestureDetector(
-                        behavior: HitTestBehavior.opaque,
-                        onTap: _pageForward,
+                    : TapPageTurnRegion(
+                        controller: _scrollController,
+                        onPageChanged: _saveCurrentReadingOffset,
                         child: SingleChildScrollView(
                           controller: _scrollController,
                           padding: const EdgeInsets.fromLTRB(24, 12, 24, 48),

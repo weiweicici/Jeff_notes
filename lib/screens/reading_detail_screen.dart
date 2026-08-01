@@ -8,6 +8,7 @@ import '../widgets/academic_markdown.dart';
 import '../services/reading_quiz_service.dart';
 import '../services/supabase_config.dart';
 import '../services/reading_content_parser.dart';
+import '../widgets/tap_page_turn_region.dart';
 
 class ReadingDetailScreen extends StatefulWidget {
   final String id;
@@ -39,6 +40,7 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
   bool _loadingParaphrase = false;
   bool _showRendered = false;
   final _textController = TextEditingController();
+  final _scrollController = ScrollController();
   String _selectedPlainText = '';
 
   late String _title;
@@ -53,6 +55,7 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
   @override
   void dispose() {
     _textController.dispose();
+    _scrollController.dispose();
     super.dispose();
   }
 
@@ -390,51 +393,206 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // 原文
-            if (_showRendered)
-              SelectionArea(
-                onSelectionChanged: (content) {
-                  _selectedPlainText = content?.plainText ?? '';
-                },
-                contextMenuBuilder: (context, selectableRegionState) {
-                  // ✅ 关键：在此处立即捕获选中文本。
-                  // contextMenuBuilder 在选中状态仍然有效时被调用；
-                  // 而 onPressed 触发时 iOS 已清空选中（onSelectionChanged 会把
-                  // _selectedPlainText 置空），所以必须在这里用 final 固定住文本。
-                  final capturedText = _selectedPlainText;
+      body: TapPageTurnRegion(
+        controller: _scrollController,
+        child: SingleChildScrollView(
+          controller: _scrollController,
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              // 原文
+              if (_showRendered)
+                SelectionArea(
+                  onSelectionChanged: (content) {
+                    _selectedPlainText = content?.plainText ?? '';
+                  },
+                  contextMenuBuilder: (context, selectableRegionState) {
+                    // ✅ 关键：在此处立即捕获选中文本。
+                    // contextMenuBuilder 在选中状态仍然有效时被调用；
+                    // 而 onPressed 触发时 iOS 已清空选中（onSelectionChanged 会把
+                    // _selectedPlainText 置空），所以必须在这里用 final 固定住文本。
+                    final capturedText = _selectedPlainText;
 
-                  return AdaptiveTextSelectionToolbar.buttonItems(
-                    anchors: selectableRegionState.contextMenuAnchors,
-                    buttonItems: [
-                      if (capturedText.isNotEmpty) ...[
-                        ContextMenuButtonItem(
-                          label: '翻译',
-                          onPressed: () {
-                            selectableRegionState.clearSelection();
-                            _handleTranslateSelection(capturedText);
-                          },
-                        ),
-                        ContextMenuButtonItem(
-                          label: '转述',
-                          onPressed: () {
-                            selectableRegionState.clearSelection();
-                            _handleParaphraseSelection(capturedText);
-                          },
-                        ),
+                    return AdaptiveTextSelectionToolbar.buttonItems(
+                      anchors: selectableRegionState.contextMenuAnchors,
+                      buttonItems: [
+                        if (capturedText.isNotEmpty) ...[
+                          ContextMenuButtonItem(
+                            label: '翻译',
+                            onPressed: () {
+                              selectableRegionState.clearSelection();
+                              _handleTranslateSelection(capturedText);
+                            },
+                          ),
+                          ContextMenuButtonItem(
+                            label: '转述',
+                            onPressed: () {
+                              selectableRegionState.clearSelection();
+                              _handleParaphraseSelection(capturedText);
+                            },
+                          ),
+                        ],
+                        ...selectableRegionState.contextMenuButtonItems,
                       ],
-                      ...selectableRegionState.contextMenuButtonItems,
-                    ],
-                  );
-                },
-                child: MarkdownBody(
-                  data: widget.contentMd,
+                    );
+                  },
+                  child: MarkdownBody(
+                    data: widget.contentMd,
+                    softLineBreak: true,
+                    selectable: false,
+                    styleSheet: getAcademicMarkdownStyle(context),
+                    extensionSet: md.ExtensionSet(
+                      [const md.FencedCodeBlockSyntax()],
+                      [md.EmojiSyntax(), HighlightSyntax()],
+                    ),
+                    builders: {'highlight': HighlightBuilder(context)},
+                  ),
+                )
+              else
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      width: double.infinity,
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Theme.of(
+                          context,
+                        ).colorScheme.surfaceContainerHighest.withAlpha(80),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: TextField(
+                        controller: _textController,
+                        readOnly: true,
+                        maxLines: null,
+                        style: const TextStyle(
+                          fontFamily: 'Menlo',
+                          fontSize: 13,
+                          height: 1.5,
+                        ),
+                        decoration: const InputDecoration(
+                          border: InputBorder.none,
+                          isDense: true,
+                          contentPadding: EdgeInsets.zero,
+                        ),
+                        contextMenuBuilder: (context, editableTextState) {
+                          final text = editableTextState.textEditingValue.text;
+                          final sel =
+                              editableTextState.textEditingValue.selection;
+                          final selectedText =
+                              sel.isValid && sel.start != sel.end
+                              ? text.substring(sel.start, sel.end)
+                              : '';
+                          debugPrint(
+                            '[ReadingDetail] TextField contextMenuBuilder, selectedText length=${selectedText.length}',
+                          );
+                          return AdaptiveTextSelectionToolbar.buttonItems(
+                            anchors: editableTextState.contextMenuAnchors,
+                            buttonItems: [
+                              if (selectedText.isNotEmpty) ...[
+                                ContextMenuButtonItem(
+                                  label: '翻译',
+                                  onPressed: () {
+                                    editableTextState.hideToolbar();
+                                    _handleTranslateSelection(selectedText);
+                                  },
+                                ),
+                                ContextMenuButtonItem(
+                                  label: '转述',
+                                  onPressed: () {
+                                    editableTextState.hideToolbar();
+                                    _handleParaphraseSelection(selectedText);
+                                  },
+                                ),
+                              ],
+                              ...editableTextState.contextMenuButtonItems,
+                            ],
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              const SizedBox(height: 24),
+              // 第一行按钮
+              Row(
+                children: [
+                  Expanded(
+                    child: _actionBtn(
+                      icon: Icons.quiz,
+                      label: 'AI 出题',
+                      loading: _loadingQuiz,
+                      onPressed: _generateQuiz,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _actionBtn(
+                      icon: Icons.summarize,
+                      label: '摘要',
+                      loading: _loadingSummary,
+                      onPressed: _getSummary,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _actionBtn(
+                      icon: Icons.book,
+                      label: '生词',
+                      loading: _loadingVocab,
+                      onPressed: _getVocabulary,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              // 第二行按钮
+              Row(
+                children: [
+                  Expanded(
+                    child: _actionBtn(
+                      icon: Icons.translate,
+                      label: '翻译',
+                      loading: _loadingTranslation,
+                      onPressed: _openTranslateSheet,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: _actionBtn(
+                      icon: Icons.replay,
+                      label: '转述',
+                      loading: _loadingParaphrase,
+                      onPressed: _openParaphraseSheet,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TapPageTurnIgnore(
+                      child: OutlinedButton.icon(
+                        onPressed: _exportMarkdown,
+                        icon: const Icon(Icons.file_download, size: 18),
+                        label: const Text('导出', style: TextStyle(fontSize: 13)),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+              // 结果区域
+              if (_translationResult != null) ...[
+                const Divider(),
+                _sectionHeader(
+                  '中文翻译',
+                  Icons.translate,
+                  () => setState(() => _translationResult = null),
+                ),
+                const SizedBox(height: 8),
+                MarkdownBody(
+                  data: _translationResult!,
                   softLineBreak: true,
-                  selectable: false,
+                  selectable: true,
                   styleSheet: getAcademicMarkdownStyle(context),
                   extensionSet: md.ExtensionSet(
                     [const md.FencedCodeBlockSyntax()],
@@ -442,242 +600,94 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
                   ),
                   builders: {'highlight': HighlightBuilder(context)},
                 ),
-              )
-            else
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12),
-                    decoration: BoxDecoration(
-                      color: Theme.of(
-                        context,
-                      ).colorScheme.surfaceContainerHighest.withAlpha(80),
-                      borderRadius: BorderRadius.circular(8),
-                    ),
-                    child: TextField(
-                      controller: _textController,
-                      readOnly: true,
-                      maxLines: null,
-                      style: const TextStyle(
-                        fontFamily: 'Menlo',
-                        fontSize: 13,
-                        height: 1.5,
-                      ),
-                      decoration: const InputDecoration(
-                        border: InputBorder.none,
-                        isDense: true,
-                        contentPadding: EdgeInsets.zero,
-                      ),
-                      contextMenuBuilder: (context, editableTextState) {
-                        final text = editableTextState.textEditingValue.text;
-                        final sel =
-                            editableTextState.textEditingValue.selection;
-                        final selectedText = sel.isValid && sel.start != sel.end
-                            ? text.substring(sel.start, sel.end)
-                            : '';
-                        debugPrint(
-                          '[ReadingDetail] TextField contextMenuBuilder, selectedText length=${selectedText.length}',
-                        );
-                        return AdaptiveTextSelectionToolbar.buttonItems(
-                          anchors: editableTextState.contextMenuAnchors,
-                          buttonItems: [
-                            if (selectedText.isNotEmpty) ...[
-                              ContextMenuButtonItem(
-                                label: '翻译',
-                                onPressed: () {
-                                  editableTextState.hideToolbar();
-                                  _handleTranslateSelection(selectedText);
-                                },
-                              ),
-                              ContextMenuButtonItem(
-                                label: '转述',
-                                onPressed: () {
-                                  editableTextState.hideToolbar();
-                                  _handleParaphraseSelection(selectedText);
-                                },
-                              ),
-                            ],
-                            ...editableTextState.contextMenuButtonItems,
-                          ],
-                        );
-                      },
-                    ),
-                  ),
-                ],
-              ),
-            const SizedBox(height: 24),
-            // 第一行按钮
-            Row(
-              children: [
-                Expanded(
-                  child: _actionBtn(
-                    icon: Icons.quiz,
-                    label: 'AI 出题',
-                    loading: _loadingQuiz,
-                    onPressed: _generateQuiz,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _actionBtn(
-                    icon: Icons.summarize,
-                    label: '摘要',
-                    loading: _loadingSummary,
-                    onPressed: _getSummary,
-                  ),
-                ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _actionBtn(
-                    icon: Icons.book,
-                    label: '生词',
-                    loading: _loadingVocab,
-                    onPressed: _getVocabulary,
-                  ),
-                ),
+                const SizedBox(height: 16),
               ],
-            ),
-            const SizedBox(height: 8),
-            // 第二行按钮
-            Row(
-              children: [
-                Expanded(
-                  child: _actionBtn(
-                    icon: Icons.translate,
-                    label: '翻译',
-                    loading: _loadingTranslation,
-                    onPressed: _openTranslateSheet,
-                  ),
+              if (_paraphraseResult != null) ...[
+                const Divider(),
+                _sectionHeader(
+                  '转述',
+                  Icons.replay,
+                  () => setState(() => _paraphraseResult = null),
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: _actionBtn(
-                    icon: Icons.replay,
-                    label: '转述',
-                    loading: _loadingParaphrase,
-                    onPressed: _openParaphraseSheet,
+                const SizedBox(height: 8),
+                MarkdownBody(
+                  data: _paraphraseResult!,
+                  softLineBreak: true,
+                  selectable: true,
+                  styleSheet: getAcademicMarkdownStyle(context),
+                  extensionSet: md.ExtensionSet(
+                    [const md.FencedCodeBlockSyntax()],
+                    [md.EmojiSyntax(), HighlightSyntax()],
                   ),
+                  builders: {'highlight': HighlightBuilder(context)},
                 ),
-                const SizedBox(width: 8),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _exportMarkdown,
-                    icon: const Icon(Icons.file_download, size: 18),
-                    label: const Text('导出', style: TextStyle(fontSize: 13)),
-                  ),
-                ),
+                const SizedBox(height: 16),
               ],
-            ),
-            const SizedBox(height: 24),
-            // 结果区域
-            if (_translationResult != null) ...[
-              const Divider(),
-              _sectionHeader(
-                '中文翻译',
-                Icons.translate,
-                () => setState(() => _translationResult = null),
-              ),
-              const SizedBox(height: 8),
-              MarkdownBody(
-                data: _translationResult!,
-                softLineBreak: true,
-                selectable: true,
-                styleSheet: getAcademicMarkdownStyle(context),
-                extensionSet: md.ExtensionSet(
-                  [const md.FencedCodeBlockSyntax()],
-                  [md.EmojiSyntax(), HighlightSyntax()],
+              if (_quizResult != null) ...[
+                const Divider(),
+                _sectionHeader(
+                  '阅读理解题',
+                  Icons.quiz,
+                  () => setState(() => _quizResult = null),
                 ),
-                builders: {'highlight': HighlightBuilder(context)},
-              ),
-              const SizedBox(height: 16),
-            ],
-            if (_paraphraseResult != null) ...[
-              const Divider(),
-              _sectionHeader(
-                '转述',
-                Icons.replay,
-                () => setState(() => _paraphraseResult = null),
-              ),
-              const SizedBox(height: 8),
-              MarkdownBody(
-                data: _paraphraseResult!,
-                softLineBreak: true,
-                selectable: true,
-                styleSheet: getAcademicMarkdownStyle(context),
-                extensionSet: md.ExtensionSet(
-                  [const md.FencedCodeBlockSyntax()],
-                  [md.EmojiSyntax(), HighlightSyntax()],
+                const SizedBox(height: 8),
+                MarkdownBody(
+                  data: _quizResult!,
+                  softLineBreak: true,
+                  selectable: true,
+                  styleSheet: getAcademicMarkdownStyle(context),
+                  extensionSet: md.ExtensionSet(
+                    [const md.FencedCodeBlockSyntax()],
+                    [md.EmojiSyntax(), HighlightSyntax()],
+                  ),
+                  builders: {'highlight': HighlightBuilder(context)},
                 ),
-                builders: {'highlight': HighlightBuilder(context)},
-              ),
-              const SizedBox(height: 16),
-            ],
-            if (_quizResult != null) ...[
-              const Divider(),
-              _sectionHeader(
-                '阅读理解题',
-                Icons.quiz,
-                () => setState(() => _quizResult = null),
-              ),
-              const SizedBox(height: 8),
-              MarkdownBody(
-                data: _quizResult!,
-                softLineBreak: true,
-                selectable: true,
-                styleSheet: getAcademicMarkdownStyle(context),
-                extensionSet: md.ExtensionSet(
-                  [const md.FencedCodeBlockSyntax()],
-                  [md.EmojiSyntax(), HighlightSyntax()],
+                const SizedBox(height: 16),
+              ],
+              if (_summaryResult != null) ...[
+                const Divider(),
+                _sectionHeader(
+                  '全文摘要',
+                  Icons.summarize,
+                  () => setState(() => _summaryResult = null),
                 ),
-                builders: {'highlight': HighlightBuilder(context)},
-              ),
-              const SizedBox(height: 16),
-            ],
-            if (_summaryResult != null) ...[
-              const Divider(),
-              _sectionHeader(
-                '全文摘要',
-                Icons.summarize,
-                () => setState(() => _summaryResult = null),
-              ),
-              const SizedBox(height: 8),
-              MarkdownBody(
-                data: _summaryResult!,
-                softLineBreak: true,
-                selectable: true,
-                styleSheet: getAcademicMarkdownStyle(context),
-                extensionSet: md.ExtensionSet(
-                  [const md.FencedCodeBlockSyntax()],
-                  [md.EmojiSyntax(), HighlightSyntax()],
+                const SizedBox(height: 8),
+                MarkdownBody(
+                  data: _summaryResult!,
+                  softLineBreak: true,
+                  selectable: true,
+                  styleSheet: getAcademicMarkdownStyle(context),
+                  extensionSet: md.ExtensionSet(
+                    [const md.FencedCodeBlockSyntax()],
+                    [md.EmojiSyntax(), HighlightSyntax()],
+                  ),
+                  builders: {'highlight': HighlightBuilder(context)},
                 ),
-                builders: {'highlight': HighlightBuilder(context)},
-              ),
-              const SizedBox(height: 16),
-            ],
-            if (_vocabResult != null) ...[
-              const Divider(),
-              _sectionHeader(
-                '核心词汇',
-                Icons.book,
-                () => setState(() => _vocabResult = null),
-              ),
-              const SizedBox(height: 8),
-              MarkdownBody(
-                data: _vocabResult!,
-                softLineBreak: true,
-                selectable: true,
-                styleSheet: getAcademicMarkdownStyle(context),
-                extensionSet: md.ExtensionSet(
-                  [const md.FencedCodeBlockSyntax()],
-                  [md.EmojiSyntax(), HighlightSyntax()],
+                const SizedBox(height: 16),
+              ],
+              if (_vocabResult != null) ...[
+                const Divider(),
+                _sectionHeader(
+                  '核心词汇',
+                  Icons.book,
+                  () => setState(() => _vocabResult = null),
                 ),
-                builders: {'highlight': HighlightBuilder(context)},
-              ),
-              const SizedBox(height: 16),
+                const SizedBox(height: 8),
+                MarkdownBody(
+                  data: _vocabResult!,
+                  softLineBreak: true,
+                  selectable: true,
+                  styleSheet: getAcademicMarkdownStyle(context),
+                  extensionSet: md.ExtensionSet(
+                    [const md.FencedCodeBlockSyntax()],
+                    [md.EmojiSyntax(), HighlightSyntax()],
+                  ),
+                  builders: {'highlight': HighlightBuilder(context)},
+                ),
+                const SizedBox(height: 16),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -689,18 +699,20 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
     required bool loading,
     required VoidCallback onPressed,
   }) {
-    return FilledButton.tonalIcon(
-      onPressed: loading ? null : onPressed,
-      icon: loading
-          ? const SizedBox(
-              width: 16,
-              height: 16,
-              child: CircularProgressIndicator(strokeWidth: 2),
-            )
-          : Icon(icon, size: 18),
-      label: Text(
-        loading ? '...' : label,
-        style: const TextStyle(fontSize: 13),
+    return TapPageTurnIgnore(
+      child: FilledButton.tonalIcon(
+        onPressed: loading ? null : onPressed,
+        icon: loading
+            ? const SizedBox(
+                width: 16,
+                height: 16,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            : Icon(icon, size: 18),
+        label: Text(
+          loading ? '...' : label,
+          style: const TextStyle(fontSize: 13),
+        ),
       ),
     );
   }
@@ -715,10 +727,12 @@ class _ReadingDetailScreenState extends State<ReadingDetailScreen> {
           style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
         ),
         const Spacer(),
-        IconButton(
-          icon: const Icon(Icons.close, size: 18),
-          onPressed: onDismiss,
-          tooltip: '关闭',
+        TapPageTurnIgnore(
+          child: IconButton(
+            icon: const Icon(Icons.close, size: 18),
+            onPressed: onDismiss,
+            tooltip: '关闭',
+          ),
         ),
       ],
     );

@@ -4,6 +4,7 @@ import 'package:markdown/markdown.dart' as md;
 import '../models.dart';
 import '../services/grammar_service.dart';
 import '../widgets/academic_markdown.dart';
+import '../widgets/tap_page_turn_region.dart';
 import 'grammar_writing_screen.dart';
 
 class GrammarDetailScreen extends StatefulWidget {
@@ -18,6 +19,13 @@ class _GrammarDetailScreenState extends State<GrammarDetailScreen> {
   bool _isLoading = false;
   String _result = '';
   String _resultTitle = '';
+  final _scrollController = ScrollController();
+
+  @override
+  void dispose() {
+    _scrollController.dispose();
+    super.dispose();
+  }
 
   Future<void> _generateExercise() async {
     setState(() {
@@ -26,7 +34,11 @@ class _GrammarDetailScreenState extends State<GrammarDetailScreen> {
       _resultTitle = '📝 练习题';
     });
     final result = await GrammarService.generateExercise(widget.unit);
-    if (mounted) setState(() { _result = result; _isLoading = false; });
+    if (mounted)
+      setState(() {
+        _result = result;
+        _isLoading = false;
+      });
     if (mounted && !context.mounted) return;
     if (mounted) _showResult();
   }
@@ -47,7 +59,10 @@ class _GrammarDetailScreenState extends State<GrammarDetailScreen> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
           ElevatedButton(
             onPressed: () async {
               final q = controller.text.trim();
@@ -59,7 +74,11 @@ class _GrammarDetailScreenState extends State<GrammarDetailScreen> {
                 _resultTitle = '💬 回答';
               });
               final result = await GrammarService.askQuestion(widget.unit, q);
-              if (mounted) setState(() { _result = result; _isLoading = false; });
+              if (mounted)
+                setState(() {
+                  _result = result;
+                  _isLoading = false;
+                });
               if (mounted) _showResult();
             },
             child: const Text('提问'),
@@ -85,7 +104,10 @@ class _GrammarDetailScreenState extends State<GrammarDetailScreen> {
           ),
         ),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('取消')),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('取消'),
+          ),
           ElevatedButton(
             onPressed: () async {
               final s = controller.text.trim();
@@ -97,7 +119,11 @@ class _GrammarDetailScreenState extends State<GrammarDetailScreen> {
                 _resultTitle = '✏️ 批改结果';
               });
               final result = await GrammarService.correctSentence(s);
-              if (mounted) setState(() { _result = result; _isLoading = false; });
+              if (mounted)
+                setState(() {
+                  _result = result;
+                  _isLoading = false;
+                });
               if (mounted) _showResult();
             },
             child: const Text('检查'),
@@ -154,98 +180,103 @@ class _GrammarDetailScreenState extends State<GrammarDetailScreen> {
       appBar: AppBar(
         title: Text(unit.title, style: const TextStyle(fontSize: 16)),
       ),
-      body: SingleChildScrollView(
-        padding: const EdgeInsets.fromLTRB(20, 16, 20, 80),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Outcomes
-            _sectionHeader('🎯 学习目标', isDark),
-            _markdownBlock(unit.outcomes, isDark),
-            const SizedBox(height: 12),
-            _actionButton(
-              icon: Icons.edit,
-              label: '✍️ 写作练习',
-              onTap: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(
-                    builder: (context) => GrammarWritingScreen(unit: widget.unit),
-                  ),
-                );
-              },
-              color: Colors.green,
-              isDark: isDark,
-            ),
-            const SizedBox(height: 24),
-
-            // Grammar Chart
-            _sectionHeader('📊 语法形式表', isDark),
-            _markdownBlock(unit.chart, isDark),
-            const SizedBox(height: 24),
-
-            // Chinese Guide
-            _sectionHeader('🇨🇳 中文对比解析', isDark),
-            _markdownBlock(unit.chineseGuide, isDark),
-            const SizedBox(height: 24),
-
-            // Key Rules
-            _sectionHeader('⚡ 核心规则', isDark),
-            _markdownBlock(unit.keyRules, isDark),
-            const SizedBox(height: 24),
-
-            // Common Mistakes
-            _sectionHeader('❌ 常犯错误', isDark),
-            _markdownBlock(unit.commonMistakes, isDark),
-            const SizedBox(height: 24),
-
-            // Vocabulary
-            _sectionHeader('📝 本节词汇', isDark),
-            _markdownBlock(unit.vocabulary, isDark),
-            const SizedBox(height: 32),
-
-            // AI Action Buttons
-            _sectionHeader('🤖 AI 辅助', isDark),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: _actionButton(
-                    icon: Icons.edit_note,
-                    label: '生成练习',
-                    onTap: _generateExercise,
-                    color: Colors.blue,
-                    isDark: isDark,
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _actionButton(
-                    icon: Icons.help_outline,
-                    label: '提问',
-                    onTap: _showAskQuestion,
-                    color: Colors.deepPurpleAccent,
-                    isDark: isDark,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: _actionButton(
-                icon: Icons.spellcheck,
-                label: '句子批改',
-                onTap: _showCorrectSentence,
-                color: Colors.teal,
+      body: TapPageTurnRegion(
+        controller: _scrollController,
+        child: SingleChildScrollView(
+          controller: _scrollController,
+          padding: const EdgeInsets.fromLTRB(20, 16, 20, 80),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              // Outcomes
+              _sectionHeader('🎯 学习目标', isDark),
+              _markdownBlock(unit.outcomes, isDark),
+              const SizedBox(height: 12),
+              _actionButton(
+                icon: Icons.edit,
+                label: '✍️ 写作练习',
+                onTap: () {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (context) =>
+                          GrammarWritingScreen(unit: widget.unit),
+                    ),
+                  );
+                },
+                color: Colors.green,
                 isDark: isDark,
               ),
-            ),
-            if (_isLoading) ...[
               const SizedBox(height: 24),
-              const Center(child: CircularProgressIndicator()),
+
+              // Grammar Chart
+              _sectionHeader('📊 语法形式表', isDark),
+              _markdownBlock(unit.chart, isDark),
+              const SizedBox(height: 24),
+
+              // Chinese Guide
+              _sectionHeader('🇨🇳 中文对比解析', isDark),
+              _markdownBlock(unit.chineseGuide, isDark),
+              const SizedBox(height: 24),
+
+              // Key Rules
+              _sectionHeader('⚡ 核心规则', isDark),
+              _markdownBlock(unit.keyRules, isDark),
+              const SizedBox(height: 24),
+
+              // Common Mistakes
+              _sectionHeader('❌ 常犯错误', isDark),
+              _markdownBlock(unit.commonMistakes, isDark),
+              const SizedBox(height: 24),
+
+              // Vocabulary
+              _sectionHeader('📝 本节词汇', isDark),
+              _markdownBlock(unit.vocabulary, isDark),
+              const SizedBox(height: 32),
+
+              // AI Action Buttons
+              _sectionHeader('🤖 AI 辅助', isDark),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: _actionButton(
+                      icon: Icons.edit_note,
+                      label: '生成练习',
+                      onTap: _generateExercise,
+                      color: Colors.blue,
+                      isDark: isDark,
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: _actionButton(
+                      icon: Icons.help_outline,
+                      label: '提问',
+                      onTap: _showAskQuestion,
+                      color: Colors.deepPurpleAccent,
+                      isDark: isDark,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                child: _actionButton(
+                  icon: Icons.spellcheck,
+                  label: '句子批改',
+                  onTap: _showCorrectSentence,
+                  color: Colors.teal,
+                  isDark: isDark,
+                ),
+              ),
+              if (_isLoading) ...[
+                const SizedBox(height: 24),
+                const Center(child: CircularProgressIndicator()),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );
@@ -286,16 +317,20 @@ class _GrammarDetailScreenState extends State<GrammarDetailScreen> {
     required Color color,
     required bool isDark,
   }) {
-    return ElevatedButton.icon(
-      onPressed: _isLoading ? null : onTap,
-      icon: Icon(icon, size: 18),
-      label: Text(label),
-      style: ElevatedButton.styleFrom(
-        backgroundColor: color.withValues(alpha: isDark ? 0.2 : 0.1),
-        foregroundColor: color.withValues(alpha: isDark ? 0.8 : 1.0),
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-        elevation: 0,
+    return TapPageTurnIgnore(
+      child: ElevatedButton.icon(
+        onPressed: _isLoading ? null : onTap,
+        icon: Icon(icon, size: 18),
+        label: Text(label),
+        style: ElevatedButton.styleFrom(
+          backgroundColor: color.withValues(alpha: isDark ? 0.2 : 0.1),
+          foregroundColor: color.withValues(alpha: isDark ? 0.8 : 1.0),
+          padding: const EdgeInsets.symmetric(vertical: 14),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(12),
+          ),
+          elevation: 0,
+        ),
       ),
     );
   }
