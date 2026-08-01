@@ -892,3 +892,34 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 > 一致性提示：`file_sync_agent.dart`（9.3）仍将 `速记`/`exam` 文件名归类为 `'exam'`，与历史页新的 `'listening'` 归类不一致，属已知差距，未改动（遵用户"不修改代码"约束）。
 
+### 15.13 Follow-up：双语速记重构 · Gemini 兜底 · 笔记自动打开 · 翻页组件抽取
+
+> 本节覆盖 commit `cf17b4f` 之后的 5 个技术提交（`f4f6cd3` / `b1a0a14` / `c3537e0` / `ffd7748` / `4d52784`），记录 2026-07-31 至 08-01 的演进。
+
+**双语速记重构（f4f6cd3）** — `lib/prompt_provider.dart` 等
+
+- `getLectureFirstPassPrompt` 全面重写为**超紧凑速记**：新增 `# Bilingual Shorthand Rules`（英文优先、全角括号中文辅助、紧凑符号 `→ ↑ ↓ ＋ / = ✓ ✗ ? b/c w/ w/o vs`）+ `# Compact Layout — Mandatory`（禁止空行、禁止 Markdown 标题/分隔线/列表/加粗/代码围栏，块间以 `━━━━━━━━━━━━` 分隔，分栏标题格式 `── English label（中文）· key number ──`）。
+- 输出契约改为 6 个固定块：`【30秒理解·可播放】`（80-140 中文字符，TTS 可播放）→ `【Purpose（目的）】` → `【Examples（案例）】`（或按讲座自适应为 Main Points/Process/Comparison/Cause&Effect 之一，案例驱动讲座逐案分栏、不删案例）→ `【Conclusion（结论）】` → `【二听】`（`?（待核对）` / `✓（已确认）`）→ `【符号】`。
+- `lib/models.dart`：`PromptStrategy` 新增 `rollingNotes`；`recording_provider.dart` 以约 60 秒窗口（`_slicesPerRollingUpdate`，随可选 5-8s STT 切片时长自适应，clamp 8–15）触发滚动笔记；滚动笔记模式将上一版草稿 + 新转写一并喂给 `getRollingNotesPrompt` 保持单份稳定草稿。
+
+**Gemini 兜底（b1a0a14 / c3537e0）** — `session_background_processor.dart`、`ai_orchestrator_service.dart`
+
+- 新增 `_generateReviewWithFailover()`：主服务失败 → Gemini（`AIOrchestratorService.generateSummaryWithGemini`，`temperature 0.15`、`maxOutputTokens` 依模式 4096/2400/1800/3200）→ 兜底翻译服务 → 主服务延时重试，全程日志脱敏。
+- `_isValidGeneratedContent()`（c3537e0）对 Lecture 速记做**结构完整性校验**：必须含 `【30秒理解·可播放】`、`【Purpose（目的）】`、自适应笔记块之一、`【Conclusion（结论）】`、`【二听】`、`【符号】`；缺则判定 `incomplete_shorthand_structure` 触发兜底。诊断事件：`final_review_primary_failed` / `shorthand_primary_failed` / `*_recovered` / `*_candidate_rejected` / `*_failed_all`。
+- `getFinalExamFirstPassPrompt`（303 行）为 Exam 第一遍专用；`getFinalReviewPrompt` 的 Exam 分支（440 行）保留中英双语答题卡大纲（全景梗概 / Pathways 学术笔记 / 填空与数字考点 / 选择题预测）。
+
+**笔记自动打开（ffd7748）** — `main.dart`、`note_navigation_service.dart`（新增）、`tts_player_bar.dart` 等
+
+- `main.dart` 监听 `sessionReadyStream`：`isFinal && (exam || lecture)` 时经 `RecordingProvider.promoteReadyNote()` 提升为待展示笔记，再经 `NoteNavigationService.openNote()` 自动打开（`navigatorKey` + `navigatorObservers` 全局导航）。Exam 展示副文档 `Jeff_速记_<sid>.md`。
+- `SessionReadyEvent` 新增 `recordedAt` 与 `isNewerThan()`（录制时间优先、sessionId 兜底）。
+- `tts_player_bar.dart` 重构（+459 行）：播放条功能与样式大改。
+
+**翻页组件抽取（4d52784）** — `widgets/tap_page_turn_region.dart`（新增）
+
+- 将三处详情页（note/reading/grammar）重复的「点按翻页 + 滚动进度保存」逻辑抽成共享 `TapPageTurnRegion` 组件，配 `test/tap_page_turn_region_test.dart`。
+
+**试运行后被撤销的功能（cf718a7 → bf169d1）**
+
+- 曾短暂加入「思维导图 Markdown」：`mindmap_tree_builder.dart` 将速记 `【】` 块程序化转为嵌套列表树，Exam/Lecture 停止录音后额外产出 `Jeff_思维导图_<sid>.md`。因"没有多大意义"，用户决定撤销，`bf169d1` 完整回滚（含测试），导出恢复为原双文档，不影响现存逻辑。
+
+
