@@ -13,7 +13,6 @@ import '../models/session_ready_event.dart';
 import 'diagnostic_log_service.dart';
 import 'transcript_assembler.dart';
 import 'wav_stitch_service.dart';
-import 'mindmap_tree_builder.dart';
 
 class HandoverPayload {
   final RecordingSessionContext context;
@@ -536,38 +535,6 @@ class SessionBackgroundProcessor {
         throw FileSystemException(
           'Exam shorthand export verification failed',
           shorthandFile.path,
-        );
-      }
-    }
-
-    // Mindmap tree document for both Exam and Lecture modes. It reuses the
-    // already-computed shorthand output (no extra AI call) and renders as a
-    // Markdown nested-list tree that shows up in the document center.
-    if (isExam || ctx.mode == AppMode.lecture) {
-      final source = isExam
-          ? ctx.shorthandReviewContent
-          : ctx.finalReviewContent;
-      final treeContent = (source != null && source.trim().isNotEmpty)
-          ? MindmapTreeBuilder.build(shorthand: source)
-          : MindmapTreeBuilder.buildFallback(
-              title: '思维导图',
-              transcriptLines: transcripts
-                  .map(
-                    (n) => {
-                      'en': n.transcript,
-                      'zh': n.translatedContent ?? '',
-                    },
-                  )
-                  .toList(),
-            );
-      final treeFile = File(
-        '${file.parent.path}/Jeff_思维导图_${ctx.sessionId}.md',
-      );
-      await _writeAtomically(treeFile, treeContent);
-      if (!await treeFile.exists() || await treeFile.length() == 0) {
-        throw FileSystemException(
-          'Mindmap tree export verification failed',
-          treeFile.path,
         );
       }
     }
