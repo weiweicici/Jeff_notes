@@ -156,6 +156,8 @@ class RecordingProvider extends ChangeNotifier {
   AppMode _currentMode = AppMode.exam;
   PathwaysUnit _currentUnit = PathwaysUnit.none;
   int _autoScrollPauseDuration = 60;
+  bool _autoScrollEnabled = false;
+  int _autoScrollSecondsPerPage = 30;
 
   final Map<AIProvider, String> _apiKeys = {
     AIProvider.siliconFlow: "",
@@ -176,6 +178,10 @@ class RecordingProvider extends ChangeNotifier {
   String? _shorthandReviewContent;
   bool _isGeneratingFinalReview = false;
   String? _lastExportedPath;
+  String? _lastReadyNotePath;
+  String? _lastReadySessionId;
+  DateTime? _lastReadyRecordedAt;
+  final Map<String, double> _readingOffsets = {};
   // 40秒分段 AI 摘要
   final List<String> _segmentSummaries = [];
 
@@ -205,11 +211,15 @@ class RecordingProvider extends ChangeNotifier {
   AppMode get currentMode => _currentMode;
   PathwaysUnit get currentUnit => _currentUnit;
   int get autoScrollPauseDuration => _autoScrollPauseDuration;
+  bool get autoScrollEnabled => _autoScrollEnabled;
+  int get autoScrollSecondsPerPage => _autoScrollSecondsPerPage;
   String? get statusMessage => _statusMessage;
   String? get finalReviewContent => _finalReviewContent;
   String? get shorthandReviewContent => _shorthandReviewContent;
   bool get isGeneratingFinalReview => _isGeneratingFinalReview;
   String? get lastExportedPath => _lastExportedPath;
+  String? get lastReadyNotePath => _lastReadyNotePath;
+  String? get lastReadySessionId => _lastReadySessionId;
   String? get identifiedLectureContext => _identifiedLectureContext;
   bool get hasRecoveredCache => _hasRecoveredCache;
 
@@ -224,6 +234,82 @@ class RecordingProvider extends ChangeNotifier {
   String get geminiKey => _apiKeys[AIProvider.gemini] ?? '';
   String get openRouterKey => _openRouterKey;
 
+  double readingOffsetFor(String path) => _readingOffsets[path] ?? 0;
+
+  Future<void> updateReadingPreferences({
+    bool? autoScrollEnabled,
+    int? secondsPerPage,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    if (autoScrollEnabled != null) {
+      _autoScrollEnabled = autoScrollEnabled;
+      await prefs.setBool('reader_auto_scroll_enabled', autoScrollEnabled);
+    }
+    if (secondsPerPage != null) {
+      final clamped = secondsPerPage.clamp(10, 120);
+      _autoScrollSecondsPerPage = clamped;
+      await prefs.setInt('reader_seconds_per_page', clamped);
+    }
+    notifyListeners();
+  }
+
+  Future<void> saveReadingOffset(String path, double offset) async {
+    if (path.isEmpty || !offset.isFinite) return;
+    _readingOffsets[path] = offset < 0 ? 0 : offset;
+    if (_readingOffsets.length > 30) {
+      _readingOffsets.remove(_readingOffsets.keys.first);
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('note_reading_offsets', jsonEncode(_readingOffsets));
+  }
+
+  Future<bool> promoteReadyNote(
+    SessionReadyEvent event,
+    String notePath,
+  ) async {
+    if (notePath.isEmpty || !File(notePath).existsSync()) return false;
+
+    if (_lastReadySessionId != null) {
+      if (event.sessionId == _lastReadySessionId) return false;
+      final incomingTime = event.recordedAt;
+      final currentTime = _lastReadyRecordedAt;
+      final isNewer = incomingTime != null && currentTime != null
+          ? incomingTime.isAfter(currentTime)
+          : event.sessionId.compareTo(_lastReadySessionId!) > 0;
+      if (!isNewer) return false;
+    }
+
+    _lastReadyNotePath = notePath;
+    _lastReadySessionId = event.sessionId;
+    _lastReadyRecordedAt = event.recordedAt;
+
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('last_ready_note_path', notePath);
+    await prefs.setString('last_ready_session_id', event.sessionId);
+    if (event.recordedAt != null) {
+      await prefs.setString(
+        'last_ready_recorded_at',
+        event.recordedAt!.toIso8601String(),
+      );
+    } else {
+      await prefs.remove('last_ready_recorded_at');
+    }
+    notifyListeners();
+    return true;
+  }
+
+  Future<void> forgetReadyNote(String path) async {
+    if (_lastReadyNotePath != path) return;
+    _lastReadyNotePath = null;
+    _lastReadySessionId = null;
+    _lastReadyRecordedAt = null;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.remove('last_ready_note_path');
+    await prefs.remove('last_ready_session_id');
+    await prefs.remove('last_ready_recorded_at');
+    notifyListeners();
+  }
+
   RecordingProvider({AudioRecorderAdapter? audioRecorder})
     : _audioRecorder = audioRecorder ?? RecordAudioRecorderAdapter() {
     _init();
@@ -233,6 +319,7 @@ class RecordingProvider extends ChangeNotifier {
     await _loadSettings();
     await _initializeAudioSession();
     await _checkRecoveryCache();
+    notifyListeners();
   }
 
   /// Returns clean Chinese + English full transcript for TTS playback.
@@ -393,6 +480,31 @@ class RecordingProvider extends ChangeNotifier {
     _enableFinalRecap = prefs.getBool('enableFinalRecap') ?? false;
     _enableLectureDiscovery = prefs.getBool('enableLectureDiscovery') ?? false;
     _autoScrollPauseDuration = prefs.getInt('autoScrollPauseDuration') ?? 60;
+    _autoScrollEnabled = prefs.getBool('reader_auto_scroll_enabled') ?? false;
+    _autoScrollSecondsPerPage = (prefs.getInt('reader_seconds_per_page') ?? 30)
+        .clamp(10, 120);
+    final savedReadyPath = prefs.getString('last_ready_note_path');
+    if (savedReadyPath != null && File(savedReadyPath).existsSync()) {
+      _lastReadyNotePath = savedReadyPath;
+      _lastReadySessionId = prefs.getString('last_ready_session_id');
+      _lastReadyRecordedAt = DateTime.tryParse(
+        prefs.getString('last_ready_recorded_at') ?? '',
+      );
+    }
+    final savedOffsets = prefs.getString('note_reading_offsets');
+    if (savedOffsets != null) {
+      try {
+        final decoded = jsonDecode(savedOffsets);
+        if (decoded is Map<String, dynamic>) {
+          for (final entry in decoded.entries) {
+            final value = entry.value;
+            if (value is num) _readingOffsets[entry.key] = value.toDouble();
+          }
+        }
+      } catch (_) {
+        await prefs.remove('note_reading_offsets');
+      }
+    }
     final modeIndex = prefs.getInt('app_mode') ?? AppMode.exam.index;
     _currentMode = AppMode.values[modeIndex];
     _currentUnit = PathwaysUnit.values[prefs.getInt('current_unit') ?? 0];
@@ -500,12 +612,16 @@ class RecordingProvider extends ChangeNotifier {
     if (_isPending) return;
     _isPending = true;
     notifyListeners();
-    if (_isRecording)
-      await stopRecording();
-    else
-      await startRecording();
-    _isPending = false;
-    notifyListeners();
+    try {
+      if (_isRecording) {
+        await stopRecording();
+      } else {
+        await startRecording();
+      }
+    } finally {
+      _isPending = false;
+      notifyListeners();
+    }
   }
 
   Future<void> startRecording() async {
@@ -513,13 +629,13 @@ class RecordingProvider extends ChangeNotifier {
       DiagnosticLogService.instance.record('recording', 'start_requested'),
     );
     if (await _audioRecorder.hasPermission()) {
-      await TtsService().releaseForRecording();
       _updateService();
       if (_aiService == null || _fastAiService == null) {
         _statusMessage = "Please configure your API Keys in Settings first";
         notifyListeners();
         return;
       }
+      await TtsService().releaseForRecording();
 
       // [Phase 3 Fix 2, 4, 10] 创建专属 RecordingSessionContext 和底层专有 http.Client
       final docsDir = await getApplicationDocumentsDirectory();
@@ -590,16 +706,25 @@ class RecordingProvider extends ChangeNotifier {
       _statusMessage = null;
       notifyListeners();
 
-      final path = await _getTempPath();
-      await _audioRecorder.start(
-        const RecordConfig(
-          encoder: AudioEncoder.wav,
-          sampleRate: 16000,
-          numChannels: 1,
-        ),
-        path: path,
-      );
-      _startSmartSliceTimer(context);
+      try {
+        final path = await _getTempPath();
+        await _audioRecorder.start(
+          const RecordConfig(
+            encoder: AudioEncoder.wav,
+            sampleRate: 16000,
+            numChannels: 1,
+          ),
+          path: path,
+        );
+        _startSmartSliceTimer(context);
+      } catch (_) {
+        _isRecording = false;
+        _activeContext = null;
+        context.dispose();
+        TtsService().allowPlaybackAfterRecording();
+        notifyListeners();
+        rethrow;
+      }
     }
   }
 
@@ -640,66 +765,69 @@ class RecordingProvider extends ChangeNotifier {
     _isRecording = false;
     _sliceTimer?.cancel();
 
-    final context = _activeContext;
-    unawaited(
-      DiagnosticLogService.instance.record(
-        'recording',
-        'stop_requested',
-        sessionId: context?.sessionId,
-      ),
-    );
-    final path = await _audioRecorder.stop();
-    if (path != null && context != null) {
-      context.runPipeline(() => _processAudio(path, context));
-    }
-    context?.sealPipelines();
-    _activeContext = null;
-
-    if (context != null) {
-      final payload = HandoverPayload(
-        context: context,
-        // Exam/Lecture now always produce a complete first-listening document.
-        // The preference remains meaningful for the other optional workflows.
-        enableFinalRecap:
-            _enableFinalRecap ||
-            context.mode == AppMode.exam ||
-            context.mode == AppMode.lecture,
-        onDone: (event) {
-          unawaited(
-            DiagnosticLogService.instance.record(
-              'recording',
-              'session_ready',
-              sessionId: event.sessionId,
-              fields: {'mode': event.mode.name},
-            ),
-          );
-          _lastExportedPath = event.exportPath;
-          _sessionReadyController.add(event);
-          notifyListeners();
-        },
-        onStatus: (msg) {
-          _statusMessage = msg;
-          notifyListeners();
-        },
-        onError: (err) {
-          unawaited(
-            DiagnosticLogService.instance.record(
-              'recording',
-              'handover_failed',
-              sessionId: context.sessionId,
-              fields: {'errorType': 'handover'},
-            ),
-          );
-          debugPrint('[Handover Error] $err');
-        },
+    try {
+      final context = _activeContext;
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'recording',
+          'stop_requested',
+          sessionId: context?.sessionId,
+        ),
       );
+      final path = await _audioRecorder.stop();
+      if (path != null && context != null) {
+        context.runPipeline(() => _processAudio(path, context));
+      }
+      context?.sealPipelines();
+      _activeContext = null;
 
-      // Submit to SessionBackgroundProcessor — returns immediately (<200ms)
-      unawaited(SessionBackgroundProcessor.instance.submit(payload));
+      if (context != null) {
+        final payload = HandoverPayload(
+          context: context,
+          // Exam/Lecture always produce complete first-listening documents.
+          enableFinalRecap:
+              _enableFinalRecap ||
+              context.mode == AppMode.exam ||
+              context.mode == AppMode.lecture,
+          onDone: (event) {
+            unawaited(
+              DiagnosticLogService.instance.record(
+                'recording',
+                'session_ready',
+                sessionId: event.sessionId,
+                fields: {'mode': event.mode.name},
+              ),
+            );
+            _lastExportedPath = event.exportPath;
+            _sessionReadyController.add(event);
+            notifyListeners();
+          },
+          onStatus: (msg) {
+            _statusMessage = msg;
+            notifyListeners();
+          },
+          onError: (err) {
+            unawaited(
+              DiagnosticLogService.instance.record(
+                'recording',
+                'handover_failed',
+                sessionId: context.sessionId,
+                fields: {'errorType': 'handover'},
+              ),
+            );
+            debugPrint('[Handover Error] $err');
+          },
+        );
+
+        // Submit to SessionBackgroundProcessor — returns immediately (<200ms)
+        unawaited(SessionBackgroundProcessor.instance.submit(payload));
+      }
+    } finally {
+      _activeContext = null;
+      _resetForNextSession();
+      await _resetAudioSessionAfterRecording();
+      TtsService().allowPlaybackAfterRecording();
     }
-
-    _resetForNextSession();
-    await _resetAudioSessionAfterRecording();
   }
 
   /// [Phase 3] Resets Provider state so next recording session can start immediately.

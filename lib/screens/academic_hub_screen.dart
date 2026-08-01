@@ -108,7 +108,12 @@ class AcademicHubScreen extends StatelessWidget {
                       onTap: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => const NotesScreen()),
+                          MaterialPageRoute(
+                            settings: const RouteSettings(
+                              name: '/notes-recording',
+                            ),
+                            builder: (context) => const NotesScreen(),
+                          ),
                         );
                       },
                     ),

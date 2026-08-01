@@ -1,12 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:provider/provider.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
 import 'history_screen.dart';
-import 'note_detail_screen.dart';
 import '../widgets/academic_markdown.dart';
 import '../widgets/fade_in_slide_up.dart';
 import '../widgets/recording_pulse_fab.dart';
@@ -14,8 +12,8 @@ import '../widgets/tts_player_bar.dart';
 import '../models.dart'; // 包含 AIProvider 和 AppMode 枚举
 import '../recording_provider.dart'; // 放在其他导入之后，避免冲突
 import '../services/tts_service.dart';
-import '../models/session_ready_event.dart';
 import '../services/diagnostic_log_service.dart';
+import '../services/note_navigation_service.dart';
 
 class NotesScreen extends StatefulWidget {
   const NotesScreen({super.key});
@@ -25,9 +23,6 @@ class NotesScreen extends StatefulWidget {
 
 class _NotesScreenState extends State<NotesScreen> {
   final ScrollController _scrollController = ScrollController();
-  StreamSubscription<SessionReadyEvent>? _sessionReadySub;
-  final Set<String> _shownFinalSessionIds = {};
-  String? _pendingSummaryContent;
   bool _isSummaryPanelExpanded = false;
 
   /// 帧安全顺滑滚动 —— 在当前帧布局完成后再执行滚动，
@@ -47,62 +42,10 @@ class _NotesScreenState extends State<NotesScreen> {
   @override
   void initState() {
     super.initState();
-    final provider = context.read<RecordingProvider>();
-    _sessionReadySub = provider.sessionReadyStream.listen(
-      (event) {
-        if (!mounted) return;
-
-        // Lecture and Exam must surface the completed first-listening notes
-        // immediately; Discussion/FreeTalk remain silent background exports.
-        final showsFirstListeningNotes =
-            event.mode == AppMode.lecture || event.mode == AppMode.exam;
-        if (!showsFirstListeningNotes || !event.isFinal) return;
-        if (_shownFinalSessionIds.contains(event.sessionId)) return;
-
-        // 并发弹窗保护：showDialog 前立即登记 sessionId
-        _shownFinalSessionIds.add(event.sessionId);
-        if (_shownFinalSessionIds.length > 100) {
-          _shownFinalSessionIds.remove(_shownFinalSessionIds.first);
-        }
-
-        final content = event.content;
-        final path = event.exportPath;
-
-        if (content.isNotEmpty) {
-          setState(() {
-            _pendingSummaryContent = content;
-          });
-          _showFinalReviewModalWithContent(context, content);
-        } else if (path.isNotEmpty && File(path).existsSync()) {
-          try {
-            final fileContent = File(path).readAsStringSync();
-            setState(() {
-              _pendingSummaryContent = fileContent;
-            });
-            _showFinalReviewModalWithContent(context, fileContent);
-          } catch (_) {
-            Navigator.pushReplacement(
-              context,
-              MaterialPageRoute(
-                builder: (_) => NoteDetailScreen(file: File(path)),
-              ),
-            );
-          }
-        }
-      },
-      onError: (error) {
-        debugPrint("sessionReadyStream error: $error");
-      },
-      onDone: () {
-        debugPrint("sessionReadyStream done");
-      },
-    );
   }
 
   @override
   void dispose() {
-    TtsService().stop();
-    _sessionReadySub?.cancel();
     _scrollController.dispose();
     super.dispose();
   }
@@ -685,69 +628,60 @@ class _NotesScreenState extends State<NotesScreen> {
       ),
       body: Column(
         children: [
-          if (_pendingSummaryContent != null &&
-              provider.currentSessionMode != AppMode.discussion &&
-              provider.currentSessionMode != AppMode.freeTalk)
-            GestureDetector(
-              onTap: () {
-                final content = _pendingSummaryContent!;
-                setState(() {
-                  _pendingSummaryContent = null;
-                });
-                _showFinalReviewModalWithContent(context, content);
-              },
-              child: Container(
-                width: double.infinity,
-                margin: const EdgeInsets.fromLTRB(16, 12, 16, 4),
-                padding: const EdgeInsets.symmetric(
-                  vertical: 14,
-                  horizontal: 16,
-                ),
-                decoration: BoxDecoration(
-                  gradient: LinearGradient(
-                    colors: provider.currentSessionMode == AppMode.discussion
-                        ? [Colors.deepPurpleAccent, Colors.deepPurple]
-                        : [Colors.blueAccent, Colors.blue],
+          if (provider.lastReadyNotePath != null)
+            Material(
+              color: Colors.transparent,
+              child: InkWell(
+                onTap: () async {
+                  final path = provider.lastReadyNotePath;
+                  if (path == null) return;
+                  final opened = await NoteNavigationService.instance.openNote(
+                    path: path,
+                    documentId: provider.lastReadySessionId ?? path,
+                  );
+                  if (!opened && context.mounted) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('最新速记文件不存在或尚未写入完成')),
+                    );
+                  }
+                },
+                child: Container(
+                  width: double.infinity,
+                  height: 38,
+                  margin: const EdgeInsets.fromLTRB(16, 8, 16, 2),
+                  padding: const EdgeInsets.symmetric(horizontal: 14),
+                  decoration: BoxDecoration(
+                    color: Colors.blueAccent.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(
+                      color: Colors.blueAccent.withOpacity(0.24),
+                    ),
                   ),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: [
-                    BoxShadow(
-                      color:
-                          (provider.currentSessionMode == AppMode.discussion
-                                  ? Colors.deepPurpleAccent
-                                  : Colors.blueAccent)
-                              .withOpacity(0.3),
-                      offset: const Offset(0, 4),
-                      blurRadius: 10,
-                    ),
-                  ],
-                ),
-                child: Row(
-                  children: [
-                    Icon(
-                      provider.currentSessionMode == AppMode.discussion
-                          ? Icons.forum
-                          : Icons.school,
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 12),
-                    const Expanded(
-                      child: Text(
-                        '新总结已完成，点击查看',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 14,
+                  child: const Row(
+                    children: [
+                      Icon(
+                        Icons.description_outlined,
+                        color: Colors.blueAccent,
+                        size: 18,
+                      ),
+                      SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          '继续阅读最新速记',
+                          style: TextStyle(
+                            color: Colors.blueAccent,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
                       ),
-                    ),
-                    const Icon(
-                      Icons.arrow_forward_ios,
-                      color: Colors.white70,
-                      size: 14,
-                    ),
-                  ],
+                      Icon(
+                        Icons.arrow_forward_ios,
+                        color: Colors.blueAccent,
+                        size: 12,
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -1075,7 +1009,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   late bool _tempIsDarkMode;
   late bool _tempEnableFinalRecap;
   late bool _tempEnableLectureDiscovery;
-  late int _tempAutoScrollPause;
   late TextEditingController _groqController;
   late TextEditingController _openRouterController;
   late TextEditingController _siliconFlowController;
@@ -1096,7 +1029,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     _tempIsDarkMode = p.isDarkMode;
     _tempEnableFinalRecap = p.enableFinalRecap;
     _tempEnableLectureDiscovery = p.enableLectureDiscovery;
-    _tempAutoScrollPause = p.autoScrollPauseDuration;
     _groqController = TextEditingController(text: p.groqKey);
     _openRouterController = TextEditingController(text: p.openRouterKey);
     _siliconFlowController = TextEditingController(text: p.siliconFlowKey);
@@ -1124,7 +1056,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
       isDarkMode: _tempIsDarkMode,
       enableFinalRecap: _tempEnableFinalRecap,
       enableLectureDiscovery: _tempEnableLectureDiscovery,
-      autoScrollPauseDuration: _tempAutoScrollPause,
     );
     if (mounted) Navigator.pop(context);
   }
@@ -1251,43 +1182,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               contentPadding: EdgeInsets.zero,
               onChanged: (val) =>
                   setState(() => _tempEnableLectureDiscovery = val),
-            ),
-            const SizedBox(height: 8),
-            const Divider(),
-            const SizedBox(height: 8),
-            Text(
-              '自动滚屏暂停恢复时间',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: isDark ? Colors.white70 : Colors.black87,
-              ),
-            ),
-            Row(
-              children: [
-                const Text('10秒'),
-                Expanded(
-                  child: Slider(
-                    value: _tempAutoScrollPause.toDouble(),
-                    min: 10,
-                    max: 300,
-                    divisions: 29,
-                    label: '${_tempAutoScrollPause}秒',
-                    onChanged: (v) =>
-                        setState(() => _tempAutoScrollPause = v.round()),
-                  ),
-                ),
-                const Text('300秒'),
-              ],
-            ),
-            Center(
-              child: Text(
-                '当前：$_tempAutoScrollPause 秒',
-                style: TextStyle(
-                  fontSize: 12,
-                  color: isDark ? Colors.white54 : Colors.black54,
-                ),
-              ),
             ),
             const SizedBox(height: 8),
             const SizedBox(height: 8),

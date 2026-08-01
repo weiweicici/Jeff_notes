@@ -170,6 +170,7 @@ class SessionBackgroundProcessor {
           exportPath: ctx.exportPath,
           isFinal: true,
           eventSequence: 1,
+          recordedAt: ctx.createdAt,
         );
 
         payload.onStatus('Saved OK!');

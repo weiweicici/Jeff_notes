@@ -40,8 +40,16 @@ class TtsService extends ChangeNotifier {
 
   bool _isInitialized = false;
   ActiveAudioType _currentAudioType = ActiveAudioType.none;
+  bool _playbackBlockedForRecording = false;
 
   ActiveAudioType get currentAudioType => _currentAudioType;
+  bool get playbackBlockedForRecording => _playbackBlockedForRecording;
+
+  void _ensurePlaybackAllowed() {
+    if (_playbackBlockedForRecording) {
+      throw StateError('PlaybackBlockedDuringRecording');
+    }
+  }
 
   // ── 中文本地原生 TTS 状态 ──────────────────────────
   ChineseTtsEngine _chineseEngine = ChineseTtsEngine.edgeNeural;
@@ -207,8 +215,10 @@ class TtsService extends ChangeNotifier {
 
   /// 恢复并激活 iOS/Android 为 Category.playback 纯播放模式（消除录音残留的 defaultToSpeaker 模式）
   Future<void> ensurePlaybackSession() async {
+    _ensurePlaybackAllowed();
     try {
       final session = await AudioSession.instance;
+      _ensurePlaybackAllowed();
       await session.configure(
         const AudioSessionConfiguration(
           avAudioSessionCategory: AVAudioSessionCategory.playback,
@@ -222,6 +232,7 @@ class TtsService extends ChangeNotifier {
           androidWillPauseWhenDucked: true,
         ),
       );
+      _ensurePlaybackAllowed();
       await session.setActive(true);
       await _flutterTts.setIosAudioCategory(
         IosTextToSpeechAudioCategory.playback,
@@ -238,6 +249,9 @@ class TtsService extends ChangeNotifier {
         } catch (_) {}
       }
     } catch (e) {
+      if (e is StateError && e.message == 'PlaybackBlockedDuringRecording') {
+        rethrow;
+      }
       unawaited(
         DiagnosticLogService.instance.record(
           'tts',
@@ -294,6 +308,16 @@ class TtsService extends ChangeNotifier {
 
   /// [Phase 4 Rule 1 & 2] 统一 TTS 发声安全门：恢复 pure playback session 并在路由不安全时硬切断播放
   Future<bool> prepareSafePlayback({required String playbackSource}) async {
+    if (_playbackBlockedForRecording) {
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'tts',
+          'playback_blocked_recording',
+          fields: {'source': playbackSource},
+        ),
+      );
+      return false;
+    }
     await ensurePlaybackSession();
     final decision = await routeDetector.inspectCurrentOutput();
     unawaited(
@@ -500,8 +524,10 @@ class TtsService extends ChangeNotifier {
     String? geminiKey,
     String? siliconFlowKey,
   }) async {
+    _ensurePlaybackAllowed();
     await init();
     await stopAll();
+    _ensurePlaybackAllowed();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
     if (!(await isHeadphonesConnected()))
@@ -957,6 +983,7 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> playChinese() async {
+    _ensurePlaybackAllowed();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
     if (!(await isHeadphonesConnected()))
@@ -1052,8 +1079,10 @@ class TtsService extends ChangeNotifier {
   // ════════════════════════════════════════════════════════════════════
 
   Future<void> speakRecordedAudio(String wavPath) async {
+    _ensurePlaybackAllowed();
     await init();
     await stopAll();
+    _ensurePlaybackAllowed();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
     if (!(await isHeadphonesConnected()))
@@ -1093,8 +1122,10 @@ class TtsService extends ChangeNotifier {
     String? geminiKey,
     String? siliconFlowKey,
   }) async {
+    _ensurePlaybackAllowed();
     await init();
     await stopAll();
+    _ensurePlaybackAllowed();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
     if (!(await isHeadphonesConnected()))
@@ -1647,6 +1678,7 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> playEnglish() async {
+    _ensurePlaybackAllowed();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
     if (!(await isHeadphonesConnected()))
@@ -1730,6 +1762,8 @@ class TtsService extends ChangeNotifier {
 
   /// 录音开始前调用：停止所有 TTS 并将会话切回 playAndRecord + setActive
   Future<void> releaseForRecording() async {
+    _playbackBlockedForRecording = true;
+    notifyListeners();
     await stopAll(); // 停止播放 + 释放 setActive(false)
     try {
       final session = await AudioSession.instance;
@@ -1750,7 +1784,16 @@ class TtsService extends ChangeNotifier {
     }
   }
 
+  /// Re-enable playback only after the recorder has released and restored the
+  /// shared audio session. This avoids a tap racing the stop transition.
+  void allowPlaybackAfterRecording() {
+    if (!_playbackBlockedForRecording) return;
+    _playbackBlockedForRecording = false;
+    notifyListeners();
+  }
+
   Future<void> speak(String text, {String? siliconFlowKey}) async {
+    _ensurePlaybackAllowed();
     if (siliconFlowKey != null && siliconFlowKey.isNotEmpty) {
       await speakEnglish(text, siliconFlowKey: siliconFlowKey);
     } else {

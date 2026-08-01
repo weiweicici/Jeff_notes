@@ -1,3 +1,6 @@
+import 'dart:async';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:audio_service/audio_service.dart';
@@ -11,6 +14,9 @@ import 'data/grammar_content.dart';
 
 import 'services/credential_store.dart';
 import 'services/diagnostic_log_service.dart';
+import 'models.dart';
+import 'models/session_ready_event.dart';
+import 'services/note_navigation_service.dart';
 
 late MyAudioHandler globalAudioHandler;
 
@@ -40,12 +46,62 @@ void main() async {
   FileSyncAgent.instance.start();
 }
 
-class JeffNotesApp extends StatelessWidget {
+class JeffNotesApp extends StatefulWidget {
   const JeffNotesApp({super.key});
+
+  @override
+  State<JeffNotesApp> createState() => _JeffNotesAppState();
+}
+
+class _JeffNotesAppState extends State<JeffNotesApp> {
+  StreamSubscription<SessionReadyEvent>? _readySubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    final provider = context.read<RecordingProvider>();
+    _readySubscription = provider.sessionReadyStream.listen((event) {
+      unawaited(_surfaceReadyNote(provider, event));
+    });
+  }
+
+  String _displayPathFor(SessionReadyEvent event) {
+    if (event.mode != AppMode.exam) return event.exportPath;
+    final parent = File(event.exportPath).parent.path;
+    return '$parent/Jeff_速记_${event.sessionId}.md';
+  }
+
+  Future<void> _surfaceReadyNote(
+    RecordingProvider provider,
+    SessionReadyEvent event,
+  ) async {
+    final shouldSurface =
+        event.isFinal &&
+        (event.mode == AppMode.exam || event.mode == AppMode.lecture);
+    if (!shouldSurface) return;
+
+    final path = _displayPathFor(event);
+    final promoted = await provider.promoteReadyNote(event, path);
+    if (!promoted || !mounted) return;
+
+    await NoteNavigationService.instance.openNote(
+      path: path,
+      documentId: event.sessionId,
+    );
+  }
+
+  @override
+  void dispose() {
+    _readySubscription?.cancel();
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<RecordingProvider>();
     return MaterialApp(
+      navigatorKey: NoteNavigationService.instance.navigatorKey,
+      navigatorObservers: [NoteNavigationService.instance],
       title: 'Jeff Notes',
       debugShowCheckedModeBanner: false,
       theme: ThemeData(

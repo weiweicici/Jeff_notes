@@ -8,6 +8,7 @@ class SessionReadyEvent {
   final String exportPath;
   final bool isFinal;
   final int eventSequence;
+  final DateTime? recordedAt;
 
   SessionReadyEvent({
     required this.sessionId,
@@ -16,9 +17,21 @@ class SessionReadyEvent {
     required this.exportPath,
     required this.isFinal,
     required this.eventSequence,
+    this.recordedAt,
   });
 
   String get eventKey => '${sessionId}_$eventSequence';
+
+  /// Recording time wins over AI completion time when sessions finish out of
+  /// order. Session IDs are a deterministic fallback for legacy events.
+  bool isNewerThan(SessionReadyEvent other) {
+    final thisTime = recordedAt;
+    final otherTime = other.recordedAt;
+    if (thisTime != null && otherTime != null) {
+      return thisTime.isAfter(otherTime);
+    }
+    return sessionId.compareTo(other.sessionId) > 0;
+  }
 
   @override
   String toString() =>

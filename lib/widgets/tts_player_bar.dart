@@ -23,9 +23,8 @@ class TtsPlayerBar extends StatefulWidget {
     String? text,
     this.recordedAudioPath,
     required this.siliconFlowKey,
-  })  : chineseText = chineseText ?? text ?? '',
-        englishText = englishText ?? text ?? '';
-
+  }) : chineseText = chineseText ?? text ?? '',
+       englishText = englishText ?? text ?? '';
 
   @override
   State<TtsPlayerBar> createState() => _TtsPlayerBarState();
@@ -37,7 +36,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     super.initState();
     final hasChinese = RegExp(r'[\u4e00-\u9fff]').hasMatch(widget.chineseText);
     if (!hasChinese) {
-      final hasRecorded = widget.recordedAudioPath != null && widget.recordedAudioPath!.isNotEmpty;
+      final hasRecorded =
+          widget.recordedAudioPath != null &&
+          widget.recordedAudioPath!.isNotEmpty;
       _selectedTab = hasRecorded ? 2 : 1;
     }
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -55,6 +56,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
       );
     }
   }
+
   bool _isDragging = false;
   double _dragValue = 0.0;
 
@@ -88,8 +90,13 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
   @override
   Widget build(BuildContext context) {
     final tts = TtsService();
+    final recordingActive = context.select<RecordingProvider, bool>(
+      (provider) => provider.isRecording,
+    );
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final hasRecordedAudio = widget.recordedAudioPath != null && widget.recordedAudioPath!.isNotEmpty;
+    final hasRecordedAudio =
+        widget.recordedAudioPath != null &&
+        widget.recordedAudioPath!.isNotEmpty;
     final hasChinese = RegExp(r'[\u4e00-\u9fff]').hasMatch(widget.chineseText);
 
     // 自动跟随正在播放的声道无缝切换 Tab
@@ -104,6 +111,8 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     return ListenableBuilder(
       listenable: tts,
       builder: (context, _) {
+        final playbackLocked =
+            recordingActive || tts.playbackBlockedForRecording;
         return Container(
           margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 6),
           padding: const EdgeInsets.all(10),
@@ -125,16 +134,51 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             mainAxisSize: MainAxisSize.min,
             children: [
               // 顶部极简分段选择标签栏（仅占用一行 32px）
-              _buildSegmentedHeader(context, tts, isDark, hasRecordedAudio, hasChinese),
+              _buildSegmentedHeader(
+                context,
+                tts,
+                isDark,
+                hasRecordedAudio,
+                hasChinese,
+              ),
               const SizedBox(height: 10),
 
+              if (playbackLocked) ...[
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 7,
+                  ),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: const Text(
+                    '🔒 录音进行中，停止录音后可播放',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Colors.orange,
+                      fontSize: 11,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 8),
+              ],
+
               // 下方仅渲染当前选中的 1 个播放控制卡片（大幅省下 65% 屏幕垂直空间）
-              if (hasChinese && _selectedTab == 0)
-                _buildChinesePlayerCard(context, tts, isDark)
-              else if (hasRecordedAudio && _selectedTab == (hasChinese ? 1 : 0))
-                _buildRecordedPlayerCard(context, tts, isDark)
-              else
-                _buildEnglishPlayerCard(context, tts, isDark),
+              IgnorePointer(
+                ignoring: playbackLocked,
+                child: Opacity(
+                  opacity: playbackLocked ? 0.45 : 1,
+                  child: hasChinese && _selectedTab == 0
+                      ? _buildChinesePlayerCard(context, tts, isDark)
+                      : hasRecordedAudio && _selectedTab == (hasChinese ? 1 : 0)
+                      ? _buildRecordedPlayerCard(context, tts, isDark)
+                      : _buildEnglishPlayerCard(context, tts, isDark),
+                ),
+              ),
             ],
           ),
         );
@@ -143,11 +187,20 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
   }
 
   /// 极简水平分段选择器
-  Widget _buildSegmentedHeader(BuildContext context, TtsService tts, bool isDark, bool hasRecordedAudio, bool hasChinese) {
+  Widget _buildSegmentedHeader(
+    BuildContext context,
+    TtsService tts,
+    bool isDark,
+    bool hasRecordedAudio,
+    bool hasChinese,
+  ) {
     final tabs = [
       if (hasChinese) {'label': '🇨🇳 中文', 'index': 0},
       if (hasRecordedAudio) {'label': '🎙️ 原音', 'index': hasChinese ? 1 : 0},
-      {'label': '🇬🇧 英文', 'index': (hasChinese ? 1 : 0) + (hasRecordedAudio ? 1 : 0)},
+      {
+        'label': '🇬🇧 英文',
+        'index': (hasChinese ? 1 : 0) + (hasRecordedAudio ? 1 : 0),
+      },
     ];
 
     return Container(
@@ -181,7 +234,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                             color: Colors.black.withOpacity(0.08),
                             blurRadius: 4,
                             offset: const Offset(0, 2),
-                          )
+                          ),
                         ]
                       : [],
                 ),
@@ -190,7 +243,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                     tab['label'] as String,
                     style: TextStyle(
                       fontSize: 11,
-                      fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+                      fontWeight: isSelected
+                          ? FontWeight.bold
+                          : FontWeight.normal,
                       color: isSelected
                           ? (isDark ? Colors.white : Colors.black87)
                           : (isDark ? Colors.white54 : Colors.black54),
@@ -206,7 +261,11 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
   }
 
   /// 构建中文控制卡片
-  Widget _buildChinesePlayerCard(BuildContext context, TtsService tts, bool isDark) {
+  Widget _buildChinesePlayerCard(
+    BuildContext context,
+    TtsService tts,
+    bool isDark,
+  ) {
     final isSynthesizing = tts.isChineseSynthesizing;
     final isPlaying = tts.isChinesePlaying;
     final currentSpeed = tts.chineseSpeed;
@@ -216,7 +275,11 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
       children: [
         Row(
           children: [
-            const Icon(Icons.interpreter_mode_rounded, size: 16, color: Colors.teal),
+            const Icon(
+              Icons.interpreter_mode_rounded,
+              size: 16,
+              color: Colors.teal,
+            ),
             const SizedBox(width: 6),
             Text(
               tts.chineseEngine == ChineseTtsEngine.iosNative
@@ -235,16 +298,24 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
+                  color: (isDark ? Colors.white : Colors.black).withOpacity(
+                    0.08,
+                  ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   '${currentSpeed}x',
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               itemBuilder: (_) => [0.75, 1.0, 1.25, 1.5, 2.0]
-                  .map((s) => PopupMenuItem<double>(value: s, child: Text('${s}x')))
+                  .map(
+                    (s) =>
+                        PopupMenuItem<double>(value: s, child: Text('${s}x')),
+                  )
                   .toList(),
             ),
           ],
@@ -272,7 +343,12 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(6),
                       boxShadow: tts.chineseEngine == ChineseTtsEngine.iosNative
-                          ? [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 3)]
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.08),
+                                blurRadius: 3,
+                              ),
+                            ]
                           : [],
                     ),
                     child: Center(
@@ -280,7 +356,10 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         '📱 iOS原生',
                         style: TextStyle(
                           fontSize: 10,
-                          fontWeight: tts.chineseEngine == ChineseTtsEngine.iosNative ? FontWeight.bold : FontWeight.normal,
+                          fontWeight:
+                              tts.chineseEngine == ChineseTtsEngine.iosNative
+                              ? FontWeight.bold
+                              : FontWeight.normal,
                           color: tts.chineseEngine == ChineseTtsEngine.iosNative
                               ? (isDark ? Colors.amberAccent : Colors.teal)
                               : (isDark ? Colors.white54 : Colors.black54),
@@ -292,7 +371,8 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               ),
               Expanded(
                 child: GestureDetector(
-                  onTap: () => tts.setChineseEngine(ChineseTtsEngine.edgeNeural),
+                  onTap: () =>
+                      tts.setChineseEngine(ChineseTtsEngine.edgeNeural),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 180),
                     padding: const EdgeInsets.symmetric(vertical: 5),
@@ -301,8 +381,14 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                           ? (isDark ? const Color(0xFF2E2E42) : Colors.white)
                           : Colors.transparent,
                       borderRadius: BorderRadius.circular(6),
-                      boxShadow: tts.chineseEngine == ChineseTtsEngine.edgeNeural
-                          ? [BoxShadow(color: Colors.black.withOpacity(0.08), blurRadius: 3)]
+                      boxShadow:
+                          tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                          ? [
+                              BoxShadow(
+                                color: Colors.black.withOpacity(0.08),
+                                blurRadius: 3,
+                              ),
+                            ]
                           : [],
                     ),
                     child: Center(
@@ -310,8 +396,12 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         '🌐 微软Edge',
                         style: TextStyle(
                           fontSize: 10,
-                          fontWeight: tts.chineseEngine == ChineseTtsEngine.edgeNeural ? FontWeight.bold : FontWeight.normal,
-                          color: tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                          fontWeight:
+                              tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                              ? FontWeight.bold
+                              : FontWeight.normal,
+                          color:
+                              tts.chineseEngine == ChineseTtsEngine.edgeNeural
                               ? (isDark ? Colors.cyanAccent : Colors.teal)
                               : (isDark ? Colors.white54 : Colors.black54),
                         ),
@@ -331,25 +421,41 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             return StreamBuilder<Duration>(
               stream: tts.chinesePositionStream,
               builder: (context, posSnap) {
-                final isActive = tts.currentAudioType == ActiveAudioType.chinese;
-                final duration = isActive ? (tts.currentDuration ?? durationSnap.data ?? Duration.zero) : Duration.zero;
-                final position = isActive ? (posSnap.data ?? tts.currentPosition) : Duration.zero;
+                final isActive =
+                    tts.currentAudioType == ActiveAudioType.chinese;
+                final duration = isActive
+                    ? (tts.currentDuration ??
+                          durationSnap.data ??
+                          Duration.zero)
+                    : Duration.zero;
+                final position = isActive
+                    ? (posSnap.data ?? tts.currentPosition)
+                    : Duration.zero;
                 final maxMs = duration.inMilliseconds.toDouble();
-                final streamMs = position.inMilliseconds
-                    .toDouble()
-                    .clamp(0.0, maxMs > 0 ? maxMs : 1.0);
+                final streamMs = position.inMilliseconds.toDouble().clamp(
+                  0.0,
+                  maxMs > 0 ? maxMs : 1.0,
+                );
 
-                final displayMs = _isChineseDragging ? _chineseDragValue : streamMs;
+                final displayMs = _isChineseDragging
+                    ? _chineseDragValue
+                    : streamMs;
 
                 return Column(
                   children: [
                     SliderTheme(
                       data: SliderTheme.of(context).copyWith(
                         trackHeight: 3,
-                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 5,
+                        ),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 10,
+                        ),
                         activeTrackColor: Colors.teal,
-                        inactiveTrackColor: isDark ? Colors.white24 : Colors.grey[300],
+                        inactiveTrackColor: isDark
+                            ? Colors.white24
+                            : Colors.grey[300],
                         thumbColor: Colors.teal,
                       ),
                       child: Slider(
@@ -358,16 +464,18 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         value: displayMs.clamp(0.0, maxMs > 0 ? maxMs : 1.0),
                         onChangeStart: maxMs > 0
                             ? (val) => setState(() {
-                                  _isChineseDragging = true;
-                                  _chineseDragValue = val;
-                                })
+                                _isChineseDragging = true;
+                                _chineseDragValue = val;
+                              })
                             : null,
                         onChanged: maxMs > 0
                             ? (val) => setState(() => _chineseDragValue = val)
                             : null,
                         onChangeEnd: maxMs > 0
                             ? (val) {
-                                tts.seekChinese(Duration(milliseconds: val.toInt()));
+                                tts.seekChinese(
+                                  Duration(milliseconds: val.toInt()),
+                                );
                                 setState(() => _isChineseDragging = false);
                               }
                             : null,
@@ -380,13 +488,23 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         children: [
                           Text(
                             _formatDuration(
-                              _isChineseDragging ? Duration(milliseconds: _chineseDragValue.toInt()) : position,
+                              _isChineseDragging
+                                  ? Duration(
+                                      milliseconds: _chineseDragValue.toInt(),
+                                    )
+                                  : position,
                             ),
-                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: isDark ? Colors.white54 : Colors.black54,
+                            ),
                           ),
                           Text(
                             _formatDuration(duration),
-                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: isDark ? Colors.white54 : Colors.black54,
+                            ),
                           ),
                         ],
                       ),
@@ -410,7 +528,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               onPressed: () async {
                 final pos = tts.currentPosition;
                 final newPos = pos - const Duration(seconds: 10);
-                await tts.seekChinese(newPos < Duration.zero ? Duration.zero : newPos);
+                await tts.seekChinese(
+                  newPos < Duration.zero ? Duration.zero : newPos,
+                );
               },
             ),
             const SizedBox(width: 8),
@@ -421,13 +541,18 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                 child: SizedBox(
                   width: 24,
                   height: 24,
-                  child: CircularProgressIndicator(strokeWidth: 2, color: Colors.teal),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.teal,
+                  ),
                 ),
               )
             else
               IconButton.filled(
                 iconSize: 22,
-                icon: Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
+                icon: Icon(
+                  isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                ),
                 style: IconButton.styleFrom(
                   backgroundColor: Colors.teal,
                   foregroundColor: Colors.white,
@@ -437,10 +562,14 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                     await tts.pauseChinese();
                   } else {
                     try {
-                      if (tts.currentAudioType == ActiveAudioType.chinese && tts.currentPosition > Duration.zero) {
+                      if (tts.currentAudioType == ActiveAudioType.chinese &&
+                          tts.currentPosition > Duration.zero) {
                         await tts.playChinese();
                       } else {
-                        final provider = Provider.of<RecordingProvider>(context, listen: false);
+                        final provider = Provider.of<RecordingProvider>(
+                          context,
+                          listen: false,
+                        );
                         await tts.speakChinese(
                           widget.chineseText,
                           geminiKey: provider.geminiKey,
@@ -452,9 +581,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                       if (e.toString().contains('NoHeadphones')) {
                         _showNoHeadphonesSnackBar(context, debug: e.toString());
                       } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('播放错误: $e')),
-                        );
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text('播放错误: $e')));
                       }
                     }
                   }
@@ -472,7 +601,11 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             ),
             const SizedBox(width: 8),
             IconButton(
-              icon: const Icon(Icons.stop_rounded, color: Colors.redAccent, size: 22),
+              icon: const Icon(
+                Icons.stop_rounded,
+                color: Colors.redAccent,
+                size: 22,
+              ),
               onPressed: () => tts.stopChinese(),
             ),
           ],
@@ -482,7 +615,11 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
   }
 
   /// 构建真实课堂现场录音卡片
-  Widget _buildRecordedPlayerCard(BuildContext context, TtsService tts, bool isDark) {
+  Widget _buildRecordedPlayerCard(
+    BuildContext context,
+    TtsService tts,
+    bool isDark,
+  ) {
     final isPlaying = tts.isRecordedPlaying;
     final currentSpeed = tts.englishSpeed;
 
@@ -507,16 +644,24 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
+                  color: (isDark ? Colors.white : Colors.black).withOpacity(
+                    0.08,
+                  ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   '${currentSpeed}x',
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               itemBuilder: (_) => [0.75, 1.0, 1.25, 1.5, 2.0]
-                  .map((s) => PopupMenuItem<double>(value: s, child: Text('${s}x')))
+                  .map(
+                    (s) =>
+                        PopupMenuItem<double>(value: s, child: Text('${s}x')),
+                  )
                   .toList(),
             ),
           ],
@@ -525,24 +670,39 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
           stream: tts.englishDurationStream,
           builder: (context, durationSnap) {
             final isActive = tts.currentAudioType == ActiveAudioType.recorded;
-            final duration = isActive ? (durationSnap.data ?? Duration.zero) : Duration.zero;
+            final duration = isActive
+                ? (durationSnap.data ?? Duration.zero)
+                : Duration.zero;
             return StreamBuilder<Duration>(
               stream: tts.englishPositionStream,
               builder: (context, posSnap) {
-                final position = isActive ? (posSnap.data ?? Duration.zero) : Duration.zero;
+                final position = isActive
+                    ? (posSnap.data ?? Duration.zero)
+                    : Duration.zero;
                 final maxMs = duration.inMilliseconds.toDouble();
-                final streamMs = position.inMilliseconds.toDouble().clamp(0.0, maxMs > 0 ? maxMs : 1.0);
-                final displayMs = _isRecordedDragging ? _recordedDragValue : streamMs;
+                final streamMs = position.inMilliseconds.toDouble().clamp(
+                  0.0,
+                  maxMs > 0 ? maxMs : 1.0,
+                );
+                final displayMs = _isRecordedDragging
+                    ? _recordedDragValue
+                    : streamMs;
 
                 return Column(
                   children: [
                     SliderTheme(
                       data: SliderTheme.of(context).copyWith(
                         trackHeight: 3,
-                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 5,
+                        ),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 10,
+                        ),
                         activeTrackColor: Colors.green,
-                        inactiveTrackColor: isDark ? Colors.white24 : Colors.grey[300],
+                        inactiveTrackColor: isDark
+                            ? Colors.white24
+                            : Colors.grey[300],
                         thumbColor: Colors.green,
                       ),
                       child: Slider(
@@ -551,16 +711,18 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         value: displayMs,
                         onChangeStart: maxMs > 0
                             ? (val) => setState(() {
-                                  _isRecordedDragging = true;
-                                  _recordedDragValue = val;
-                                })
+                                _isRecordedDragging = true;
+                                _recordedDragValue = val;
+                              })
                             : null,
                         onChanged: maxMs > 0
                             ? (val) => setState(() => _recordedDragValue = val)
                             : null,
                         onChangeEnd: maxMs > 0
                             ? (val) {
-                                tts.seekEnglish(Duration(milliseconds: val.toInt()));
+                                tts.seekEnglish(
+                                  Duration(milliseconds: val.toInt()),
+                                );
                                 setState(() => _isRecordedDragging = false);
                               }
                             : null,
@@ -573,13 +735,23 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         children: [
                           Text(
                             _formatDuration(
-                              _isRecordedDragging ? Duration(milliseconds: _recordedDragValue.toInt()) : position,
+                              _isRecordedDragging
+                                  ? Duration(
+                                      milliseconds: _recordedDragValue.toInt(),
+                                    )
+                                  : position,
                             ),
-                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: isDark ? Colors.white54 : Colors.black54,
+                            ),
                           ),
                           Text(
                             _formatDuration(duration),
-                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: isDark ? Colors.white54 : Colors.black54,
+                            ),
                           ),
                         ],
                       ),
@@ -600,13 +772,17 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               onPressed: () async {
                 final pos = tts.currentPosition;
                 final newPos = pos - const Duration(seconds: 10);
-                await tts.seekEnglish(newPos < Duration.zero ? Duration.zero : newPos);
+                await tts.seekEnglish(
+                  newPos < Duration.zero ? Duration.zero : newPos,
+                );
               },
             ),
             const SizedBox(width: 8),
             IconButton.filled(
               iconSize: 24,
-              icon: Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
+              icon: Icon(
+                isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+              ),
               style: IconButton.styleFrom(
                 backgroundColor: Colors.green,
                 foregroundColor: Colors.white,
@@ -622,9 +798,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                     if (e.toString().contains('NoHeadphones')) {
                       _showNoHeadphonesSnackBar(context, debug: e.toString());
                     } else {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(content: Text('播放错误: $e')),
-                      );
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text('播放错误: $e')));
                     }
                   }
                 }
@@ -641,7 +817,11 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             ),
             const SizedBox(width: 8),
             IconButton(
-              icon: const Icon(Icons.stop_rounded, color: Colors.redAccent, size: 22),
+              icon: const Icon(
+                Icons.stop_rounded,
+                color: Colors.redAccent,
+                size: 22,
+              ),
               onPressed: () => tts.stopEnglish(),
             ),
           ],
@@ -651,7 +831,11 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
   }
 
   /// 构建英文 AI 控制卡片
-  Widget _buildEnglishPlayerCard(BuildContext context, TtsService tts, bool isDark) {
+  Widget _buildEnglishPlayerCard(
+    BuildContext context,
+    TtsService tts,
+    bool isDark,
+  ) {
     final isSynthesizing = tts.isEnglishSynthesizing;
     final isPlaying = tts.isEnglishPlaying;
     final currentSpeed = tts.englishSpeed;
@@ -661,11 +845,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
       children: [
         Row(
           children: [
-            const Icon(
-              Icons.auto_awesome,
-              size: 16,
-              color: Colors.blueAccent,
-            ),
+            const Icon(Icons.auto_awesome, size: 16, color: Colors.blueAccent),
             const SizedBox(width: 6),
             const Text(
               '🇬🇧 英文AI',
@@ -682,16 +862,24 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
                 decoration: BoxDecoration(
-                  color: (isDark ? Colors.white : Colors.black).withOpacity(0.08),
+                  color: (isDark ? Colors.white : Colors.black).withOpacity(
+                    0.08,
+                  ),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
                   '${currentSpeed}x',
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                  ),
                 ),
               ),
               itemBuilder: (_) => [0.75, 1.0, 1.25, 1.5, 2.0]
-                  .map((s) => PopupMenuItem<double>(value: s, child: Text('${s}x')))
+                  .map(
+                    (s) =>
+                        PopupMenuItem<double>(value: s, child: Text('${s}x')),
+                  )
                   .toList(),
             ),
           ],
@@ -702,15 +890,20 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
           stream: tts.englishDurationStream,
           builder: (context, durationSnap) {
             final isActive = tts.currentAudioType == ActiveAudioType.english;
-            final duration = isActive ? (durationSnap.data ?? Duration.zero) : Duration.zero;
+            final duration = isActive
+                ? (durationSnap.data ?? Duration.zero)
+                : Duration.zero;
             return StreamBuilder<Duration>(
               stream: tts.englishPositionStream,
               builder: (context, posSnap) {
-                final position = isActive ? (posSnap.data ?? Duration.zero) : Duration.zero;
+                final position = isActive
+                    ? (posSnap.data ?? Duration.zero)
+                    : Duration.zero;
                 final maxMs = duration.inMilliseconds.toDouble();
-                final streamMs = position.inMilliseconds
-                    .toDouble()
-                    .clamp(0.0, maxMs > 0 ? maxMs : 1.0);
+                final streamMs = position.inMilliseconds.toDouble().clamp(
+                  0.0,
+                  maxMs > 0 ? maxMs : 1.0,
+                );
 
                 final displayMs = _isDragging ? _dragValue : streamMs;
 
@@ -719,10 +912,16 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                     SliderTheme(
                       data: SliderTheme.of(context).copyWith(
                         trackHeight: 3,
-                        thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
-                        overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+                        thumbShape: const RoundSliderThumbShape(
+                          enabledThumbRadius: 5,
+                        ),
+                        overlayShape: const RoundSliderOverlayShape(
+                          overlayRadius: 10,
+                        ),
                         activeTrackColor: Colors.blueAccent,
-                        inactiveTrackColor: isDark ? Colors.white24 : Colors.grey[300],
+                        inactiveTrackColor: isDark
+                            ? Colors.white24
+                            : Colors.grey[300],
                         thumbColor: Colors.blueAccent,
                       ),
                       child: Slider(
@@ -731,16 +930,18 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         value: displayMs,
                         onChangeStart: maxMs > 0
                             ? (val) => setState(() {
-                                  _isDragging = true;
-                                  _dragValue = val;
-                                })
+                                _isDragging = true;
+                                _dragValue = val;
+                              })
                             : null,
                         onChanged: maxMs > 0
                             ? (val) => setState(() => _dragValue = val)
                             : null,
                         onChangeEnd: maxMs > 0
                             ? (val) {
-                                tts.seekEnglish(Duration(milliseconds: val.toInt()));
+                                tts.seekEnglish(
+                                  Duration(milliseconds: val.toInt()),
+                                );
                                 setState(() => _isDragging = false);
                               }
                             : null,
@@ -753,13 +954,21 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         children: [
                           Text(
                             _formatDuration(
-                              _isDragging ? Duration(milliseconds: _dragValue.toInt()) : position,
+                              _isDragging
+                                  ? Duration(milliseconds: _dragValue.toInt())
+                                  : position,
                             ),
-                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: isDark ? Colors.white54 : Colors.black54,
+                            ),
                           ),
                           Text(
                             _formatDuration(duration),
-                            style: TextStyle(fontSize: 9, color: isDark ? Colors.white54 : Colors.black54),
+                            style: TextStyle(
+                              fontSize: 9,
+                              color: isDark ? Colors.white54 : Colors.black54,
+                            ),
                           ),
                         ],
                       ),
@@ -783,7 +992,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               onPressed: () async {
                 final pos = tts.currentPosition;
                 final newPos = pos - const Duration(seconds: 10);
-                await tts.seekEnglish(newPos < Duration.zero ? Duration.zero : newPos);
+                await tts.seekEnglish(
+                  newPos < Duration.zero ? Duration.zero : newPos,
+                );
               },
             ),
             const SizedBox(width: 8),
@@ -800,7 +1011,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             else
               IconButton.filled(
                 iconSize: 24,
-                icon: Icon(isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded),
+                icon: Icon(
+                  isPlaying ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                ),
                 style: IconButton.styleFrom(
                   backgroundColor: Colors.blueAccent,
                   foregroundColor: Colors.white,
@@ -810,10 +1023,14 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                     await tts.pauseEnglish();
                   } else {
                     try {
-                      if (tts.currentAudioType == ActiveAudioType.english && tts.currentPosition > Duration.zero) {
+                      if (tts.currentAudioType == ActiveAudioType.english &&
+                          tts.currentPosition > Duration.zero) {
                         await tts.playEnglish();
                       } else {
-                        final provider = Provider.of<RecordingProvider>(context, listen: false);
+                        final provider = Provider.of<RecordingProvider>(
+                          context,
+                          listen: false,
+                        );
                         await tts.speakEnglish(
                           widget.englishText,
                           geminiKey: provider.geminiKey,
@@ -825,9 +1042,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                       if (e.toString().contains('NoHeadphones')) {
                         _showNoHeadphonesSnackBar(context, debug: e.toString());
                       } else {
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('播放错误: $e')),
-                        );
+                        ScaffoldMessenger.of(
+                          context,
+                        ).showSnackBar(SnackBar(content: Text('播放错误: $e')));
                       }
                     }
                   }
@@ -845,7 +1062,11 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             ),
             const SizedBox(width: 8),
             IconButton(
-              icon: const Icon(Icons.stop_rounded, color: Colors.redAccent, size: 22),
+              icon: const Icon(
+                Icons.stop_rounded,
+                color: Colors.redAccent,
+                size: 22,
+              ),
               onPressed: () => tts.stopEnglish(),
             ),
           ],
@@ -861,9 +1082,15 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
         decoration: BoxDecoration(
-          color: (isLoop ? Colors.blueAccent : (isDark ? Colors.white : Colors.black)).withOpacity(isLoop ? 0.15 : 0.08),
+          color:
+              (isLoop
+                      ? Colors.blueAccent
+                      : (isDark ? Colors.white : Colors.black))
+                  .withOpacity(isLoop ? 0.15 : 0.08),
           borderRadius: BorderRadius.circular(8),
-          border: isLoop ? Border.all(color: Colors.blueAccent.withOpacity(0.4), width: 1) : null,
+          border: isLoop
+              ? Border.all(color: Colors.blueAccent.withOpacity(0.4), width: 1)
+              : null,
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
@@ -871,7 +1098,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             Icon(
               isLoop ? Icons.repeat_one_rounded : Icons.repeat_rounded,
               size: 13,
-              color: isLoop ? Colors.blueAccent : (isDark ? Colors.white70 : Colors.black54),
+              color: isLoop
+                  ? Colors.blueAccent
+                  : (isDark ? Colors.white70 : Colors.black54),
             ),
             const SizedBox(width: 3),
             Text(
@@ -879,7 +1108,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: isLoop ? FontWeight.bold : FontWeight.normal,
-                color: isLoop ? Colors.blueAccent : (isDark ? Colors.white70 : Colors.black54),
+                color: isLoop
+                    ? Colors.blueAccent
+                    : (isDark ? Colors.white70 : Colors.black54),
               ),
             ),
           ],

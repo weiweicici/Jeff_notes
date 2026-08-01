@@ -153,5 +153,32 @@ void main() {
       expect(shownSessionIds.length, 5);
       expect(shownSessionIds, contains('session_104'));
     });
+
+    test(
+      '6. Recording time prevents an older late result replacing latest',
+      () {
+        final older = SessionReadyEvent(
+          sessionId: '20260731_120000_000_1',
+          mode: AppMode.exam,
+          content: 'first recording',
+          exportPath: '/path/first.md',
+          isFinal: true,
+          eventSequence: 1,
+          recordedAt: DateTime.utc(2026, 7, 31, 12),
+        );
+        final newer = SessionReadyEvent(
+          sessionId: '20260731_120500_000_2',
+          mode: AppMode.exam,
+          content: 'second recording',
+          exportPath: '/path/second.md',
+          isFinal: true,
+          eventSequence: 1,
+          recordedAt: DateTime.utc(2026, 7, 31, 12, 5),
+        );
+
+        expect(newer.isNewerThan(older), isTrue);
+        expect(older.isNewerThan(newer), isFalse);
+      },
+    );
   });
 }
