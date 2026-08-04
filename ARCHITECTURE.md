@@ -922,4 +922,36 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 - 曾短暂加入「思维导图 Markdown」：`mindmap_tree_builder.dart` 将速记 `【】` 块程序化转为嵌套列表树，Exam/Lecture 停止录音后额外产出 `Jeff_思维导图_<sid>.md`。因"没有多大意义"，用户决定撤销，`bf169d1` 完整回滚（含测试），导出恢复为原双文档，不影响现存逻辑。
 
+### 15.14 Follow-up：前台防息屏 · Essay 对比文 · 部分导出容错 · FreeTalk 不弹窗 · TTS 循环策略
+
+> 本节覆盖 2026-08-04 一批改动（未提交 commit），主题分散但围绕录音/播放体验与导出健壮性。
+
+**前台防息屏 & 亮度保持** — `ios/Runner/AppDelegate.swift`、`lib/services/foreground_display_service.dart`（新增）、`lib/main.dart`
+
+- `ForegroundDisplayService` 经 MethodChannel `com.zhenfeng.jeffnotes/wakelock` 调用 iOS 端 `setForegroundDisplayMode`：应用处于前台时把屏幕亮度压到 5%（`brightness=0.05`）并禁用自动息屏（`isIdleTimerDisabled`），保证笔记/听力播放持续可读。
+- iOS 端在 `appWillResignActive` / `appWillTerminate` 时释放（恢复原亮度、重新启用息屏）；同时维护亮度快照 `brightnessBeforeForeground` 确保恢复用户原设定（含真机手动调亮）。
+- `main.dart` 以 `WidgetsBindingObserver` 监听生命周期，随 `resumed`/非前台切换 `setActive`；`dispose()` 时释放。`playbackWakelockRequested`（播放中）与 `foregroundDisplayRequested` 任一为真即禁息屏。
+
+**Essay 对比-对照 Prompt（大改）** — `lib/recording_provider.dart`、`lib/screens/essay_config_screen.dart`
+
+- 新增 `buildComparisonEssayPrompt()`（`@visibleForTesting`）：按 `comparisonFocus`（Similarities / Differences）生成严格单方向的一方向 5 段对比文——`REQUIRED COMPARISON DIRECTION` 强制全文只比同向，Body 1-3 同向、禁止混入相反/论证/选边/反驳；固定用 `Cost, Time, Happiness` 顺序。
+- `essay_config_screen.dart`（+659）：对比文 UI 大改；生成调用传入结构化 `userRequest` + `generationTemperature`（原硬编码 0.7）。
+- 新增测试 `test/essay_prompt_test.dart`（5 段同向断言）。
+
+**部分导出容错（finalizationIncomplete）** — `lib/services/session_background_processor.dart`
+
+- 管线 drain / 翻译 flush / 再 drain 任一失败不再整体 `onError` 返航，而是置 `finalizationIncomplete` 标记继续写出**已有的可用转写**：日志记 `partial_export_verified`，`onStatus` 提示"保存了可用转写、保留恢复草稿"，**不删除 shadow 草稿、不触发云端上传**（防丢数据）。
+- 完整收尾才走 `export_verified` → 删除草稿 → `_upsertToSupabase`。
+
+**FreeTalk 不再弹窗打断** — `lib/models/session_ready_event.dart`、`lib/main.dart`、`lib/screens/notes_screen.dart`
+
+- `SessionReadyEvent` 拆出两个 getter：`shouldPromoteReadyNote`（exam/lecture/freeTalk 均提升为"最新保存文档"入口）与 `shouldAutoOpen`（仅 exam/lecture 保持自动打开；FreeTalk 只提升入口、不强行切到阅读屏）。
+- `main.dart`：`promoteReadyNote` 后若 `!shouldAutoOpen` 即不自动 `openNote`；notes 屏"最新速记→最新保存文档"文案更新，进入历史页的初始过滤随 `currentSessionMode` 为 freeTalk 时切 `freetalk`。
+
+**TTS 循环策略** — `lib/services/tts_service.dart`
+
+- 原生 TTS 循环改为仅在**循环模式开启且通道仍活跃**时重复（`shouldRepeatNativePlayback(loopEnabled, playbackBlocked, channelIsStillActive)`，新增 `test/tts_loop_policy_test.dart`）；`toggleLoopMode` 抽 `_applyAudioPlayerLoopMode()`；native 完成回调传入 `playbackSource` 判定。
+
+**删除**：`lib/services/subtitle_artwork_service.dart`（157 行）被移除。
+
 
