@@ -954,4 +954,19 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 **删除**：`lib/services/subtitle_artwork_service.dart`（157 行）被移除。
 
+### 15.15 Follow-up：英语听写（Dictation）& 语法写作自动播放
+
+> 本节覆盖 2026-08-06 新增的**英语听写**功能（未提交 commit），在 15.14 的 TTS 循环策略基础上叠加。
+
+**英语听写** — `lib/services/tts_service.dart`、`lib/widgets/tts_player_bar.dart`
+
+- `TtsService` 新增逐句听写状态机：`isEnglishDictationPlaying` / `dictationSentenceIndex` / `dictationSentenceCount` / `dictationRepeatIndex` / `dictationRepeatCount`（默认每句重复 3 次）+ `_dictationRunId`（新一次听写/停止即失效旧播放，防串流）。
+- 静态工具：`splitEnglishSentences()`（把英文散文切成听写尺寸的句子）、`estimateEnglishDictationDuration(text, repeatCount, pauseBetweenSentences)`（预估时长）。
+- `startEnglishDictation(text, {safeRepeatCount})`：逐句 × N 次播放，句子之间约 3s 停顿，进度经 notifyListeners 反馈。
+- `tts_player_bar` 新增 `enableEnglishDictation` 开关：显示「听写：N 句 · 每句 3 次 · 约 X 分钟」，播放中显示「听写中：第 i/N 句 · 第 j/N 次」。
+
+**语法写作接入** — `lib/screens/grammar_writing_screen.dart`
+
+- 范文生成完成（combined 或单 unit 模式）弹出结果对话框后，`unawaited(_playEnglish(context, startDictation: true))` 自动开始英文听写播放；`_saveToArchive()` 自动存档逻辑不变。其余为 `dart format` 排版。
+
 
