@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -37,6 +38,16 @@ class PresetTopic {
   final String chineseLabel;
 
   const PresetTopic({required this.topic, required this.chineseLabel});
+}
+
+class PresetTopicSearchResult {
+  final EssayCategory category;
+  final PresetTopic preset;
+
+  const PresetTopicSearchResult({
+    required this.category,
+    required this.preset,
+  });
 }
 
 const Map<EssayCategory, List<PresetTopic>> presetTopicsByCategory = {
@@ -315,6 +326,86 @@ String _categoryLabel(EssayCategory c) {
   }
 }
 
+int get presetTopicCount => presetTopicsByCategory.values.fold<int>(
+  0,
+  (count, topics) => count + topics.length,
+);
+
+String _normalizeTopicSearchText(String value) => value
+    .toLowerCase()
+    .replaceAll(RegExp(r'[^a-z0-9\u3400-\u9fff]+'), ' ')
+    .trim();
+
+bool _topicSearchTokenMatches(String token, String haystack) {
+  if (haystack.contains(token)) return true;
+
+  const aliases = <String, List<String>>{
+    'subsidy': ['free'],
+    'subsidized': ['free'],
+    'bike': ['bicycle'],
+    'rider': ['bicycle'],
+    'riders': ['bicycle'],
+    'required': ['mandatory', 'wearing'],
+    'require': ['mandatory', 'wearing'],
+  };
+  return aliases[token]?.any(haystack.contains) ?? false;
+}
+
+List<PresetTopicSearchResult> searchPresetTopics(
+  String rawQuery, {
+  int limit = 8,
+}) {
+  final query = _normalizeTopicSearchText(rawQuery);
+  if (query.isEmpty || limit <= 0) return const [];
+
+  final tokens = query
+      .split(RegExp(r'\s+'))
+      .where((token) => token.length > 1 || token.codeUnitAt(0) > 127)
+      .toList();
+  if (tokens.isEmpty) return const [];
+
+  final scored = <({PresetTopicSearchResult result, int score})>[];
+  for (final categoryEntry in presetTopicsByCategory.entries) {
+    for (final preset in categoryEntry.value) {
+      final topic = _normalizeTopicSearchText(preset.topic);
+      final chineseLabel = _normalizeTopicSearchText(preset.chineseLabel);
+      final categoryLabel = _normalizeTopicSearchText(
+        _categoryLabel(categoryEntry.key),
+      );
+      final haystack = '$topic $chineseLabel $categoryLabel';
+      final matchedTokens = tokens
+          .where((token) => _topicSearchTokenMatches(token, haystack))
+          .length;
+      if (matchedTokens == 0) continue;
+
+      var score = matchedTokens * 100;
+      if (topic == query || chineseLabel == query) {
+        score += 1000;
+      } else if (topic.startsWith(query) || chineseLabel.startsWith(query)) {
+        score += 600;
+      } else if (haystack.contains(query)) {
+        score += 400;
+      }
+      if (matchedTokens == tokens.length) score += 200;
+
+      scored.add((
+        result: PresetTopicSearchResult(
+          category: categoryEntry.key,
+          preset: preset,
+        ),
+        score: score,
+      ));
+    }
+  }
+
+  scored.sort((a, b) {
+    final scoreOrder = b.score.compareTo(a.score);
+    if (scoreOrder != 0) return scoreOrder;
+    return a.result.preset.topic.compareTo(b.result.preset.topic);
+  });
+  return scored.take(limit).map((item) => item.result).toList();
+}
+
 class EssayConfigScreen extends StatefulWidget {
   const EssayConfigScreen({super.key});
 
@@ -324,6 +415,7 @@ class EssayConfigScreen extends StatefulWidget {
 
 class _EssayConfigScreenState extends State<EssayConfigScreen> {
   final _customController = TextEditingController();
+  final _customFocusNode = FocusNode();
 
   EssayCategory _selectedCategory = EssayCategory.practicedComparison;
   PresetTopic _selectedPreset =
@@ -342,6 +434,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
   @override
   void dispose() {
     _customController.dispose();
+    _customFocusNode.dispose();
     super.dispose();
   }
 
@@ -372,88 +465,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       );
       return;
     }
-
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
-        title: const Row(
-          children: [
-            Icon(Icons.auto_awesome, color: Colors.blueAccent),
-            SizedBox(width: 10),
-            Text('确认生成', style: TextStyle(fontWeight: FontWeight.bold)),
-          ],
-        ),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text(
-              '即将调用 AI 生成作文：',
-              style: TextStyle(fontSize: 13, color: Colors.grey),
-            ),
-            const SizedBox(height: 12),
-            _confirmRow('话题', _finalTopic),
-            const SizedBox(height: 6),
-            _confirmRow(
-              '类型',
-              _essayType == 'Comparison'
-                  ? '对比文 (Comparison)'
-                  : '议论文 (Argumentative)',
-            ),
-            if (_essayType == 'Comparison') ...[
-              const SizedBox(height: 6),
-              _confirmRow(
-                '方向',
-                _comparisonFocus == 'Similarities' ? '只比较相同点' : '只比较不同点',
-              ),
-            ],
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('取消', style: TextStyle(color: Colors.grey)),
-          ),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.blueAccent,
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
-              ),
-            ),
-            onPressed: () => Navigator.pop(ctx, true),
-            child: const Text(
-              '确认生成',
-              style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-
-    if (confirmed == true) await _generate();
-  }
-
-  Widget _confirmRow(String label, String value) {
-    return RichText(
-      text: TextSpan(
-        style: const TextStyle(fontSize: 14, color: Colors.black87),
-        children: [
-          TextSpan(
-            text: '$label: ',
-            style: const TextStyle(
-              fontWeight: FontWeight.bold,
-              color: Colors.blueAccent,
-            ),
-          ),
-          TextSpan(text: value),
-        ],
-      ),
-    );
+    await _generate();
   }
 
   Future<void> _generate() async {
@@ -523,31 +535,35 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       await file.writeAsString(content);
       debugPrint('[Essay Export] Saved to ${file.absolute.path}');
 
-      // ── 立即同步上传作文到 Supabase 云端数据库 ──
-      try {
-        final bytes = await file.readAsBytes();
-        final hash = md5.convert(bytes).toString();
-        await SupabaseConfig.client.from('archives').insert({
-          'file_hash': hash,
-          'module': 'essay',
-          'title': filename,
-          'content_md': utf8.decode(bytes),
-          'file_size': bytes.length,
-          'user_id': SupabaseConfig.currentUserId,
-        });
-        await UploadCache.mark(hash);
-        debugPrint('[Essay Supabase Upload OK] $filename');
-      } catch (uploadErr) {
-        debugPrint('[Essay Supabase Upload Error] $uploadErr');
-      }
-
-      // 触发后台同步服务处理任何未同步的笔记
-      FileSyncAgent.instance.syncNow();
+      // Opening the newly generated essay and starting TTS must not wait for
+      // network upload. Sync the already-saved local file in the background.
+      unawaited(_syncSavedEssay(file, filename));
 
       return file.absolute.path;
     } catch (e) {
       debugPrint('[Essay Export Error] $e');
       return null;
+    }
+  }
+
+  Future<void> _syncSavedEssay(File file, String filename) async {
+    try {
+      final bytes = await file.readAsBytes();
+      final hash = md5.convert(bytes).toString();
+      await SupabaseConfig.client.from('archives').insert({
+        'file_hash': hash,
+        'module': 'essay',
+        'title': filename,
+        'content_md': utf8.decode(bytes),
+        'file_size': bytes.length,
+        'user_id': SupabaseConfig.currentUserId,
+      });
+      await UploadCache.mark(hash);
+      debugPrint('[Essay Supabase Upload OK] $filename');
+    } catch (uploadErr) {
+      debugPrint('[Essay Supabase Upload Error] $uploadErr');
+    } finally {
+      FileSyncAgent.instance.syncNow();
     }
   }
 
@@ -682,7 +698,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  "Cost · Time · Happiness",
+                  "主题优先 · 灵活展开",
                   style: TextStyle(
                     fontSize: 16,
                     fontWeight: FontWeight.bold,
@@ -691,7 +707,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
                 ),
                 const SizedBox(height: 4),
                 Text(
-                  "从「成本·时间·幸福感」三个维度展开论述，拒绝空话套话，写出自然的学术短文。",
+                  "优先理解你输入的题目；成本、时间和幸福感不合适时，会自动改用更贴题的简单角度。",
                   style: TextStyle(
                     fontSize: 13,
                     color: isDark ? Colors.grey[400] : Colors.grey[600],
@@ -706,9 +722,168 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
     );
   }
 
+  void _selectSearchedTopic(PresetTopicSearchResult result) {
+    setState(() {
+      _selectedCategory = result.category;
+      _selectedPreset = result.preset;
+      if (result.category == EssayCategory.practicedComparison) {
+        _essayType = 'Comparison';
+      }
+    });
+  }
+
+  Widget _buildTopicSearchField(bool isDark) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        return RawAutocomplete<PresetTopicSearchResult>(
+          textEditingController: _customController,
+          focusNode: _customFocusNode,
+          displayStringForOption: (result) => result.preset.topic,
+          optionsBuilder: (value) => searchPresetTopics(value.text),
+          onSelected: _selectSearchedTopic,
+          fieldViewBuilder:
+              (context, controller, focusNode, onFieldSubmitted) {
+                return TextField(
+                  controller: controller,
+                  focusNode: focusNode,
+                  keyboardType: TextInputType.text,
+                  textInputAction: TextInputAction.done,
+                  onSubmitted: (_) => onFieldSubmitted(),
+                  style: TextStyle(
+                    color: isDark ? Colors.white : Colors.black87,
+                  ),
+                  decoration: InputDecoration(
+                    labelText: "话题输入与搜索（中英文）",
+                    hintText: "例如：头盔、helmet、subsidy school lunches",
+                    hintStyle: TextStyle(
+                      color: isDark ? Colors.grey[600] : Colors.grey[400],
+                      fontSize: 13,
+                    ),
+                    helperText:
+                        "输入内容优先；可搜索 $presetTopicCount 个预设，也可直接输入关键词或新题目",
+                    helperMaxLines: 2,
+                    helperStyle: TextStyle(
+                      fontSize: 11,
+                      color: isDark ? Colors.grey[600] : Colors.grey[400],
+                    ),
+                    labelStyle: TextStyle(
+                      color: isDark ? Colors.grey[400] : Colors.grey[600],
+                    ),
+                    prefixIcon: const Icon(Icons.search),
+                    suffixIcon: IconButton(
+                      tooltip: '清空输入',
+                      onPressed: () {
+                        controller.clear();
+                        focusNode.requestFocus();
+                      },
+                      icon: const Icon(Icons.clear),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: BorderSide(
+                        color: isDark ? Colors.white10 : Colors.black12,
+                      ),
+                    ),
+                    focusedBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                      borderSide: const BorderSide(
+                        color: Colors.blueAccent,
+                        width: 2,
+                      ),
+                    ),
+                  ),
+                );
+              },
+          optionsViewBuilder: (context, onSelected, options) {
+            final results = options.toList();
+            return Align(
+              alignment: Alignment.topLeft,
+              child: Material(
+                elevation: 10,
+                color: isDark ? const Color(0xFF28283C) : Colors.white,
+                borderRadius: BorderRadius.circular(12),
+                clipBehavior: Clip.antiAlias,
+                child: SizedBox(
+                  width: constraints.maxWidth,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxHeight: 340),
+                    child: ListView.separated(
+                      padding: const EdgeInsets.symmetric(vertical: 6),
+                      shrinkWrap: true,
+                      itemCount: results.length,
+                      separatorBuilder: (_, _) => Divider(
+                        height: 1,
+                        color: isDark ? Colors.white10 : Colors.black12,
+                      ),
+                      itemBuilder: (context, index) {
+                        final result = results[index];
+                        final highlighted =
+                            AutocompleteHighlightedOption.of(context) == index;
+                        return InkWell(
+                          onTap: () => onSelected(result),
+                          child: Container(
+                            color: highlighted
+                                ? Colors.blueAccent.withOpacity(0.12)
+                                : null,
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 14,
+                              vertical: 10,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  result.preset.chineseLabel,
+                                  style: TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w600,
+                                    color: isDark
+                                        ? Colors.white
+                                        : Colors.black87,
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  result.preset.topic,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    height: 1.25,
+                                    color: isDark
+                                        ? Colors.grey[300]
+                                        : Colors.grey[700],
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  _categoryLabel(result.category),
+                                  style: TextStyle(
+                                    fontSize: 10,
+                                    color: isDark
+                                        ? Colors.grey[500]
+                                        : Colors.grey[500],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
   Widget _buildFormCard(bool isDark) {
     return Container(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: isDark ? const Color(0xFF1E1E2F) : Colors.white,
         borderRadius: BorderRadius.circular(20),
@@ -726,47 +901,8 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            "写作配置",
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-          ),
-          const SizedBox(height: 20),
-
-          TextField(
-            controller: _customController,
-            keyboardType: TextInputType.text,
-            style: TextStyle(color: isDark ? Colors.white : Colors.black87),
-            decoration: InputDecoration(
-              labelText: "自定义话题（输入英文）",
-              hintText: "例如: Should students wear school uniforms?",
-              hintStyle: TextStyle(
-                color: isDark ? Colors.grey[600] : Colors.grey[400],
-                fontSize: 13,
-              ),
-              helperText: "填此框则优先使用，忽略下方预设；建议用完整问句",
-              helperStyle: TextStyle(
-                fontSize: 11,
-                color: isDark ? Colors.grey[600] : Colors.grey[400],
-              ),
-              labelStyle: TextStyle(
-                color: isDark ? Colors.grey[400] : Colors.grey[600],
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(
-                  color: isDark ? Colors.white10 : Colors.black12,
-                ),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(
-                  color: Colors.blueAccent,
-                  width: 2,
-                ),
-              ),
-            ),
-          ),
-          const SizedBox(height: 20),
+          _buildTopicSearchField(isDark),
+          const SizedBox(height: 12),
 
           DropdownButtonFormField<EssayCategory>(
             value: _selectedCategory,
@@ -809,7 +945,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
               });
             },
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
           Text(
             "预设话题",
@@ -819,7 +955,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
               color: isDark ? Colors.grey[400] : Colors.grey[600],
             ),
           ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           Consumer<RecordingProvider>(
             builder: (context, provider, _) {
               final topics = presetTopicsByCategory[_selectedCategory]!;
@@ -842,7 +978,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
                       ),
                     ),
                     selected: selected,
-                    selectedColor: Colors.blueAccent,
+                    selectedColor: isDark ? Colors.white24 : Colors.grey[700],
                     backgroundColor: isDark
                         ? const Color(0xFF2A2A3E)
                         : Colors.grey[100],
@@ -860,7 +996,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
               );
             },
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 12),
 
           Row(
             children: [
@@ -874,7 +1010,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
             ],
           ),
           if (_essayType == 'Comparison') ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 8),
             Text(
               '比较方向（必选）',
               style: TextStyle(
@@ -904,14 +1040,14 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
               ],
             ),
           ],
-          const SizedBox(height: 28),
+          const SizedBox(height: 16),
 
           SizedBox(
             width: double.infinity,
-            height: 52,
+            height: 46,
             child: ElevatedButton(
               style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blueAccent,
+                backgroundColor: isDark ? Colors.white24 : Colors.grey[700],
                 foregroundColor: Colors.white,
                 elevation: 0,
                 shape: RoundedRectangleBorder(
@@ -961,15 +1097,15 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       onTap: () => setState(() => _essayType = type),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 14),
+        padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(
           color: selected
-              ? Colors.blueAccent
+              ? (isDark ? Colors.white24 : Colors.grey.shade700)
               : (isDark ? Colors.white12 : Colors.grey[100]),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: selected
-                ? Colors.blueAccent
+                ? (isDark ? Colors.white24 : Colors.grey.shade700)
                 : (isDark ? Colors.white10 : Colors.black12),
           ),
         ),
@@ -995,15 +1131,15 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       onTap: () => setState(() => _comparisonFocus = focus),
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 200),
-        padding: const EdgeInsets.symmetric(vertical: 12),
+        padding: const EdgeInsets.symmetric(vertical: 9),
         decoration: BoxDecoration(
           color: selected
-              ? Colors.teal
+              ? (isDark ? Colors.white24 : Colors.grey.shade700)
               : (isDark ? Colors.white12 : Colors.grey[100]),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
             color: selected
-                ? Colors.teal
+                ? (isDark ? Colors.white24 : Colors.grey.shade700)
                 : (isDark ? Colors.white10 : Colors.black12),
           ),
         ),

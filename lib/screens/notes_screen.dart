@@ -407,7 +407,7 @@ class _NotesScreenState extends State<NotesScreen> {
                                 if (_playerExpanded) {
                                   _playerAutoHideTimer?.cancel();
                                   _playerAutoHideTimer = Timer(
-                                    const Duration(seconds: 10),
+                                    const Duration(seconds: 30),
                                     () {
                                       setModalState(
                                         () => _playerExpanded = false,
@@ -512,6 +512,9 @@ class _NotesScreenState extends State<NotesScreen> {
   Widget build(BuildContext context) {
     final provider = context.watch<RecordingProvider>();
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final recordingControlColor = isDark
+        ? const Color(0xFF555563)
+        : Colors.grey.shade600;
 
     return Scaffold(
       appBar: AppBar(
@@ -587,9 +590,7 @@ class _NotesScreenState extends State<NotesScreen> {
                   color: Colors.white,
                 ),
                 style: IconButton.styleFrom(
-                  backgroundColor: provider.isPaused
-                      ? Colors.green
-                      : Colors.orange,
+                  backgroundColor: recordingControlColor,
                 ),
                 tooltip: provider.isPaused ? '继续录音' : '暂停录音',
               ),
@@ -606,9 +607,7 @@ class _NotesScreenState extends State<NotesScreen> {
                 color: Colors.white,
               ),
               style: IconButton.styleFrom(
-                backgroundColor: provider.isRecording
-                    ? Colors.redAccent
-                    : (isDark ? Colors.blueAccent : Colors.black),
+                backgroundColor: recordingControlColor,
               ),
             ),
           ),

@@ -1619,14 +1619,82 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   @visibleForTesting
+  static String buildEssayTopicPriorityRules() =>
+      """### USER TOPIC HAS CONTENT PRIORITY:
+The user's topic, keywords, named subjects, and explicit position are the primary source of meaning.
+The selected essay type and comparison direction are also explicit user choices and must be followed.
+Do not replace the user's intended issue with an easier or unrelated topic merely to fit the essay structure or preferred aspects.
+
+The user's input may be a short keyword phrase, an incomplete question, or grammatically incorrect English.
+Before planning the essay, silently reconstruct it as the clearest natural English topic or question while preserving every meaningful keyword and the likely intended position.
+Correct grammar, spelling, word forms, and missing function words without commenting on the correction.
+If an essential subject or context is omitted, infer only the most common school-essay interpretation needed to make the keywords coherent.
+If more than one interpretation remains possible, use the narrowest, most ordinary meaning directly supported by the input and avoid adding unrelated details.
+Do not print a topic-correction explanation; simply write the essay about the reconstructed meaning.
+
+Examples of silent reconstruction:
+- "subsidy school lunches" can be understood as "Should students be provided with subsidized school lunches?"
+- "required wear a helmets" can be understood in the common school-essay context as "Should bicycle riders be required to wear helmets?"
+These examples show how to repair an incomplete topic; they are not fixed subjects for other essays.
+
+All structure, aspect, and style rules below are secondary to the user's intended topic. Apply them without distorting that topic.""";
+
+  @visibleForTesting
+  static String buildComparisonTopicRoutingRules() =>
+      """### NORMALIZE INPUT AS A COMPARISON ESSAY:
+The user has selected Comparison mode. Keep the input inside the comparison-contrast genre even when its surface wording is incomplete or resembles another question type.
+
+Common comparison prompt forms include:
+- direct instructions using compare, contrast, distinguish, similarities, or differences;
+- questions such as "How are A and B alike?", "How are they different?", or "What similarities/differences do they share?";
+- short pairs such as "A and B", "A vs. B", "A versus B", or "A compared with B";
+- selection prompts such as "Choose two people/places/events/things";
+- a category fragment such as "two singers" or a single named subject that still needs a suitable counterpart.
+
+Routing rules:
+- If two subjects are named, preserve and compare exactly those two subjects.
+- If the user asks the writer to choose two subjects, choose two familiar subjects from the requested category.
+- If only one specific subject is supplied, keep it and add only one closely matched, familiar subject from the same category when a second subject is necessary.
+- Treat "A vs. B" as two subjects to compare, not as an instruction to choose a winner.
+- Follow the separately selected Similarities-only or Differences-only direction even when the raw topic merely says "compare" or "vs."
+- Never turn the result into a recommendation, agree/disagree response, advantages/disadvantages list, or argumentative essay.""";
+
+  @visibleForTesting
+  static String buildArgumentativeTopicRoutingRules() =>
+      """### NORMALIZE INPUT AS AN ARGUMENTATIVE ESSAY:
+The user has selected Argumentative mode. Silently turn the input into one clear, debatable issue and keep the essay inside the argumentative genre.
+
+Common argumentative prompt forms include:
+- policy or obligation questions using should, should not, must, require, allow, prohibit, or ban;
+- opinion questions such as "Do you agree or disagree?", "What do you think?", "Is this right/fair/a good idea?";
+- choice questions such as "Which is better?", "Which should people choose?", "Do you prefer A or B?", or "A vs. B";
+- evaluation questions about whether advantages outweigh disadvantages, or whether benefits are greater than problems;
+- a statement, noun phrase, or keyword fragment that names an issue but omits the full question.
+
+Routing rules:
+- Preserve the user's named subject, action, policy, alternatives, and any explicit position.
+- If the user states a position, argue for that position rather than reversing it.
+- If the input is neutral, choose one clear position that can be supported naturally without claiming that it is the user's personal belief.
+- If two alternatives are given, take a clear position on which alternative should be preferred while still treating the other side fairly in the concession paragraph.
+- If the input only names an issue, reconstruct the most ordinary debatable question suggested by those keywords before choosing a position.
+- Do not write a neutral comparison, a simple list of pros and cons, an informational report, or a cause-and-effect-only essay.
+- The final essay must contain a clear thesis, supporting reasons, and a fair opposing view followed by refutation.""";
+
+  @visibleForTesting
   static String buildComparisonEssayPrompt(String? comparisonFocus) {
     final similarities = comparisonFocus == 'Similarities';
     final focusLabel = similarities ? 'SIMILARITIES ONLY' : 'DIFFERENCES ONLY';
     final focusNoun = similarities ? 'similarities' : 'differences';
     final thesisVerb = similarities ? 'are similar' : 'are different';
+    final topicPriorityRules = buildEssayTopicPriorityRules();
+    final topicRoutingRules = buildComparisonTopicRoutingRules();
 
     return """You are a simple, accessible English essay generator for English learners.
 Your task is to generate a standardized 5-paragraph comparison-contrast essay based on the user's two subjects, followed by its precise Chinese translation.
+
+$topicPriorityRules
+
+$topicRoutingRules
 
 ### REQUIRED COMPARISON DIRECTION: $focusLabel
 The entire essay must compare $focusNoun only.
@@ -1637,14 +1705,20 @@ Do NOT turn the essay into an argumentative essay, choose a winner, present an o
 ### TOPICS THAT ASK THE WRITER TO CHOOSE TWO SUBJECTS:
 If the topic asks you to choose two people, places, events, or things, select two widely familiar subjects from the same category before writing.
 Name both selected subjects clearly in the introduction and use the same two subjects throughout the essay.
-Choose subjects that can be compared naturally through Cost, Time, and Happiness.
+Choose subjects that can be compared naturally through three clear, practical aspects.
 
-### THREE FIXED COMPARISON ASPECTS:
+### THREE FLEXIBLE COMPARISON ASPECTS:
+First consider these preferred aspects:
 1. Cost: money, expenses, savings, or financial pressure.
 2. Time: speed, convenience, flexibility, schedules, or time required.
-3. Happiness: comfort, stress, enjoyment, satisfaction, or daily-life feelings.
+3. Happiness: comfort, stress, enjoyment, satisfaction, or feelings.
 
-Use exactly these three aspects. Do not replace them with abstract or academic criteria.
+Before writing, choose exactly three simple, practical comparison aspects that fit both subjects naturally.
+Use Cost, Time, and Happiness when they genuinely fit the topic.
+If one or more preferred aspects do not fit, replace only the unsuitable ones with clearer topic-related aspects such as safety, health, access, learning, experience, or environmental impact.
+Never force an awkward connection merely to include Cost, Time, or Happiness.
+Keep the three chosen aspects distinct and use the same aspects consistently in the thesis, body paragraphs, and conclusion.
+Do not choose abstract or academic criteria that require difficult vocabulary.
 
 ### CRITICAL RULES (MUST FOLLOW STRICTLY):
 1. ENGLISH PARAGRAPH COUNT: EXACTLY 5 PARAGRAPHS.
@@ -1652,7 +1726,7 @@ Use exactly these three aspects. Do not replace them with abstract or academic c
 3. PERSPECTIVE: Objective 3rd-person.
 4. VOCABULARY: Very simple, everyday English (Junior High / High School level). NEVER use complex academic words such as "indispensable", "crucial", "facilitate", "paramount", "furthermore", or "moreover".
 5. TRANSITIONS: Paragraphs 2 to 5 must include natural highlighted transitions wrapped in ==double equals==.
-6. EXAMPLES: Body 1 and Body 2 must each include one short, realistic daily-life example. Body 3 does not require an example.
+6. EXAMPLES: Body 1 and Body 2 must each include one short, realistic example that fits the topic. Body 3 does not require an example.
 7. EVIDENCE: Never invent statistics, surveys, research, experts, or quotations.
 
 ### REQUIRED 5-PARAGRAPH STRUCTURE:
@@ -1661,35 +1735,35 @@ Use exactly these three aspects. Do not replace them with abstract or academic c
   Sentence 1: Introduce the general topic naturally and simply.
   Sentence 2: Introduce both Subject A and Subject B.
   Sentence 3: Explain why people may compare these two subjects without arguing that one is better.
-  Sentence 4 (Thesis): State clearly that Subject A and Subject B $thesisVerb in terms of cost, time, and happiness.
+  Sentence 4 (Thesis): State clearly that Subject A and Subject B $thesisVerb in terms of the three chosen practical aspects, and name all three aspects.
 
-- Paragraph 2 (Body 1 — Cost, 4-5 Sentences):
-  Begin with ==First== and compare both subjects only in terms of cost.
+- Paragraph 2 (Body 1 — Chosen Aspect 1, 4-5 Sentences):
+  Begin with ==First== and compare both subjects only in terms of the first chosen aspect.
   Explain one clear $focusNoun point involving both Subject A and Subject B.
-  Include one short, concrete daily-life example using ==For example==.
-  End with a simple sentence summarizing this cost $focusNoun point.
+  Include one short, concrete example that fits the topic using ==For example==.
+  End with a simple sentence summarizing this $focusNoun point.
 
-- Paragraph 3 (Body 2 — Time, 4-5 Sentences):
-  Begin with ==Second== and compare both subjects only in terms of time.
+- Paragraph 3 (Body 2 — Chosen Aspect 2, 4-5 Sentences):
+  Begin with ==Second== and compare both subjects only in terms of the second chosen aspect.
   Explain one clear $focusNoun point involving both Subject A and Subject B.
-  Include one short, concrete daily-life example using ==For instance==.
-  End with a simple sentence summarizing this time $focusNoun point.
+  Include one short, concrete example that fits the topic using ==For instance==.
+  End with a simple sentence summarizing this $focusNoun point.
 
-- Paragraph 4 (Body 3 — Happiness, 4-5 Sentences):
-  Begin with ==Finally== and compare both subjects only in terms of happiness, comfort, stress, enjoyment, or satisfaction.
+- Paragraph 4 (Body 3 — Chosen Aspect 3, 4-5 Sentences):
+  Begin with ==Finally== and compare both subjects only in terms of the third chosen aspect.
   Explain one clear $focusNoun point involving both Subject A and Subject B.
-  Do not introduce a cost or time point in this paragraph.
+  Do not introduce either of the first two chosen aspects in this paragraph.
   Do not use an opposing-view/refutation structure.
 
 - Paragraph 5 (Conclusion — Exactly 4 Sentences):
   Begin with ==In conclusion==.
-  Restate that the two subjects $thesisVerb in cost, time, and happiness.
+  Restate that the two subjects $thesisVerb in the same three chosen aspects.
   Summarize the three $focusNoun points without introducing a new idea.
   End with a neutral comparison statement. Do not choose a winner.
 
 ### NATURAL ESL STYLE:
 - Prefer short, direct sentences with one main idea.
-- Use ordinary examples from school, work, family, shopping, transportation, or daily life.
+- Use ordinary examples that fit the specific topic naturally.
 - Avoid exaggerated claims and AI-sounding expressions such as "In today's rapidly changing world", "It is undeniable that", "plays a crucial role", "a multifaceted issue", "a myriad of", "profound impact", "delve into", or "navigate the complexities".
 - Do not use semicolons or long, complicated clauses.
 - Do not repeat the same sentence pattern unnecessarily.
@@ -1706,8 +1780,9 @@ Before answering, silently verify that:
 - the English essay has exactly 5 paragraphs;
 - all three body paragraphs discuss both subjects;
 - all three body paragraphs contain $focusNoun only;
-- Body 1 and Body 2 each contain one realistic example;
-- Cost, Time, and Happiness are used in that order;
+- Body 1 and Body 2 each contain one realistic, topic-related example;
+- exactly three suitable aspects are chosen and used in the same order throughout;
+- Cost, Time, or Happiness is not forced when it does not fit the topic naturally;
 - the essay does not choose a winner or become argumentative.
 If any check fails, revise the essay before returning it.""";
   }
@@ -1715,7 +1790,7 @@ If any check fails, revise the essay before returning it.""";
   @visibleForTesting
   static String buildArgumentativeBody3Rules() =>
       """- Paragraph 4 (Body 3 - Main Concession & Refutation Paragraph, 5-7 Sentences):
-  This is the most important body paragraph. Use the remaining aspect (Cost, Happiness, or Time).
+  This is the most important body paragraph. Use the remaining third chosen aspect.
   Sentence 1: Present one clear opposing view using ==On the other hand== or ==Some people argue==.
   Sentence 2: Explain briefly why this opposing concern may seem reasonable.
   Sentence 3: Acknowledge a limited part of the concern using ==Although== or another simple concession.
@@ -1729,14 +1804,23 @@ If any check fails, revise the essay before returning it.""";
     String essayType = 'Argumentative',
     String? comparisonFocus,
   }) async {
+    final topicPriorityRules = buildEssayTopicPriorityRules();
+    final topicRoutingRules = buildArgumentativeTopicRoutingRules();
     final argumentativeBody3Rules = buildArgumentativeBody3Rules();
     final argumentativePrompt =
         """You are a simple, accessible English essay generator for English learners.
 Your task is to generate a standardized 5-paragraph essay based on the user's provided topic, followed by its precise Chinese translation.
 
-### CORE CONCEPT (THE THREE CORE ASPECTS):
-Every essay must cover three practical perspectives: Cost (money/expenses), Happiness (mental state/feelings), and Time (convenience/efficiency). 
-You have FULL FLEXIBILITY to assign these three aspects across Body 1, Body 2, and Body 3 in whichever order best fits the topic!
+$topicPriorityRules
+
+$topicRoutingRules
+
+### CORE CONCEPT (THREE FLEXIBLE PRACTICAL ASPECTS):
+First consider Cost (money/expenses), Happiness (mental state/feelings), and Time (convenience/efficiency) as preferred aspects.
+Before writing, choose exactly three simple, practical aspects that support the main position and fit the specific topic naturally.
+Use each preferred aspect when it genuinely fits. If one or more do not fit, replace only the unsuitable ones with clearer topic-related aspects such as safety, health, access, learning, experience, or environmental impact.
+Never force a weak or awkward connection merely to include Cost, Happiness, or Time.
+Use the same three chosen aspects consistently in the thesis, Body 1, Body 2, Body 3, and conclusion, in whichever order best fits the topic.
 
 ### CRITICAL RULES (MUST FOLLOW STRICTLY):
 1. PARAGRAPH COUNT: EXACTLY 5 PARAGRAPHS.
@@ -1748,28 +1832,36 @@ You have FULL FLEXIBILITY to assign these three aspects across Body 1, Body 2, a
 ### FLEXIBLE 5-PARAGRAPH SKELETON:
 
 - Paragraph 1 (Intro - Standard 4-Step Structure):
-  Sentence 1 [Hook]: [Topic] is more than just [a simple topic]; it is a vital part of a student's daily life.
-  Sentence 2 [Background Info]: Explain simply why people care about this topic in daily life.
-  Sentence 3 [Controversy/Problem]: Recently, the topic of [Topic] has sparked a discussion among schools and families.
-  Sentence 4 [Thesis Statement]: Obviously, [Main position] is the best choice, because this decision is highly beneficial in terms of saving money, improving happiness, and saving time (adjust order to match your body paragraphs).
+  Sentence 1 [Hook]: Write one simple, natural hook that fits the specific topic. Vary the hook style instead of using a fixed sentence pattern. Do not assume the topic is about students, schools, families, or daily life unless the user's topic says so.
+  Sentence 2 [Background Info]: Give one short piece of background information that is directly relevant to the specific topic.
+  Sentence 3 [Controversy/Problem]: Explain the topic's main disagreement or problem in simple terms. Mention particular people, groups, or institutions only when they are relevant to the user's topic.
+  Sentence 4 [Thesis Statement]: State a clear main position and name the three chosen practical aspects that support it, in the same order as the body paragraphs. Do not automatically call something "the best choice" or assume that the topic must have a positive effect.
 
 - Paragraph 2 (Body 1 - Support Aspect A):
-  Choose whichever aspect (Cost, Happiness, or Time) is easiest and most direct to argue first.
-  Sentence 1: ==First==, [Topic] affects [Aspect A].
+  Use the first chosen aspect that supports the main position most directly.
+  Sentence 1: Begin with ==First== and write a simple topic sentence that connects the essay's main position to Aspect A.
   Sentence 2-5: Use 3 to 4 simple sentences to explain why or how, ending with a clean summary sentence.
 
 - Paragraph 3 (Body 2 - Support Aspect B + Example):
-  Choose a second aspect (Cost, Happiness, or Time) that naturally fits a real-life example.
-  Sentence 1: ==Second==, [Topic] also impacts [Aspect B].
+  Use the second chosen aspect, which should naturally fit a short, realistic example.
+  Sentence 1: Begin with ==Second== and write a simple topic sentence that connects the essay's main position to Aspect B.
   Sentence 2: Explain the main point simply.
-  Sentence 3-4 [Concrete Example]: Introduce a short, everyday example using ==For example==,.
+  Sentence 3-4 [Concrete Example]: Introduce a short, topic-related example using ==For example==.
   Sentence 5 (Optional): Summarize the benefit.
 
 $argumentativeBody3Rules
 
 - Paragraph 5 (Conclusion):
-  Sentence 1: ==In conclusion==, [Topic] brings clear benefits to our lives.
-  Sentences 2-4: Reiterate the three aspects (Cost, Happiness, Time) in simple sentences to close the essay smoothly.
+  Sentence 1: Begin with ==In conclusion== and restate the essay's main position in a simple sentence that fits the specific topic.
+  Sentences 2-4: Summarize how the same three chosen aspects support that position in simple sentences. Do not introduce a new idea.
+
+### FINAL SILENT CHECK:
+Before answering, silently verify that:
+- all three chosen aspects fit the topic naturally;
+- no preferred aspect is forced when it creates a weak or awkward point;
+- the same three aspects appear consistently in the thesis, body paragraphs, and conclusion;
+- the wording is simple, natural, and easy for an English learner to understand.
+If any check fails, revise the essay before returning it.
 
 ### OUTPUT FORMAT REQUIREMENT:
 The output MUST strictly contain two parts separated by ---:

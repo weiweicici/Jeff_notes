@@ -1,22 +1,18 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter_markdown/flutter_markdown.dart';
-import 'package:markdown/markdown.dart' as md;
 import 'package:intl/intl.dart';
 import 'package:crypto/crypto.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:provider/provider.dart';
 import 'dart:convert';
 import 'dart:io';
 import '../models.dart';
-import '../recording_provider.dart';
 import '../services/grammar_service.dart';
 import '../services/grammar_repository.dart';
 import '../services/supabase_config.dart';
 import '../services/upload_cache.dart';
-import '../services/tts_service.dart';
-import '../widgets/academic_markdown.dart';
+import '../services/file_sync_agent.dart';
 import 'history_screen.dart';
+import 'note_detail_screen.dart';
 
 class GrammarWritingScreen extends StatefulWidget {
   final GrammarUnit? unit;
@@ -29,7 +25,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
   List<GrammarPart>? _parts;
   GrammarPart? _selectedPart;
   Set<GrammarUnit> _selectedUnits = {};
-  Set<GrammarPart> _selectedParts = {};
+  final Set<GrammarPart> _selectedParts = {};
   String? _selectedTheme;
   bool _isLoading = false;
   bool _isSaving = false;
@@ -98,14 +94,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
           _selectedTheme!,
         );
         if (mounted) {
-          setState(() {
-            _result = result;
-            _isLoading = false;
-          });
-          _showResultDialog();
-          unawaited(_playEnglish(context, startDictation: true));
-          // 自动保存至存档中心（后台发起）
-          if (mounted) _saveToArchive();
+          await _openGeneratedWriting(result);
         }
       } else {
         final unit = _selectedUnits.isNotEmpty
@@ -121,220 +110,38 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
           focusUnits: unitTitles.isNotEmpty ? unitTitles : null,
         );
         if (mounted) {
-          setState(() {
-            _result = result;
-            _isLoading = false;
-          });
-          _showResultDialog();
-          unawaited(_playEnglish(context, startDictation: true));
-          // 自动保存至存档中心（后台发起）
-          if (mounted) _saveToArchive();
+          await _openGeneratedWriting(result);
         }
       }
     } catch (e) {
-      if (mounted)
+      if (mounted) {
         setState(() {
           _isLoading = false;
           _result = '生成失败: $e';
         });
-    }
-  }
-
-  void _showResultDialog() {
-    if (_result.isEmpty) return;
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => AlertDialog(
-        title: Row(
-          children: [
-            const Text('✍️ 写作范文', style: TextStyle(fontSize: 18)),
-            const Spacer(),
-            IconButton(
-              icon: const Icon(Icons.close, size: 18),
-              onPressed: () => Navigator.pop(ctx),
-            ),
-          ],
-        ),
-        content: SizedBox(
-          width: double.maxFinite,
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  '📖 英文范文',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                _buildEnglishSection(_result),
-                const SizedBox(height: 24),
-                const Text(
-                  '🇨🇳 中文翻译',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                _buildChineseSection(_result),
-                const SizedBox(height: 24),
-                const Text(
-                  '🏷️ 语法标注',
-                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-                ),
-                const SizedBox(height: 8),
-                MarkdownBody(
-                  data: _getAnnotationText(_result),
-                  softLineBreak: true,
-                  selectable: true,
-                  styleSheet: getAcademicMarkdownStyle(context),
-                  extensionSet: md.ExtensionSet(
-                    [const md.FencedCodeBlockSyntax()],
-                    [md.EmojiSyntax(), HighlightSyntax()],
-                  ),
-                  builders: {'highlight': HighlightBuilder(context)},
-                ),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.volume_up),
-            tooltip: '朗读英文',
-            onPressed: () => _playEnglish(ctx),
-          ),
-          TextButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _saveToArchive();
-            },
-            child: const Text('💾 保存'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Future<void> _playEnglish(
-    BuildContext dialogContext, {
-    bool startDictation = false,
-  }) async {
-    final englishContent = _getEnglishText(_result);
-    if (englishContent.isEmpty) return;
-    try {
-      final tts = TtsService();
-      final provider = context.read<RecordingProvider>();
-      if (startDictation) {
-        await tts.startEnglishDictation(
-          englishContent,
-          geminiKey: provider.geminiKey,
-          siliconFlowKey: provider.siliconFlowKey,
-        );
-      } else {
-        await tts.speakEnglish(
-          englishContent,
-          geminiKey: provider.geminiKey,
-          siliconFlowKey: provider.siliconFlowKey,
-        );
-      }
-    } catch (e) {
-      final isUnsafeRoute =
-          e.toString().contains('NoHeadphones') ||
-          e.toString().contains('Unsafe audio route');
-      if (dialogContext.mounted && isUnsafeRoute) {
-        ScaffoldMessenger.of(dialogContext).showSnackBar(
-          SnackBar(
-            content: Text(
-              startDictation
-                  ? '⚠️ 范文已生成；连接耳机后点击播放即可听写练习'
-                  : '⚠️ 未检测到耳机 (${e.toString().replaceAll("Exception: ", "")})',
-              style: const TextStyle(fontSize: 13),
-            ),
-            backgroundColor: Colors.orange,
-            duration: const Duration(seconds: 5),
-          ),
-        );
       }
     }
   }
 
-  String _getEnglishText(String full) {
-    const startTag = '## 英文全文';
-    const endTag = '## 中文翻译';
-    final start = full.indexOf(startTag);
-    if (start == -1) return '';
-    final end = full.indexOf(endTag, start + startTag.length);
-    return end > start
-        ? full.substring(start + startTag.length, end).trim()
-        : full.substring(start + startTag.length).trim();
-  }
+  Future<void> _openGeneratedWriting(String result) async {
+    setState(() {
+      _result = result;
+      _isLoading = false;
+    });
 
-  // 构建英文全文部分
-  Widget _buildEnglishSection(String full) {
-    const startTag = '## 英文全文';
-    const endTag = '## 中文翻译';
-    final start = full.indexOf(startTag);
-    if (start == -1) return const SizedBox();
-    final end = full.indexOf(endTag, start + startTag.length);
-    final content = end > start
-        ? full.substring(start + startTag.length, end).trim()
-        : full.substring(start + startTag.length).trim();
-    return MarkdownBody(
-      data: content,
-      softLineBreak: true,
-      selectable: true,
-      styleSheet: getAcademicMarkdownStyle(context),
-      extensionSet: md.ExtensionSet(
-        [const md.FencedCodeBlockSyntax()],
-        [md.EmojiSyntax(), HighlightSyntax()],
+    final file = await _saveToArchive();
+    if (!mounted || file == null) return;
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => NoteDetailScreen(file: file, autoPlayEnglish: true),
       ),
-      builders: {'highlight': HighlightBuilder(context)},
     );
   }
 
-  // 构建中文翻译部分
-  Widget _buildChineseSection(String full) {
-    const chineseTag = '## 中文翻译';
-    const annotationTag = '## 语法标注';
-    final chineseStart = full.indexOf(chineseTag);
-    if (chineseStart == -1) return const SizedBox();
-    final chineseEnd = full.indexOf(
-      annotationTag,
-      chineseStart + chineseTag.length,
-    );
-    final content = chineseEnd > chineseStart
-        ? full.substring(chineseStart + chineseTag.length, chineseEnd).trim()
-        : full.substring(chineseStart + chineseTag.length).trim();
-    return MarkdownBody(
-      data: content,
-      softLineBreak: true,
-      selectable: true,
-      styleSheet: getAcademicMarkdownStyle(context),
-      extensionSet: md.ExtensionSet(const [], const []),
-      builders: {},
-    );
-  }
-
-  // 获取语法标注文本
-  String _getAnnotationText(String full) {
-    const annotationTag = '## 语法标注';
-    final start = full.indexOf(annotationTag);
-    if (start == -1) return '';
-    return full.substring(start).trim();
-  }
-
-  Future<void> _saveToArchive() async {
-    if (_result.isEmpty || _isSaving) return;
-
-    var userId = '';
-    try {
-      userId = SupabaseConfig.currentUserId;
-    } catch (e) {
-      // 未登录，user_id 留空
-    }
+  Future<File?> _saveToArchive() async {
+    if (_result.isEmpty || _isSaving) return null;
 
     setState(() {
       _isSaving = true;
@@ -358,12 +165,42 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
       final file = File('${directory.path}/$filename');
       await file.writeAsString(contentMd);
       debugPrint('[Grammar Save] Saved to local file: ${file.path}');
+      // The detail page and automatic dictation must not wait for cloud sync.
+      unawaited(_syncArchive(file, filename, contentMd));
+      return file;
+    } catch (e) {
+      debugPrint('[Grammar Save Error] $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('❌ 保存失败: $e'), backgroundColor: Colors.red),
+        );
+      }
+      return null;
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false;
+        });
+      }
+    }
+  }
 
-      // 2. 同步到 Supabase
-      // [BUG-06 Fix] 哈希值只基于内容，不加时间戳，相同内容产生相同 hash，
-      // 这样 UploadCache 去重才能生效，防止每次点击“保存”都无限重复插入。
+  Future<void> _syncArchive(
+    File file,
+    String filename,
+    String contentMd,
+  ) async {
+    try {
+      var userId = '';
+      try {
+        userId = SupabaseConfig.currentUserId;
+      } catch (_) {
+        // FileSyncAgent will retry after authentication becomes available.
+      }
+
+      // Hash only the content so repeated saves remain idempotent.
       final hash = md5.convert(utf8.encode(contentMd)).toString();
-      final map = {
+      final map = <String, dynamic>{
         'module': 'grammar',
         'title': filename,
         'content_md': contentMd,
@@ -378,29 +215,13 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
       await SupabaseConfig.client
           .from('archives')
           .upsert(map, onConflict: 'file_hash');
-      // [BUG-14 Fix] 标记为已上传，防止 FileSyncAgent 下次扫描时再次 insert
       await UploadCache.mark(hash);
-
-      if (mounted && userId.isNotEmpty) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('✅ 已保存到本地 .md 文件与存档中心'),
-            backgroundColor: Colors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      debugPrint('[Grammar Save Error] $e');
-      if (mounted && !e.toString().contains('Not authenticated')) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ 保存失败: $e'), backgroundColor: Colors.red),
-        );
-      }
+    } catch (error) {
+      debugPrint('[Grammar Supabase Upload Error] $error');
     } finally {
-      if (mounted)
-        setState(() {
-          _isSaving = false;
-        });
+      if (await file.exists()) {
+        await FileSyncAgent.instance.syncNow();
+      }
     }
   }
 

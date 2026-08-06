@@ -20,6 +20,51 @@ import 'smart_vocab_screen.dart';
 
 enum _NoteMenuAction { toggleRendered, extractVocab, exportPdf, delete }
 
+/// Extracts only Part 1 from generated essay output. Essay models commonly
+/// return either Markdown headings or `Part 1 / --- / Part 2` labels.
+@visibleForTesting
+String extractGeneratedEssayEnglish(String fullText) {
+  final lines = fullText.split('\n');
+  var start = -1;
+
+  for (var index = 0; index < lines.length; index++) {
+    final line = lines[index].trim();
+    final lower = line.toLowerCase();
+    if (line.contains('英文全文') ||
+        lower.contains('english essay') ||
+        lower.contains('english transcript') ||
+        RegExp(r'^#{0,3}\s*part\s*1\b', caseSensitive: false).hasMatch(line)) {
+      start = index + 1;
+      break;
+    }
+  }
+
+  // The essay prompt guarantees English first and Chinese second. If a model
+  // omitted the Part 1 label, use the content before the separator.
+  start = start < 0 ? 0 : start;
+  final captured = <String>[];
+  for (var index = start; index < lines.length; index++) {
+    final line = lines[index].trim();
+    final lower = line.toLowerCase();
+    if (line == '---' ||
+        line.contains('中文翻译') ||
+        RegExp(r'^#{0,3}\s*part\s*2\b', caseSensitive: false).hasMatch(line) ||
+        lower.contains('chinese translation')) {
+      break;
+    }
+    if (line.isNotEmpty) captured.add(line);
+  }
+
+  return captured.join('\n\n').trim();
+}
+
+@visibleForTesting
+bool supportsEnglishDictationDocument(String filePath) {
+  final fileName = filePath.split('/').last;
+  return fileName.startsWith('Jeff_Essay_') ||
+      fileName.startsWith('Jeff_Grammar_');
+}
+
 class NoteDetailScreen extends StatefulWidget {
   final File file;
   final bool autoPlayEnglish;
@@ -284,6 +329,12 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
 
   /// 提取 MD 文件中的纯英文部分，供 AI TTS 播放。
   String _extractEnglishOnly(String fullText) {
+    final fileName = widget.file.path.split('/').last;
+    if (fileName.startsWith('Jeff_Essay_')) {
+      final essayEnglish = extractGeneratedEssayEnglish(fullText);
+      if (essayEnglish.isNotEmpty) return essayEnglish;
+    }
+
     final lines = fullText.split('\n');
     bool inEnglishSection = false;
     final capturedLines = <String>[];
@@ -325,7 +376,6 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     if (capturedLines.isNotEmpty) return capturedLines.join('\n\n');
 
     // 策略 2：FreeTalk 模式
-    final fileName = widget.file.path.split('/').last;
     if (fileName.contains('FreeTalk')) {
       final firstBlank = fullText.indexOf('\n\n');
       if (firstBlank > 0 && firstBlank + 2 < fullText.length) {
@@ -843,10 +893,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                   chineseText: _chineseOnlyText ?? '',
                   englishText: _englishOnlyText ?? '',
                   recordedAudioPath: hasWav ? wavFile.path : null,
-                  enableEnglishDictation: widget.file.path
-                      .split('/')
-                      .last
-                      .startsWith('Jeff_Essay_'),
+                  enableEnglishDictation: supportsEnglishDictationDocument(
+                    widget.file.path,
+                  ),
                   siliconFlowKey: context
                       .read<RecordingProvider>()
                       .siliconFlowKey,

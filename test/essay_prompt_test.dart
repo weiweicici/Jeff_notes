@@ -3,6 +3,56 @@ import 'package:jeff_notes/recording_provider.dart';
 import 'package:jeff_notes/screens/essay_config_screen.dart';
 
 void main() {
+  group('Essay topic interpretation', () {
+    test('user meaning takes priority over structure and preferred aspects', () {
+      final rules = RecordingProvider.buildEssayTopicPriorityRules();
+
+      expect(rules, contains('USER TOPIC HAS CONTENT PRIORITY'));
+      expect(rules, contains('primary source of meaning'));
+      expect(rules, contains('silently reconstruct'));
+      expect(rules, contains('without distorting that topic'));
+    });
+
+    test('incomplete topic examples are reconstructed naturally', () {
+      final rules = RecordingProvider.buildEssayTopicPriorityRules();
+
+      expect(rules, contains('subsidy school lunches'));
+      expect(
+        rules,
+        contains('Should students be provided with subsidized school lunches?'),
+      );
+      expect(rules, contains('required wear a helmets'));
+      expect(
+        rules,
+        contains('Should bicycle riders be required to wear helmets?'),
+      );
+    });
+  });
+
+  group('Essay type routing', () {
+    test('comparison mode recognizes common forms without choosing a winner', () {
+      final rules = RecordingProvider.buildComparisonTopicRoutingRules();
+
+      expect(rules, contains('NORMALIZE INPUT AS A COMPARISON ESSAY'));
+      expect(rules, contains('compare, contrast, distinguish'));
+      expect(rules, contains('A vs. B'));
+      expect(rules, contains('If two subjects are named'));
+      expect(rules, contains('not as an instruction to choose a winner'));
+      expect(rules, contains('Never turn the result into a recommendation'));
+    });
+
+    test('argumentative mode recognizes common forms and requires a position', () {
+      final rules = RecordingProvider.buildArgumentativeTopicRoutingRules();
+
+      expect(rules, contains('NORMALIZE INPUT AS AN ARGUMENTATIVE ESSAY'));
+      expect(rules, contains('should, should not, must, require'));
+      expect(rules, contains('Do you agree or disagree?'));
+      expect(rules, contains('advantages outweigh disadvantages'));
+      expect(rules, contains('take a clear position'));
+      expect(rules, contains('opposing view followed by refutation'));
+    });
+  });
+
   group('Comparison-contrast prompt routing', () {
     test('similarities mode keeps all body paragraphs similarity-only', () {
       final prompt = RecordingProvider.buildComparisonEssayPrompt(
@@ -18,8 +68,13 @@ void main() {
       expect(prompt, contains('Do NOT mix similarities and differences'));
       expect(
         prompt,
-        contains('are similar in terms of cost, time, and happiness'),
+        contains(
+          'are similar in terms of the three chosen practical aspects',
+        ),
       );
+      expect(prompt, contains('Never force an awkward connection'));
+      expect(prompt, contains('USER TOPIC HAS CONTENT PRIORITY'));
+      expect(prompt, contains('NORMALIZE INPUT AS A COMPARISON ESSAY'));
     });
 
     test('differences mode keeps all body paragraphs difference-only', () {
@@ -34,12 +89,16 @@ void main() {
       );
       expect(
         prompt,
-        contains('Cost, Time, and Happiness are used in that order'),
+        contains(
+          'exactly three suitable aspects are chosen and used in the same order throughout',
+        ),
       );
       expect(prompt, contains('does not choose a winner'));
       expect(
         prompt,
-        contains('are different in terms of cost, time, and happiness'),
+        contains(
+          'are different in terms of the three chosen practical aspects',
+        ),
       );
       expect(
         prompt,
@@ -64,6 +123,7 @@ void main() {
     expect(rules, contains('Acknowledge a limited part'));
     expect(rules, contains('state the main refutation clearly'));
     expect(rules, contains('Sentence 7 (Optional)'));
+    expect(rules, contains('remaining third chosen aspect'));
   });
 
   group('Practiced essay presets', () {
@@ -104,6 +164,36 @@ void main() {
           'Banning smartphones in school vs. Allowing smartphones in school',
         ),
       );
+    });
+  });
+
+  group('Preset topic search', () {
+    test('searches all preset topics in English and Chinese', () {
+      expect(presetTopicCount, greaterThan(40));
+      expect(
+        searchPresetTopics('helmet').first.preset.chineseLabel,
+        '戴头盔 vs 不戴头盔',
+      );
+      expect(
+        searchPresetTopics('头盔').first.preset.topic,
+        contains('bicycle helmets'),
+      );
+    });
+
+    test('ranks incomplete assignment wording by matching keywords', () {
+      expect(
+        searchPresetTopics('subsidy school lunches').first.preset.topic,
+        'Free school lunches vs. Paid school lunches',
+      );
+      expect(
+        searchPresetTopics('required wear a helmets').first.preset.topic,
+        'Wearing bicycle helmets vs. Not wearing bicycle helmets',
+      );
+    });
+
+    test('empty queries stay available for unrestricted custom input', () {
+      expect(searchPresetTopics(''), isEmpty);
+      expect(searchPresetTopics('a'), isEmpty);
     });
   });
 }

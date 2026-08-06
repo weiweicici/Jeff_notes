@@ -2,32 +2,45 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 
-/// Keeps a panel open briefly on first display, then leaves all subsequent
-/// expansion/collapse decisions to the user.
+/// Keeps a panel open briefly, then automatically collapses it. Every manual
+/// expansion starts a fresh auto-hide countdown.
 class TimedExpansionController extends ChangeNotifier {
   TimedExpansionController({
     bool initiallyExpanded = true,
     Duration initialAutoHideDelay = const Duration(seconds: 30),
-  }) : _isExpanded = initiallyExpanded {
-    if (initiallyExpanded) {
-      _initialAutoHideTimer = Timer(initialAutoHideDelay, _collapseInitially);
-    }
+  }) : _isExpanded = initiallyExpanded,
+       _autoHideDelay = initialAutoHideDelay {
+    if (initiallyExpanded) _scheduleAutoHide();
   }
 
   bool _isExpanded;
-  Timer? _initialAutoHideTimer;
+  final Duration _autoHideDelay;
+  Timer? _autoHideTimer;
 
   bool get isExpanded => _isExpanded;
 
   void toggleManually() {
-    _initialAutoHideTimer?.cancel();
-    _initialAutoHideTimer = null;
     _isExpanded = !_isExpanded;
+    if (_isExpanded) {
+      _scheduleAutoHide();
+    } else {
+      _cancelAutoHide();
+    }
     notifyListeners();
   }
 
-  void _collapseInitially() {
-    _initialAutoHideTimer = null;
+  void _scheduleAutoHide() {
+    _cancelAutoHide();
+    _autoHideTimer = Timer(_autoHideDelay, _collapse);
+  }
+
+  void _cancelAutoHide() {
+    _autoHideTimer?.cancel();
+    _autoHideTimer = null;
+  }
+
+  void _collapse() {
+    _autoHideTimer = null;
     if (!_isExpanded) return;
     _isExpanded = false;
     notifyListeners();
@@ -35,7 +48,7 @@ class TimedExpansionController extends ChangeNotifier {
 
   @override
   void dispose() {
-    _initialAutoHideTimer?.cancel();
+    _cancelAutoHide();
     super.dispose();
   }
 }

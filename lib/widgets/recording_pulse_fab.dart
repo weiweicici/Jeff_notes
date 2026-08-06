@@ -53,20 +53,13 @@ class _RecordingPulseFABState extends State<RecordingPulseFAB>
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
 
-    // 颜色：录音中=红色, 暂停中=橙色, 待机=黑/蓝
-    final Color baseColor;
-    if (_isActivelyRecording) {
-      baseColor = Colors.redAccent;
-    } else if (widget.isPaused) {
-      baseColor = Colors.orange;
-    } else {
-      baseColor = isDark ? Colors.blueAccent : Colors.black;
-    }
+    // 录音控制使用低饱和灰色，保留图标和轻微脉冲来区分状态。
+    final baseColor = isDark ? const Color(0xFF555563) : Colors.grey.shade600;
 
     return Stack(
       alignment: Alignment.center,
       children: [
-        // 录音中：红色脉冲扩散动画
+        // 录音中：低存在感的灰色脉冲扩散动画
         if (_isActivelyRecording)
           ...List.generate(3, (index) {
             return AnimatedBuilder(
@@ -78,20 +71,20 @@ class _RecordingPulseFABState extends State<RecordingPulseFAB>
                   height: 56 + (progress * 80),
                   decoration: BoxDecoration(
                     shape: BoxShape.circle,
-                    color: Colors.redAccent.withOpacity(1.0 - progress),
+                    color: baseColor.withOpacity((1.0 - progress) * 0.28),
                   ),
                 );
               },
             );
           }),
-        // 暂停中：静态橙色光晕（无动画，视觉区分）
+        // 暂停中：静态灰色光晕（无动画，视觉区分）
         if (widget.isPaused)
           Container(
             width: 84,
             height: 84,
             decoration: BoxDecoration(
               shape: BoxShape.circle,
-              color: Colors.orange.withOpacity(0.22),
+            color: baseColor.withOpacity(0.12),
             ),
           ),
         FloatingActionButton(

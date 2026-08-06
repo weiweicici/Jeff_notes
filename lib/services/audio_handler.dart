@@ -10,7 +10,7 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   final RouteDetector routeDetector;
 
   MyAudioHandler({RouteDetector? routeDetector})
-      : routeDetector = routeDetector ?? const SystemRouteDetector() {
+    : routeDetector = routeDetector ?? const SystemRouteDetector() {
     player.playbackEventStream.listen((event) {
       playbackState.add(_transformEvent(event));
     });
@@ -19,7 +19,9 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     AudioSession.instance.then((session) {
       session.devicesChangedEventStream.listen((_) async {
         if (player.playing && !(await _isHeadphonesConnected())) {
-          debugPrint('[AudioHandler] Route changed to Speaker — stopping player immediately!');
+          debugPrint(
+            '[AudioHandler] Route changed to Speaker — stopping player immediately!',
+          );
           await player.stop();
         }
       });
@@ -29,7 +31,9 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     player.playingStream.listen((playing) async {
       if (!playing) return;
       if (!(await _isHeadphonesConnected())) {
-        debugPrint('[AudioHandler] playingStream — no headphones, stopping immediately.');
+        debugPrint(
+          '[AudioHandler] playingStream — no headphones, stopping immediately.',
+        );
         await player.stop();
       }
     });
@@ -51,14 +55,26 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   @override
   Future<void> play() async {
     if (!(await _isHeadphonesConnected())) {
-      debugPrint('[AudioHandler] Lock-screen play() blocked — no headphones connected.');
+      debugPrint(
+        '[AudioHandler] Lock-screen play() blocked — no headphones connected.',
+      );
       return; // Silently block playback without headphones
+    }
+    if (onPlayRequested != null) {
+      await onPlayRequested!();
+      return;
     }
     await player.play();
   }
 
   @override
-  Future<void> pause() => player.pause();
+  Future<void> pause() async {
+    if (onPauseRequested != null) {
+      await onPauseRequested!();
+      return;
+    }
+    await player.pause();
+  }
 
   @override
   Future<void> seek(Duration position) => player.seek(position);
@@ -71,6 +87,8 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   VoidCallback? onSkipNext;
   VoidCallback? onSkipPrevious;
+  Future<void> Function()? onPlayRequested;
+  Future<void> Function()? onPauseRequested;
 
   @override
   Future<void> skipToNext() async {
@@ -91,14 +109,16 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     bool? isPlaying,
     Uri? artUri,
   }) {
-    mediaItem.add(MediaItem(
-      id: 'tts_audio',
-      album: 'Jeff Notes Academic',
-      title: title,
-      artist: artist,
-      duration: duration ?? Duration.zero,
-      artUri: artUri,
-    ));
+    mediaItem.add(
+      MediaItem(
+        id: 'tts_audio',
+        album: 'Jeff Notes Academic',
+        title: title,
+        artist: artist,
+        duration: duration ?? Duration.zero,
+        artUri: artUri,
+      ),
+    );
   }
 
   PlaybackState _transformEvent(PlaybackEvent event) {

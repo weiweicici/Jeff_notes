@@ -1,5 +1,6 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/services/route_detector.dart';
+import 'package:jeff_notes/services/tts_service.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -130,6 +131,26 @@ void main() {
           isTrue,
         );
       }
+    });
+
+    test('11. Route monitor remains alive during dictation clip gaps', () {
+      expect(
+        TtsService.shouldKeepHeadphoneMonitorAlive(
+          isPlaying: false,
+          isDictationActive: true,
+        ),
+        isTrue,
+      );
+    });
+
+    test('12. Route monitor stops only after playback and dictation end', () {
+      expect(
+        TtsService.shouldKeepHeadphoneMonitorAlive(
+          isPlaying: false,
+          isDictationActive: false,
+        ),
+        isFalse,
+      );
     });
   });
 }

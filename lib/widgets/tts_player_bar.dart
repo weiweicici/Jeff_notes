@@ -3,6 +3,17 @@ import 'package:provider/provider.dart';
 import '../recording_provider.dart';
 import '../services/tts_service.dart';
 
+@visibleForTesting
+int initialTtsTabIndex({
+  required bool enableEnglishDictation,
+  required bool hasChinese,
+  required bool hasRecordedAudio,
+}) {
+  final englishIndex = (hasChinese ? 1 : 0) + (hasRecordedAudio ? 1 : 0);
+  if (enableEnglishDictation) return englishIndex;
+  return hasChinese ? 0 : (hasRecordedAudio ? 0 : englishIndex);
+}
+
 class TtsPlayerBar extends StatefulWidget {
   /// 纯中文总结文本（使用本地系统 TTS 0毫秒播放）
   final String chineseText;
@@ -39,18 +50,21 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
   void initState() {
     super.initState();
     final hasChinese = RegExp(r'[\u4e00-\u9fff]').hasMatch(widget.chineseText);
-    if (!hasChinese) {
-      final hasRecorded =
-          widget.recordedAudioPath != null &&
-          widget.recordedAudioPath!.isNotEmpty;
-      _selectedTab = hasRecorded ? 2 : 1;
-    }
+    final hasRecorded =
+        widget.recordedAudioPath != null &&
+        widget.recordedAudioPath!.isNotEmpty;
+    _selectedTab = initialTtsTabIndex(
+      enableEnglishDictation: widget.enableEnglishDictation,
+      hasChinese: hasChinese,
+      hasRecordedAudio: hasRecorded,
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _triggerEnglishPrefetch();
     });
   }
 
   void _triggerEnglishPrefetch() {
+    if (widget.enableEnglishDictation) return;
     if (widget.englishText.isNotEmpty && context.mounted) {
       final provider = Provider.of<RecordingProvider>(context, listen: false);
       TtsService().prefetchEnglish(
@@ -770,17 +784,27 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
         Row(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            IconButton(
-              icon: const Icon(Icons.replay_10_rounded),
-              iconSize: 22,
-              onPressed: () async {
-                final pos = tts.currentPosition;
-                final newPos = pos - const Duration(seconds: 10);
-                await tts.seekEnglish(
-                  newPos < Duration.zero ? Duration.zero : newPos,
-                );
-              },
-            ),
+            if (widget.enableEnglishDictation)
+              IconButton(
+                tooltip: '上一句',
+                icon: const Icon(Icons.skip_previous_rounded),
+                iconSize: 24,
+                onPressed: tts.isEnglishDictationPlaying
+                    ? tts.requestPreviousEnglishDictationSentence
+                    : null,
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.replay_10_rounded),
+                iconSize: 22,
+                onPressed: () async {
+                  final pos = tts.currentPosition;
+                  final newPos = pos - const Duration(seconds: 10);
+                  await tts.seekEnglish(
+                    newPos < Duration.zero ? Duration.zero : newPos,
+                  );
+                },
+              ),
             const SizedBox(width: 8),
             IconButton.filled(
               iconSize: 24,
@@ -811,14 +835,24 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
               },
             ),
             const SizedBox(width: 8),
-            IconButton(
-              icon: const Icon(Icons.forward_10_rounded),
-              iconSize: 22,
-              onPressed: () async {
-                final pos = tts.currentPosition;
-                await tts.seekEnglish(pos + const Duration(seconds: 10));
-              },
-            ),
+            if (widget.enableEnglishDictation)
+              IconButton(
+                tooltip: '下一句',
+                icon: const Icon(Icons.skip_next_rounded),
+                iconSize: 24,
+                onPressed: tts.isEnglishDictationPlaying
+                    ? tts.requestNextEnglishDictationSentence
+                    : null,
+              )
+            else
+              IconButton(
+                icon: const Icon(Icons.forward_10_rounded),
+                iconSize: 22,
+                onPressed: () async {
+                  final pos = tts.currentPosition;
+                  await tts.seekEnglish(pos + const Duration(seconds: 10));
+                },
+              ),
             const SizedBox(width: 8),
             IconButton(
               icon: const Icon(
@@ -918,8 +952,8 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                 Expanded(
                   child: Text(
                     tts.isEnglishDictationPlaying
-                        ? '听写中：第 ${tts.dictationSentenceIndex}/${tts.dictationSentenceCount} 句 · 第 ${tts.dictationRepeatIndex}/${tts.dictationRepeatCount} 次'
-                        : '听写：$sentenceCount 句 · 每句 3 次 · 约 ${_formatDuration(dictationEstimate)}',
+                        ? '${tts.isEnglishDictationExtraReplay ? "额外重播（不计次数）" : (tts.isEnglishDictationPaused ? "已暂停" : "听写第 ${tts.dictationCycleIndex} 轮")}：第 ${tts.dictationSentenceIndex}/${tts.dictationSentenceCount} 句 · 计划第 ${tts.dictationRepeatIndex}/${tts.dictationRepeatCount} 次'
+                        : '听写：$sentenceCount 句 · 每句 3 次 · 每轮约 ${_formatDuration(dictationEstimate)}',
                     style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
@@ -1185,7 +1219,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             ),
             const SizedBox(width: 3),
             Text(
-              isLoop ? '无限循环' : '播放1次',
+              widget.enableEnglishDictation
+                  ? (isLoop ? '整轮循环' : '只听1轮')
+                  : (isLoop ? '无限循环' : '播放1次'),
               style: TextStyle(
                 fontSize: 10,
                 fontWeight: isLoop ? FontWeight.bold : FontWeight.normal,
