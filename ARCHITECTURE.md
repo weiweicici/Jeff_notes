@@ -1003,4 +1003,20 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 - **循环模式与听写互斥**：`_applyAudioPlayerLoopMode()` 改为 `_isLoopMode && !_isEnglishDictationPlaying ? LoopMode.one : LoopMode.off`——听写进行中不施加整段单曲循环，避免与逐句切片冲突。
 - 播放条 UI：状态文案「听写第 N 轮：第 i/M 句 · 第 j/K 次」，「听写:X 句 · 每句 3 次 · 每轮约 Y 分钟」；听写模式下跳过英文预取（`_triggerEnglishPrefetch` 提前 return）。
 
+### 15.18 Follow-up：锁屏媒体控制 · 听写暂停门 & 快速重放防护
+
+> 本节覆盖 2026-08-06 第四批改动（未提交 commit），在听写机制上补上**锁屏/系统媒体控制**与**暂停恢复门控**。
+
+**锁屏媒体控制回调** — `lib/services/audio_handler.dart`（+46）
+
+- `MyAudioHandler` 新增 `onPlayRequested` / `onPauseRequested` 回调：锁屏/通知栏的播放、暂停按钮不再直接操作内部 `player`，而是先走回调，供 `TtsService` 拦截后控制听写状态机；未注册回调时保持原行为。播放/暂停仍保留"无耳机阻断"的 fail-closed 前置检查。
+
+**听写暂停门（DictationPauseGate）** — `lib/services/tts_service.dart`（+589）
+
+- 新增 `DictationPauseGate`（`isPaused` / `waitWhilePaused()` / `resume()` / `_dictationMediaPauseAt`）：锁屏暂停时挂起逐句播放循环，恢复后继续，避免句子切片被系统控制打断后错位。
+- 新增 `isRapidDictationMediaReplay()`：检测「暂停后立即恢复」的快速重放，防止重复触发的媒体事件让同句重播/跳句。
+- `_handleDictationMediaPause()` / `_handleDictationMediaPlay()` 与上述回调接线；`_applyAudioPlayerLoopMode()` 维持「循环模式且非听写」才施加单曲循环。
+
+**其他**：`tts_player_bar.dart`（+34）随听写 UI 与回调联动；`test/tts_loop_policy_test.dart`（+113）覆盖暂停门/快速重放/循环互斥。
+
 
