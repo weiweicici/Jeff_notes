@@ -992,4 +992,15 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 **其他**：`notes_screen.dart` 播放条自动收起 10s → 30s；`tts_player_bar.dart` 听写模式跳过英文预取；`timed_expansion_controller.dart` 重构（+37，`test/timed_expansion_controller_test.dart` 同步）。
 
+### 15.17 Follow-up：听写多轮循环 · 循环与听写互斥
+
+> 本节覆盖 2026-08-06 第三批改动（未提交 commit），在 15.15/15.16 的听写机制上新增**多轮循环**。
+
+**听写多轮循环** — `lib/services/tts_service.dart`（+400）、`lib/widgets/tts_player_bar.dart`、`test/tts_loop_policy_test.dart`
+
+- 新增 `dictationCycleIndex`（听写第几轮）与 `_dictationCycleIndex`：`startEnglishDictation` 在整篇句子播完一轮后若仍满足继续条件，自动进入下一轮，`_dictationCycleIndex++` 并复位句/次索引；`_isEnglishDictationPlaying` 全程保持，直到循环模式关闭或 runId 失效。
+- 新增静态判定 `shouldContinueEnglishDictation({loopEnabled, currentRunId}) = loopEnabled && runId == currentRunId`：听写仅当**循环模式开启且播放未被新调用打断**时才继续下一轮（对应 `test/tts_loop_policy_test.dart` 新增 3 用例）。
+- **循环模式与听写互斥**：`_applyAudioPlayerLoopMode()` 改为 `_isLoopMode && !_isEnglishDictationPlaying ? LoopMode.one : LoopMode.off`——听写进行中不施加整段单曲循环，避免与逐句切片冲突。
+- 播放条 UI：状态文案「听写第 N 轮：第 i/M 句 · 第 j/K 次」，「听写:X 句 · 每句 3 次 · 每轮约 Y 分钟」；听写模式下跳过英文预取（`_triggerEnglishPrefetch` 提前 return）。
+
 
