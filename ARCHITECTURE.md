@@ -1038,3 +1038,23 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 **其他**：`test/tts_headphone_safety_test.dart`（+21）新增 `shouldKeepHeadphoneMonitorAlive()` 静态判定（听写进行中即使暂停也保持耳机监视存活）及其 12 个用例。
 
+### 15.20 Follow-up：Essay 提示词重写 · 写作打通编辑页 · 听写句级导航
+
+> 本节覆盖 2026-08-06 第六批改动（未提交 commit）。本轮分三块：作文**提示词体系重构**、写作结果**直达编辑页**流程、以及听写的**句级导航/额外重播**。
+
+**Essay 提示词重写** — `lib/recording_provider.dart`（+164）& `test/essay_prompt_test.dart`（+96）
+
+- 新增三类提示词构造器：`buildEssayTopicPriorityRules()`（话题内容优先规则：重建最清晰的自然英文题目、保留关键语义与用户立场、直接照题目写、隐式推断最可能的校园作文语境——如 `required wear a helmets` → `Should bicycle riders be required to wear helmets?`，不做题目纠正说明）、`buildComparisonTopicRoutingRules()`（`NORMALIZE INPUT AS A COMPARISON ESSAY`：只做两选/共识/比较，绝不退化成推荐/同意反对/利弊清单/议论文）、`buildArgumentativeTopicRoutingRules()`（`NORMALIZE INPUT AS AN ARGUMENTATIVE ESSAY`：保留一个明确可辩论题、必须有清晰论点+理由+反方与驳斥，不写成中立比较/议论文体之外的体裁）。
+- 作文正文（含两栏）与重写提示词重构：正文要求四句结构与 `==First==`/`==Second==`/`==In conclusion==` 衔接、检查失败则修订后再返回；测试新增 topic interpretation / type routing / `USER TOPIC HAS CONTENT PRIORITY` / `Never force an awkward connection` 断言。
+
+**写作流程直达编辑页** — `lib/screens/grammar_writing_screen.dart`（+297）、`lib/screens/essay_config_screen.dart`（+335）
+
+- `grammar_writing_screen.dart` 移除结果 `AlertDialog` 与 `markdown` 渲染依赖，改为 `_openGeneratedWriting(result)` 直接打开结果编辑页；`Set` 字段加 `final`。
+- `essay_config_screen.dart` 保存流程改为 `unawaited(_syncSavedEssay(file, filename))` 后台非阻塞上传后 `FileSyncAgent.syncNow()`。
+- `note_detail_screen.dart`（+59）`extractGeneratedEssayEnglish()` （`@visibleForTesting`）抽取生成作文的英文 Part 1（截断于 `---`/中文/第二部分），供 `Jeff_Essay_*` 学的提取与自动播放。
+
+**听写句级导航与额外重播** — `lib/services/tts_service.dart`（+870 累计）、`lib/widgets/tts_player_bar.dart`（+92）
+
+- 新增句级控制回调：`requestNext/requestPreviousEnglishDictationSentence`（上一句/下一句）、`requestExtraEnglishDictationReplay()`（额外重播，不计入计划次数，配 `isEnglishDictationExtraReplay`）、`_wakeDictationCommandLoop()` 唤醒暂停中的命令循环。
+- 播放条新增上/下一句、快退/快进 10s（`skip_previous/skip_next`、`replay_10/forward_10`）；状态文案区分「额外重播（不计次数）/已暂停/听写第 N 轮」，并显示「第 i/M 句 · 计划第 j/K 次」；循环按钮区分「整轮循环」与「无限循环」。
+
