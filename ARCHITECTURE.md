@@ -1058,3 +1058,17 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 - 新增句级控制回调：`requestNext/requestPreviousEnglishDictationSentence`（上一句/下一句）、`requestExtraEnglishDictationReplay()`（额外重播，不计入计划次数，配 `isEnglishDictationExtraReplay`）、`_wakeDictationCommandLoop()` 唤醒暂停中的命令循环。
 - 播放条新增上/下一句、快退/快进 10s（`skip_previous/skip_next`、`replay_10/forward_10`）；状态文案区分「额外重播（不计次数）/已暂停/听写第 N 轮」，并显示「第 i/M 句 · 计划第 j/K 次」；循环按钮区分「整轮循环」与「无限循环」。
 
+### 15.21 Follow-up：录音按钮改低饱和灰色 · Essay 预设话题搜索
+
+> 本节覆盖 2026-08-06 第七批改动（未提交 commit）。本轮为 UI 收敛与话题检索增强。
+
+**录音控制改低饱和灰色** — `lib/widgets/recording_pulse_fab.dart`（+19）、`lib/screens/notes_screen.dart`（+13）
+
+- 录音/暂停/待机三态不再用红/橙/蓝高饱和色，统一为低饱和灰（暗色 `0xFF555563`，亮色 `grey.shade600`）；状态靠图标与轻微脉冲区分，暂停态为静态灰色光晕，脉冲扩散透明度降为 `(1.0-progress)*0.28`。notes 页顶部暂停/停止按钮同步改用 `recordingControlColor`。
+
+**Essay 预设话题搜索** — `lib/screens/essay_config_screen.dart`（+456 累计）
+
+- 新增 `PresetTopicSearchResult`、`searchPresetTopics()`：对预设话题（`presetTopicsByCategory`，英文 topic + 中文 `chineseLabel`）做中英文 token 化匹配（`_normalizeTopicSearchText` / `_topicSearchTokenMatches`），按命中得分排序返回。
+- 新增 `_buildTopicSearchField()`（Autocomplete + `fieldViewBuilder`，支持中英文输入，placeholder 如「头盔、helmet、subsidy school lunches」）、`_selectSearchedTopic()`（命中后自动选定分类、预设并默认 Comparison 类型）；新增 `_customFocusNode` 与 `presetTopicCount`。
+- 附带大量深浅色主题化（`grey[400]/[600]`、`0xFF28283C` 卡片、`blueAccent` 高亮）与 `_syncSavedEssay` 非阻塞保存。
+
