@@ -61,6 +61,8 @@ class SessionBackgroundProcessor {
   Future<void> _process(HandoverPayload payload) async {
     final ctx = payload.context;
     bool writeVerified = false;
+    bool finalizationIncomplete = false;
+    String? finalizationWarning;
 
     unawaited(
       DiagnosticLogService.instance.record(
@@ -75,7 +77,16 @@ class SessionBackgroundProcessor {
       // Wait for every slice admitted before handover. These pipelines may
       // still need to enqueue STT and translation work.
       payload.onStatus('Finalizing audio slices...');
-      await ctx.drainPipelines(timeout: const Duration(seconds: 90));
+      try {
+        await ctx.drainPipelines(timeout: const Duration(seconds: 90));
+      } catch (e) {
+        finalizationIncomplete = true;
+        finalizationWarning =
+            'Audio finalization was incomplete; saved available transcript and kept recovery draft.';
+        debugPrint(
+          '[SessionBGP] Pipeline drain timeout/error for ${ctx.sessionId}: $e',
+        );
+      }
 
       // Flush only after every STT producer has settled.
       payload.onStatus('Flushing buffer...');
@@ -86,6 +97,9 @@ class SessionBackgroundProcessor {
           );
         }
       } catch (e) {
+        finalizationIncomplete = true;
+        finalizationWarning ??=
+            'Translation finalization was incomplete; saved available transcript and kept recovery draft.';
         debugPrint('[SessionBGP] Flush error for ${ctx.sessionId}: $e');
       }
 
@@ -101,15 +115,16 @@ class SessionBackgroundProcessor {
           );
         }
       } catch (e) {
+        finalizationIncomplete = true;
+        finalizationWarning ??=
+            'Translation finalization was incomplete; saved available transcript and kept recovery draft.';
         debugPrint('[SessionBGP] Drain timeout/error for ${ctx.sessionId}: $e');
-        payload.onError?.call(
-          'Session finalization timed out; recovery draft kept.',
-        );
-        return;
       }
 
       // ─── 4. [Fix 7] Generate Final Academic Review (if enabled) ───
-      if (payload.enableFinalRecap && ctx.mode != AppMode.freeTalk) {
+      if (!finalizationIncomplete &&
+          payload.enableFinalRecap &&
+          ctx.mode != AppMode.freeTalk) {
         payload.onStatus('Generating final AI review...');
         try {
           await _generateFinalReview(ctx);
@@ -151,7 +166,9 @@ class SessionBackgroundProcessor {
         unawaited(
           DiagnosticLogService.instance.record(
             'background',
-            'export_verified',
+            finalizationIncomplete
+                ? 'partial_export_verified'
+                : 'export_verified',
             sessionId: ctx.sessionId,
             fields: {
               'fileCount': ctx.mode == AppMode.exam ? 2 : 1,
@@ -173,14 +190,24 @@ class SessionBackgroundProcessor {
           recordedAt: ctx.createdAt,
         );
 
-        payload.onStatus('Saved OK!');
+        payload.onStatus(
+          finalizationIncomplete
+              ? 'Saved available transcript; recovery draft kept.'
+              : 'Saved OK!',
+        );
         payload.onDone(readyEvent);
 
-        // Delete Shadow Draft ONLY when export is verified OK
-        await ShadowDraftService.instance.deleteDraft(ctx.shadowDraftPath);
+        if (finalizationIncomplete) {
+          // The Markdown snapshot is usable, but the draft may contain data
+          // needed for recovery after an STT/translation timeout.
+          payload.onError?.call(finalizationWarning!);
+        } else {
+          // Delete Shadow Draft ONLY after a fully finalized export.
+          await ShadowDraftService.instance.deleteDraft(ctx.shadowDraftPath);
 
-        // Cloud sync (non-blocking for local completion)
-        unawaited(_upsertToSupabase(ctx, file));
+          // Cloud sync only the fully finalized document.
+          unawaited(_upsertToSupabase(ctx, file));
+        }
       } else {
         // Write verification failed!
         debugPrint(

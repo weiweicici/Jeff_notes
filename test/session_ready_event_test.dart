@@ -64,7 +64,7 @@ void main() {
     );
 
     test(
-      '3. Exam and Lecture surface notes; FreeTalk and Discussion stay silent',
+      '3. Exam, Lecture, and FreeTalk expose saved notes; Discussion stays silent',
       () {
         final shownSessionIds = <String>{};
 
@@ -95,20 +95,22 @@ void main() {
           eventSequence: 1,
         );
 
-        var modalShownCount = 0;
+        var promotedCount = 0;
+        var autoOpenCount = 0;
         for (final event in [examEvent, freeTalkEvent, discussionEvent]) {
-          final showsNotes =
-              event.mode == AppMode.lecture || event.mode == AppMode.exam;
-          if (showsNotes &&
-              event.isFinal &&
+          if (event.shouldPromoteReadyNote &&
               !shownSessionIds.contains(event.sessionId)) {
             shownSessionIds.add(event.sessionId);
-            modalShownCount++;
+            promotedCount++;
+            if (event.shouldAutoOpen) autoOpenCount++;
           }
         }
 
-        expect(modalShownCount, 1);
+        expect(promotedCount, 2);
+        expect(autoOpenCount, 1);
         expect(shownSessionIds, contains('exam_session_B'));
+        expect(shownSessionIds, contains('freetalk_session_C'));
+        expect(shownSessionIds, isNot(contains('discussion_session_D')));
       },
     );
 

@@ -22,6 +22,19 @@ class SessionReadyEvent {
 
   String get eventKey => '${sessionId}_$eventSequence';
 
+  /// Final recording documents that should remain available from the
+  /// "latest saved document" entry. Discussion continues to archive silently.
+  bool get shouldPromoteReadyNote =>
+      isFinal &&
+      (mode == AppMode.exam ||
+          mode == AppMode.lecture ||
+          mode == AppMode.freeTalk);
+
+  /// Lecture and exam notes retain their existing automatic-open behavior.
+  /// FreeTalk is promoted as an entry without interrupting the user.
+  bool get shouldAutoOpen =>
+      isFinal && (mode == AppMode.exam || mode == AppMode.lecture);
+
   /// Recording time wins over AI completion time when sessions finish out of
   /// order. Session IDs are a deterministic fallback for legacy events.
   bool isNewerThan(SessionReadyEvent other) {

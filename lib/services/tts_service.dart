@@ -94,18 +94,72 @@ class TtsService extends ChangeNotifier {
   bool _isNativeEnglishPlaying = false;
   double _englishSpeed = 0.6;
   bool _isLoopMode = true; // 默认：无限重复播放
+  bool _isEnglishDictationPlaying = false;
+  int _dictationSentenceIndex = 0;
+  int _dictationSentenceCount = 0;
+  int _dictationRepeatIndex = 0;
+  int _dictationRepeatCount = 3;
+  int _dictationRunId = 0;
   bool get isLoopMode => _isLoopMode;
   bool get isEnglishSynthesizing => _isEnglishSynthesizing;
+  bool get isEnglishDictationPlaying => _isEnglishDictationPlaying;
+  int get dictationSentenceIndex => _dictationSentenceIndex;
+  int get dictationSentenceCount => _dictationSentenceCount;
+  int get dictationRepeatIndex => _dictationRepeatIndex;
+  int get dictationRepeatCount => _dictationRepeatCount;
   bool get isEnglishPlaying =>
       _audioPlayer.playing && _currentAudioType == ActiveAudioType.english;
   bool get isRecordedPlaying =>
       _audioPlayer.playing && _currentAudioType == ActiveAudioType.recorded;
   double get englishSpeed => _englishSpeed;
 
-  Future<void> toggleLoopMode() async {
-    _isLoopMode = !_isLoopMode;
-    await _audioPlayer.setLoopMode(_isLoopMode ? LoopMode.one : LoopMode.off);
+  Future<void> setLoopMode(bool enabled) async {
+    if (_isLoopMode == enabled) {
+      await _applyAudioPlayerLoopMode();
+      return;
+    }
+    _isLoopMode = enabled;
+    await _applyAudioPlayerLoopMode();
     notifyListeners();
+  }
+
+  Future<void> toggleLoopMode() => setLoopMode(!_isLoopMode);
+
+  Future<void> _applyAudioPlayerLoopMode() =>
+      _audioPlayer.setLoopMode(_isLoopMode ? LoopMode.one : LoopMode.off);
+
+  /// Splits simple English prose into dictation-sized sentences. Generated
+  /// essays intentionally use short sentences, so this keeps the listening
+  /// unit predictable without trying to infer paragraph-level pauses.
+  static List<String> splitEnglishSentences(String text) {
+    final clean = text
+        .replaceAll(RegExp(r'==|[*_~`#>|\[\]\(\)]'), '')
+        .replaceAll(RegExp(r'\s+'), ' ')
+        .trim();
+    if (clean.isEmpty) return const [];
+
+    final sentences = clean
+        .split(RegExp(r'(?<=[.!?])\s+'))
+        .map((sentence) => sentence.trim())
+        .where((sentence) => sentence.contains(RegExp(r'[A-Za-z]')))
+        .toList();
+    return sentences.isEmpty ? [clean] : sentences;
+  }
+
+  static Duration estimateEnglishDictationDuration(
+    String text, {
+    required int repeatCount,
+    required Duration pauseBetweenSentences,
+    required double speed,
+  }) {
+    final sentences = splitEnglishSentences(text);
+    final words = RegExp(r"[A-Za-z]+(?:'[A-Za-z]+)?").allMatches(text).length;
+    final wordsPerMinute = 150 * speed.clamp(0.4, 2.0);
+    final speechSeconds = words == 0 ? 0 : words / wordsPerMinute * 60;
+    final pauses = sentences.length > 1
+        ? pauseBetweenSentences.inSeconds * (sentences.length - 1)
+        : 0;
+    return Duration(seconds: (speechSeconds * repeatCount + pauses).round());
   }
 
   Stream<Duration> get englishPositionStream => _audioPlayer.positionStream;
@@ -360,9 +414,70 @@ class TtsService extends ChangeNotifier {
     _isNativeEnglishPlaying = _currentAudioType == ActiveAudioType.english;
     _isChineseNativePlaying = _currentAudioType == ActiveAudioType.chinese;
     if (_isChineseNativePlaying) _lastNativeChineseText = text;
-    _flutterTts.setCompletionHandler(_finishNativePlayback);
+    _flutterTts.setCompletionHandler(() {
+      unawaited(
+        _handleNativePlaybackCompletion(text, playbackSource: playbackSource),
+      );
+    });
     _flutterTts.setCancelHandler(_finishNativePlayback);
     await _flutterTts.speak(text);
+  }
+
+  Future<void> _handleNativePlaybackCompletion(
+    String text, {
+    required String playbackSource,
+  }) async {
+    final channelIsStillActive =
+        (_currentAudioType == ActiveAudioType.chinese &&
+            _isChineseNativePlaying) ||
+        (_currentAudioType == ActiveAudioType.english &&
+            _isNativeEnglishPlaying);
+    if (!shouldRepeatNativePlayback(
+      loopEnabled: _isLoopMode,
+      playbackBlocked: _playbackBlockedForRecording,
+      channelIsStillActive: channelIsStillActive,
+    )) {
+      _finishNativePlayback();
+      return;
+    }
+
+    if (!await prepareSafePlayback(playbackSource: '$playbackSource loop')) {
+      _finishNativePlayback();
+      return;
+    }
+
+    if (_currentAudioType == ActiveAudioType.chinese) {
+      _chineseNativePosition = Duration.zero;
+      _startChineseNativeProgressTimer();
+    }
+    WakelockService.enable();
+    notifyListeners();
+    await _flutterTts.speak(text);
+  }
+
+  @visibleForTesting
+  static bool shouldRepeatNativePlayback({
+    required bool loopEnabled,
+    required bool playbackBlocked,
+    required bool channelIsStillActive,
+  }) => loopEnabled && !playbackBlocked && channelIsStillActive;
+
+  void _startChineseNativeProgressTimer() {
+    _chineseNativeTimer?.cancel();
+    _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (
+      timer,
+    ) {
+      if (!_isChineseNativePlaying) {
+        timer.cancel();
+        return;
+      }
+      _chineseNativePosition += const Duration(milliseconds: 200);
+      if (_chineseNativePosition >= _chineseNativeDuration) {
+        _chineseNativePosition = _chineseNativeDuration;
+        timer.cancel();
+      }
+      notifyListeners();
+    });
   }
 
   void _finishNativePlayback() {
@@ -511,6 +626,117 @@ class TtsService extends ChangeNotifier {
     }
   }
 
+  /// Plays a generated essay sentence by sentence for dictation practice.
+  /// Each sentence is synthesized once, cached, then played [repeatCount]
+  /// times before moving on. This preserves the neural voice while avoiding
+  /// imprecise time slicing of a full-essay audio file.
+  Future<void> startEnglishDictation(
+    String text, {
+    String? geminiKey,
+    String? siliconFlowKey,
+    int repeatCount = 3,
+    Duration pauseBetweenSentences = const Duration(seconds: 3),
+  }) async {
+    final sentences = splitEnglishSentences(_sanitizeMarkdown(text));
+    if (sentences.isEmpty) return;
+
+    await init();
+    await stopAll();
+    _ensurePlaybackAllowed();
+    await ensurePlaybackSession();
+    await Future.delayed(const Duration(milliseconds: 300));
+    if (!(await isHeadphonesConnected())) {
+      throw Exception('NoHeadphones | $lastRouteDebug');
+    }
+
+    final runId = ++_dictationRunId;
+    final safeRepeatCount = repeatCount.clamp(1, 5).toInt();
+    _isEnglishSynthesizing = true;
+    _isEnglishDictationPlaying = true;
+    _dictationSentenceCount = sentences.length;
+    _dictationSentenceIndex = 0;
+    _dictationRepeatIndex = 0;
+    _dictationRepeatCount = safeRepeatCount;
+    notifyListeners();
+
+    try {
+      final docsDir = await getApplicationDocumentsDirectory();
+      final cacheDir = Directory('${docsDir.path}/tts_cache');
+      final sentenceFiles = <File>[];
+
+      // Pre-cache in order to avoid a network wait between dictated sentences.
+      for (final sentence in sentences) {
+        if (runId != _dictationRunId) return;
+        await prefetchEnglish(
+          sentence,
+          geminiKey: geminiKey,
+          siliconFlowKey: siliconFlowKey,
+        );
+        final hash = md5
+            .convert(utf8.encode(_sanitizeMarkdown(sentence)))
+            .toString();
+        final file = File('${cacheDir.path}/english_neural_$hash.mp3');
+        if (!await file.exists() || await file.length() == 0) {
+          throw Exception('无法准备听写句子的英文语音');
+        }
+        sentenceFiles.add(file);
+      }
+
+      if (runId != _dictationRunId) return;
+      _isEnglishSynthesizing = false;
+      _currentAudioType = ActiveAudioType.english;
+      WakelockService.enable();
+      await _audioPlayer.setLoopMode(LoopMode.off);
+      notifyListeners();
+
+      for (
+        var sentenceIndex = 0;
+        sentenceIndex < sentenceFiles.length;
+        sentenceIndex++
+      ) {
+        for (
+          var repeatIndex = 0;
+          repeatIndex < safeRepeatCount;
+          repeatIndex++
+        ) {
+          if (runId != _dictationRunId) return;
+          _dictationSentenceIndex = sentenceIndex + 1;
+          _dictationRepeatIndex = repeatIndex + 1;
+          final duration = await _audioPlayer.setFilePath(
+            sentenceFiles[sentenceIndex].path,
+          );
+          globalAudioHandler.setPlaybackMetadata(
+            title: '听写：第 $_dictationSentenceIndex / $_dictationSentenceCount 句',
+            artist: '第 $_dictationRepeatIndex / $safeRepeatCount 次',
+            duration: duration,
+          );
+          await _audioPlayer.setSpeed(_englishSpeed);
+          notifyListeners();
+          await _playAudioSafely('English dictation');
+          await _audioPlayer.playerStateStream.firstWhere(
+            (state) =>
+                runId != _dictationRunId ||
+                state.processingState == ProcessingState.completed,
+          );
+        }
+        if (sentenceIndex < sentenceFiles.length - 1) {
+          await Future.delayed(pauseBetweenSentences);
+        }
+      }
+    } finally {
+      if (runId == _dictationRunId) {
+        _isEnglishSynthesizing = false;
+        _isEnglishDictationPlaying = false;
+        _dictationRepeatIndex = 0;
+        _currentAudioType = ActiveAudioType.none;
+        _stopHeadphoneMonitor();
+        WakelockService.disable();
+        await _applyAudioPlayerLoopMode();
+        notifyListeners();
+      }
+    }
+  }
+
   // ════════════════════════════════════════════════════════════════════
   // 🇨🇳 中文朗读接口（方案 1: iOS 本地原生 / 方案 2: 微软 Edge 晓晓神经网络女声）
   // ════════════════════════════════════════════════════════════════════
@@ -564,30 +790,7 @@ class TtsService extends ChangeNotifier {
       await _flutterTts.setVolume(1.0);
       await _flutterTts.setPitch(1.0);
 
-      _flutterTts.setCompletionHandler(() {
-        _isChineseNativePlaying = false;
-        _chineseNativeTimer?.cancel();
-        _chineseNativePosition = _chineseNativeDuration;
-        _stopHeadphoneMonitor();
-        WakelockService.disable();
-        notifyListeners();
-      });
-
-      _chineseNativeTimer?.cancel();
-      _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (
-        timer,
-      ) {
-        if (!_isChineseNativePlaying) {
-          timer.cancel();
-          return;
-        }
-        _chineseNativePosition += const Duration(milliseconds: 200);
-        if (_chineseNativePosition >= _chineseNativeDuration) {
-          _chineseNativePosition = _chineseNativeDuration;
-          timer.cancel();
-        }
-        notifyListeners();
-      });
+      _startChineseNativeProgressTimer();
 
       await _speakNativeSafely(clean, playbackSource: 'Chinese native');
       globalAudioHandler.setPlaybackMetadata(
@@ -617,6 +820,7 @@ class TtsService extends ChangeNotifier {
         duration: duration,
       );
       await _audioPlayer.setSpeed(_chineseSpeed);
+      await _applyAudioPlayerLoopMode();
       await _playAudioSafely('Chinese cached audio');
       _startHeadphoneMonitor();
       notifyListeners();
@@ -684,6 +888,7 @@ class TtsService extends ChangeNotifier {
           duration: duration,
         );
         await _audioPlayer.setSpeed(_chineseSpeed);
+        await _applyAudioPlayerLoopMode();
         await _playAudioSafely('Chinese synthesized audio');
         _startHeadphoneMonitor();
         notifyListeners();
@@ -710,28 +915,7 @@ class TtsService extends ChangeNotifier {
       await _flutterTts.setVolume(1.0);
       await _flutterTts.setPitch(1.0);
 
-      _flutterTts.setCompletionHandler(() {
-        _isChineseNativePlaying = false;
-        _chineseNativeTimer?.cancel();
-        _chineseNativePosition = _chineseNativeDuration;
-        notifyListeners();
-      });
-
-      _chineseNativeTimer?.cancel();
-      _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (
-        timer,
-      ) {
-        if (!_isChineseNativePlaying) {
-          timer.cancel();
-          return;
-        }
-        _chineseNativePosition += const Duration(milliseconds: 200);
-        if (_chineseNativePosition >= _chineseNativeDuration) {
-          _chineseNativePosition = _chineseNativeDuration;
-          timer.cancel();
-        }
-        notifyListeners();
-      });
+      _startChineseNativeProgressTimer();
 
       await _speakNativeSafely(
         clean,
@@ -995,27 +1179,14 @@ class TtsService extends ChangeNotifier {
             _chineseNativeDuration > Duration.zero)) {
       // 原生 TTS 履复：重新启动 timer，位置保持不变
       _isChineseNativePlaying = true;
-      _chineseNativeTimer?.cancel();
-      _chineseNativeTimer = Timer.periodic(const Duration(milliseconds: 200), (
-        timer,
-      ) {
-        if (!_isChineseNativePlaying) {
-          timer.cancel();
-          return;
-        }
-        _chineseNativePosition += const Duration(milliseconds: 200);
-        if (_chineseNativePosition >= _chineseNativeDuration) {
-          _chineseNativePosition = _chineseNativeDuration;
-          timer.cancel();
-        }
-        notifyListeners();
-      });
+      _startChineseNativeProgressTimer();
       final text = _lastNativeChineseText;
       if (text == null || text.isEmpty) return;
       await _speakNativeSafely(text, playbackSource: 'Chinese native resume');
       notifyListeners();
     } else {
       // 普通 _audioPlayer 模式（微软合成音频）
+      await _applyAudioPlayerLoopMode();
       await _playAudioSafely('Chinese resume');
     }
     _startHeadphoneMonitor();
@@ -1103,7 +1274,7 @@ class TtsService extends ChangeNotifier {
       duration: duration,
     );
     await _audioPlayer.setSpeed(_englishSpeed);
-    await _audioPlayer.setLoopMode(_isLoopMode ? LoopMode.one : LoopMode.off);
+    await _applyAudioPlayerLoopMode();
     await _playAudioSafely('Recorded audio');
     _startHeadphoneMonitor();
     notifyListeners();
@@ -1201,7 +1372,7 @@ class TtsService extends ChangeNotifier {
         duration: duration,
       );
       await _audioPlayer.setSpeed(_englishSpeed);
-      await _audioPlayer.setLoopMode(_isLoopMode ? LoopMode.one : LoopMode.off);
+      await _applyAudioPlayerLoopMode();
       await _playAudioSafely('English cached audio');
       _startHeadphoneMonitor();
       notifyListeners();
@@ -1330,9 +1501,7 @@ class TtsService extends ChangeNotifier {
           duration: duration,
         );
         await _audioPlayer.setSpeed(_englishSpeed);
-        await _audioPlayer.setLoopMode(
-          _isLoopMode ? LoopMode.one : LoopMode.off,
-        );
+        await _applyAudioPlayerLoopMode();
         await _playAudioSafely('English synthesized audio');
         _startHeadphoneMonitor();
         notifyListeners();
@@ -1684,6 +1853,7 @@ class TtsService extends ChangeNotifier {
     if (!(await isHeadphonesConnected()))
       throw Exception("NoHeadphones | ${lastRouteDebug}");
     _currentAudioType = ActiveAudioType.english;
+    await _applyAudioPlayerLoopMode();
     await _playAudioSafely('English resume');
     _startHeadphoneMonitor();
   }
@@ -1698,6 +1868,10 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> stopEnglish() async {
+    _dictationRunId++;
+    _isEnglishDictationPlaying = false;
+    _dictationRepeatIndex = 0;
+    _isEnglishSynthesizing = false;
     await _flutterTts.stop();
     if (_currentAudioType == ActiveAudioType.english ||
         _currentAudioType == ActiveAudioType.recorded) {
@@ -1740,6 +1914,9 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> stopAll() async {
+    _dictationRunId++;
+    _isEnglishDictationPlaying = false;
+    _dictationRepeatIndex = 0;
     WakelockService.disable();
     _isChineseNativePlaying = false;
     _isNativeEnglishPlaying = false;

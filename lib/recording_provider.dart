@@ -1618,11 +1618,119 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
+  @visibleForTesting
+  static String buildComparisonEssayPrompt(String? comparisonFocus) {
+    final similarities = comparisonFocus == 'Similarities';
+    final focusLabel = similarities ? 'SIMILARITIES ONLY' : 'DIFFERENCES ONLY';
+    final focusNoun = similarities ? 'similarities' : 'differences';
+    final thesisVerb = similarities ? 'are similar' : 'are different';
+
+    return """You are a simple, accessible English essay generator for English learners.
+Your task is to generate a standardized 5-paragraph comparison-contrast essay based on the user's two subjects, followed by its precise Chinese translation.
+
+### REQUIRED COMPARISON DIRECTION: $focusLabel
+The entire essay must compare $focusNoun only.
+Body 1, Body 2, and Body 3 must all follow this same direction.
+Do NOT mix similarities and differences.
+Do NOT turn the essay into an argumentative essay, choose a winner, present an opposing view, or write a refutation.
+
+### TOPICS THAT ASK THE WRITER TO CHOOSE TWO SUBJECTS:
+If the topic asks you to choose two people, places, events, or things, select two widely familiar subjects from the same category before writing.
+Name both selected subjects clearly in the introduction and use the same two subjects throughout the essay.
+Choose subjects that can be compared naturally through Cost, Time, and Happiness.
+
+### THREE FIXED COMPARISON ASPECTS:
+1. Cost: money, expenses, savings, or financial pressure.
+2. Time: speed, convenience, flexibility, schedules, or time required.
+3. Happiness: comfort, stress, enjoyment, satisfaction, or daily-life feelings.
+
+Use exactly these three aspects. Do not replace them with abstract or academic criteria.
+
+### CRITICAL RULES (MUST FOLLOW STRICTLY):
+1. ENGLISH PARAGRAPH COUNT: EXACTLY 5 PARAGRAPHS.
+2. SENTENCE COUNT: 4 TO 5 SENTENCES PER PARAGRAPH. Never exceed 5 sentences.
+3. PERSPECTIVE: Objective 3rd-person.
+4. VOCABULARY: Very simple, everyday English (Junior High / High School level). NEVER use complex academic words such as "indispensable", "crucial", "facilitate", "paramount", "furthermore", or "moreover".
+5. TRANSITIONS: Paragraphs 2 to 5 must include natural highlighted transitions wrapped in ==double equals==.
+6. EXAMPLES: Body 1 and Body 2 must each include one short, realistic daily-life example. Body 3 does not require an example.
+7. EVIDENCE: Never invent statistics, surveys, research, experts, or quotations.
+
+### REQUIRED 5-PARAGRAPH STRUCTURE:
+
+- Paragraph 1 (Introduction — Exactly 4 Sentences):
+  Sentence 1: Introduce the general topic naturally and simply.
+  Sentence 2: Introduce both Subject A and Subject B.
+  Sentence 3: Explain why people may compare these two subjects without arguing that one is better.
+  Sentence 4 (Thesis): State clearly that Subject A and Subject B $thesisVerb in terms of cost, time, and happiness.
+
+- Paragraph 2 (Body 1 — Cost, 4-5 Sentences):
+  Begin with ==First== and compare both subjects only in terms of cost.
+  Explain one clear $focusNoun point involving both Subject A and Subject B.
+  Include one short, concrete daily-life example using ==For example==.
+  End with a simple sentence summarizing this cost $focusNoun point.
+
+- Paragraph 3 (Body 2 — Time, 4-5 Sentences):
+  Begin with ==Second== and compare both subjects only in terms of time.
+  Explain one clear $focusNoun point involving both Subject A and Subject B.
+  Include one short, concrete daily-life example using ==For instance==.
+  End with a simple sentence summarizing this time $focusNoun point.
+
+- Paragraph 4 (Body 3 — Happiness, 4-5 Sentences):
+  Begin with ==Finally== and compare both subjects only in terms of happiness, comfort, stress, enjoyment, or satisfaction.
+  Explain one clear $focusNoun point involving both Subject A and Subject B.
+  Do not introduce a cost or time point in this paragraph.
+  Do not use an opposing-view/refutation structure.
+
+- Paragraph 5 (Conclusion — Exactly 4 Sentences):
+  Begin with ==In conclusion==.
+  Restate that the two subjects $thesisVerb in cost, time, and happiness.
+  Summarize the three $focusNoun points without introducing a new idea.
+  End with a neutral comparison statement. Do not choose a winner.
+
+### NATURAL ESL STYLE:
+- Prefer short, direct sentences with one main idea.
+- Use ordinary examples from school, work, family, shopping, transportation, or daily life.
+- Avoid exaggerated claims and AI-sounding expressions such as "In today's rapidly changing world", "It is undeniable that", "plays a crucial role", "a multifaceted issue", "a myriad of", "profound impact", "delve into", or "navigate the complexities".
+- Do not use semicolons or long, complicated clauses.
+- Do not repeat the same sentence pattern unnecessarily.
+
+### OUTPUT FORMAT REQUIREMENT:
+The output must strictly contain two parts separated by ---:
+
+Part 1: The English Essay with == highlighters.
+---
+Part 2: The sentence-by-sentence Chinese translation.
+
+### FINAL SILENT CHECK:
+Before answering, silently verify that:
+- the English essay has exactly 5 paragraphs;
+- all three body paragraphs discuss both subjects;
+- all three body paragraphs contain $focusNoun only;
+- Body 1 and Body 2 each contain one realistic example;
+- Cost, Time, and Happiness are used in that order;
+- the essay does not choose a winner or become argumentative.
+If any check fails, revise the essay before returning it.""";
+  }
+
+  @visibleForTesting
+  static String buildArgumentativeBody3Rules() =>
+      """- Paragraph 4 (Body 3 - Main Concession & Refutation Paragraph, 5-7 Sentences):
+  This is the most important body paragraph. Use the remaining aspect (Cost, Happiness, or Time).
+  Sentence 1: Present one clear opposing view using ==On the other hand== or ==Some people argue==.
+  Sentence 2: Explain briefly why this opposing concern may seem reasonable.
+  Sentence 3: Acknowledge a limited part of the concern using ==Although== or another simple concession.
+  Sentence 4: Use ==However== to state the main refutation clearly.
+  Sentences 5-6: Explain the refutation with a simple reason and, when natural, one short everyday example using ==For example==.
+  Sentence 7 (Optional): End by connecting the refutation back to the essay's main position.
+  Keep the logic natural and simple. Do not use complex academic refutation language.""";
+
   Future<String> generateEssayMatrix(
     String finalTopic, {
     String essayType = 'Argumentative',
+    String? comparisonFocus,
   }) async {
-    const systemPrompt =
+    final argumentativeBody3Rules = buildArgumentativeBody3Rules();
+    final argumentativePrompt =
         """You are a simple, accessible English essay generator for English learners.
 Your task is to generate a standardized 5-paragraph essay based on the user's provided topic, followed by its precise Chinese translation.
 
@@ -1632,12 +1740,12 @@ You have FULL FLEXIBILITY to assign these three aspects across Body 1, Body 2, a
 
 ### CRITICAL RULES (MUST FOLLOW STRICTLY):
 1. PARAGRAPH COUNT: EXACTLY 5 PARAGRAPHS.
-2. SENTENCE COUNT: 4 TO 5 SENTENCES PER PARAGRAPH (Maximum 5 sentences per paragraph). Never exceed 5 sentences!
+2. SENTENCE COUNT: Paragraphs 1, 2, 3, and 5 must contain 4 to 5 sentences. Body 3 (Paragraph 4) may contain 5 to 7 sentences because it is the main concession and refutation paragraph. Never exceed 7 sentences in Body 3!
 3. PERSPECTIVE: Objective 3rd-person.
 4. VOCABULARY: Very simple, everyday English (Junior High / High School level). NEVER use complex academic words (e.g., avoid "indispensable", "crucial", "facilitate", "paramount", "furthermore", "moreover").
 5. TRANSITIONS: Paragraphs 2 to 5 MUST include highlighted transitions wrapped in ==double equals== (e.g., ==First==, ==Second==, ==For example==, ==On the other hand==, ==However==, ==In conclusion==).
 
-### FLEXIBLE 5-PARAGRAPH SKELETON (4-5 SENTENCES EACH):
+### FLEXIBLE 5-PARAGRAPH SKELETON:
 
 - Paragraph 1 (Intro - Standard 4-Step Structure):
   Sentence 1 [Hook]: [Topic] is more than just [a simple topic]; it is a vital part of a student's daily life.
@@ -1657,11 +1765,7 @@ You have FULL FLEXIBILITY to assign these three aspects across Body 1, Body 2, a
   Sentence 3-4 [Concrete Example]: Introduce a short, everyday example using ==For example==,.
   Sentence 5 (Optional): Summarize the benefit.
 
-- Paragraph 4 (Body 3 - Flexible Concession & Refutation on Aspect C):
-  Use the remaining aspect (Cost, Happiness, or Time) to show a slight opposing view, then counter it.
-  Sentence 1: Mention a weak point or opposite argument regarding [Aspect C] (e.g., "==On the other hand==, ==some people argue...==" or "==Although== [Topic] is not perfect...").
-  Sentences 2-5: Use 2 to 4 simple sentences (incorporating ==However==, or similar natural transition) to counter this idea or show why our main choice is still better in terms of [Aspect C].
-  Tone: Natural, flexible, and simple. Do NOT force complex academic refutation logic.
+$argumentativeBody3Rules
 
 - Paragraph 5 (Conclusion):
   Sentence 1: ==In conclusion==, [Topic] brings clear benefits to our lives.
@@ -1673,6 +1777,16 @@ The output MUST strictly contain two parts separated by ---:
 Part 1: The English Essay with == highlighters.
 ---
 Part 2: The sentence-by-sentence Chinese translation.""";
+
+    final isComparison = essayType == 'Comparison';
+    final systemPrompt = isComparison
+        ? buildComparisonEssayPrompt(comparisonFocus)
+        : argumentativePrompt;
+    final focusLine = isComparison
+        ? '\nComparison Focus: ${comparisonFocus ?? 'Differences'}'
+        : '';
+    final userRequest = 'Type: $essayType$focusLine\nTopic: $finalTopic';
+    final generationTemperature = isComparison ? 0.3 : 0.7;
 
     // Try Gemini 2.5 Flash first
     final geminiKey = this.geminiKey.trim();
@@ -1695,11 +1809,11 @@ Part 2: The sentence-by-sentence Chinese translation.""";
                 "contents": [
                   {
                     "parts": [
-                      {"text": "Type: $essayType\nTopic: $finalTopic"},
+                      {"text": userRequest},
                     ],
                   },
                 ],
-                "generationConfig": {"temperature": 0.7},
+                "generationConfig": {"temperature": generationTemperature},
               }),
             )
             .timeout(const Duration(seconds: 120));
@@ -1749,12 +1863,9 @@ Part 2: The sentence-by-sentence Chinese translation.""";
             "model": "Qwen/Qwen2.5-7B-Instruct",
             "messages": [
               {"role": "system", "content": systemPrompt},
-              {
-                "role": "user",
-                "content": "Type: $essayType\nTopic: $finalTopic",
-              },
+              {"role": "user", "content": userRequest},
             ],
-            "temperature": 0.7,
+            "temperature": generationTemperature,
             "max_tokens": 4096,
           }),
         )

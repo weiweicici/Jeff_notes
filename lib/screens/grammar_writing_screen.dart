@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:markdown/markdown.dart' as md;
@@ -64,13 +65,14 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
     setState(() => _loadingParts = true);
     try {
       final parts = await GrammarRepository.loadParts();
-      if (mounted) setState(() {
-        _parts = parts;
-        if (_selectedPart == null && parts.isNotEmpty) {
-          _selectedPart = parts.first;
-        }
-        _loadingParts = false;
-      });
+      if (mounted)
+        setState(() {
+          _parts = parts;
+          if (_selectedPart == null && parts.isNotEmpty) {
+            _selectedPart = parts.first;
+          }
+          _loadingParts = false;
+        });
     } catch (_) {
       if (mounted) setState(() => _loadingParts = false);
     }
@@ -84,14 +86,24 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
 
   Future<void> _generate() async {
     if (!_canGenerate) return;
-    setState(() { _isLoading = true; _result = ''; });
+    setState(() {
+      _isLoading = true;
+      _result = '';
+    });
     try {
       if (_combinedMode) {
         final parts = _selectedParts.toList();
-        final result = await GrammarService.generateCombinedSample(parts, _selectedTheme!);
+        final result = await GrammarService.generateCombinedSample(
+          parts,
+          _selectedTheme!,
+        );
         if (mounted) {
-          setState(() { _result = result; _isLoading = false; });
+          setState(() {
+            _result = result;
+            _isLoading = false;
+          });
           _showResultDialog();
+          unawaited(_playEnglish(context, startDictation: true));
           // 自动保存至存档中心（后台发起）
           if (mounted) _saveToArchive();
         }
@@ -103,19 +115,28 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
             ? _selectedUnits.map((u) => u.title).join('、')
             : '';
         final result = await GrammarService.generateWritingSample(
-          unit, _selectedTheme!,
+          unit,
+          _selectedTheme!,
           partId: _selectedPart!.id,
           focusUnits: unitTitles.isNotEmpty ? unitTitles : null,
         );
         if (mounted) {
-          setState(() { _result = result; _isLoading = false; });
+          setState(() {
+            _result = result;
+            _isLoading = false;
+          });
           _showResultDialog();
+          unawaited(_playEnglish(context, startDictation: true));
           // 自动保存至存档中心（后台发起）
           if (mounted) _saveToArchive();
         }
       }
     } catch (e) {
-      if (mounted) setState(() { _isLoading = false; _result = '生成失败: $e'; });
+      if (mounted)
+        setState(() {
+          _isLoading = false;
+          _result = '生成失败: $e';
+        });
     }
   }
 
@@ -141,22 +162,34 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text('📖 英文范文', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '📖 英文范文',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 8),
                 _buildEnglishSection(_result),
                 const SizedBox(height: 24),
-                const Text('🇨🇳 中文翻译', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '🇨🇳 中文翻译',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 8),
                 _buildChineseSection(_result),
                 const SizedBox(height: 24),
-                const Text('🏷️ 语法标注', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                const Text(
+                  '🏷️ 语法标注',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
                 const SizedBox(height: 8),
                 MarkdownBody(
                   data: _getAnnotationText(_result),
                   softLineBreak: true,
                   selectable: true,
                   styleSheet: getAcademicMarkdownStyle(context),
-                  extensionSet: md.ExtensionSet([const md.FencedCodeBlockSyntax()], [md.EmojiSyntax(), HighlightSyntax()]),
+                  extensionSet: md.ExtensionSet(
+                    [const md.FencedCodeBlockSyntax()],
+                    [md.EmojiSyntax(), HighlightSyntax()],
+                  ),
                   builders: {'highlight': HighlightBuilder(context)},
                 ),
               ],
@@ -185,22 +218,41 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
     );
   }
 
-  void _playEnglish(BuildContext dialogContext) {
+  Future<void> _playEnglish(
+    BuildContext dialogContext, {
+    bool startDictation = false,
+  }) async {
     final englishContent = _getEnglishText(_result);
     if (englishContent.isEmpty) return;
     try {
       final tts = TtsService();
       final provider = context.read<RecordingProvider>();
-      tts.speakEnglish(
-        englishContent,
-        geminiKey: provider.geminiKey,
-        siliconFlowKey: provider.siliconFlowKey,
-      );
+      if (startDictation) {
+        await tts.startEnglishDictation(
+          englishContent,
+          geminiKey: provider.geminiKey,
+          siliconFlowKey: provider.siliconFlowKey,
+        );
+      } else {
+        await tts.speakEnglish(
+          englishContent,
+          geminiKey: provider.geminiKey,
+          siliconFlowKey: provider.siliconFlowKey,
+        );
+      }
     } catch (e) {
-      if (dialogContext.mounted && e.toString().contains('NoHeadphones')) {
+      final isUnsafeRoute =
+          e.toString().contains('NoHeadphones') ||
+          e.toString().contains('Unsafe audio route');
+      if (dialogContext.mounted && isUnsafeRoute) {
         ScaffoldMessenger.of(dialogContext).showSnackBar(
           SnackBar(
-            content: Text('⚠️ 未检测到耳机 (${e.toString().replaceAll("Exception: ", "")})', style: const TextStyle(fontSize: 13)),
+            content: Text(
+              startDictation
+                  ? '⚠️ 范文已生成；连接耳机后点击播放即可听写练习'
+                  : '⚠️ 未检测到耳机 (${e.toString().replaceAll("Exception: ", "")})',
+              style: const TextStyle(fontSize: 13),
+            ),
             backgroundColor: Colors.orange,
             duration: const Duration(seconds: 5),
           ),
@@ -227,7 +279,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
     final start = full.indexOf(startTag);
     if (start == -1) return const SizedBox();
     final end = full.indexOf(endTag, start + startTag.length);
-    final content = end > start 
+    final content = end > start
         ? full.substring(start + startTag.length, end).trim()
         : full.substring(start + startTag.length).trim();
     return MarkdownBody(
@@ -235,7 +287,10 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
       softLineBreak: true,
       selectable: true,
       styleSheet: getAcademicMarkdownStyle(context),
-      extensionSet: md.ExtensionSet([const md.FencedCodeBlockSyntax()], [md.EmojiSyntax(), HighlightSyntax()]),
+      extensionSet: md.ExtensionSet(
+        [const md.FencedCodeBlockSyntax()],
+        [md.EmojiSyntax(), HighlightSyntax()],
+      ),
       builders: {'highlight': HighlightBuilder(context)},
     );
   }
@@ -246,7 +301,10 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
     const annotationTag = '## 语法标注';
     final chineseStart = full.indexOf(chineseTag);
     if (chineseStart == -1) return const SizedBox();
-    final chineseEnd = full.indexOf(annotationTag, chineseStart + chineseTag.length);
+    final chineseEnd = full.indexOf(
+      annotationTag,
+      chineseStart + chineseTag.length,
+    );
     final content = chineseEnd > chineseStart
         ? full.substring(chineseStart + chineseTag.length, chineseEnd).trim()
         : full.substring(chineseStart + chineseTag.length).trim();
@@ -278,14 +336,21 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
       // 未登录，user_id 留空
     }
 
-    setState(() { _isSaving = true; });
+    setState(() {
+      _isSaving = true;
+    });
 
     try {
       final now = DateTime.now();
       final dateStr = DateFormat('yyyyMMdd_HHmm').format(now);
       final firstLine = _result.split('\n').firstOrNull ?? 'Grammar Writing';
-      final safeTopic = firstLine.replaceAll(RegExp(r'[\\/:*?"<>|]'), '').replaceAll(' ', '_').trim();
-      final filename = safeTopic.isNotEmpty ? 'Jeff_Grammar_${safeTopic}_$dateStr.md' : 'Jeff_Grammar_$dateStr.md';
+      final safeTopic = firstLine
+          .replaceAll(RegExp(r'[\\/:*?"<>|]'), '')
+          .replaceAll(' ', '_')
+          .trim();
+      final filename = safeTopic.isNotEmpty
+          ? 'Jeff_Grammar_${safeTopic}_$dateStr.md'
+          : 'Jeff_Grammar_$dateStr.md';
       final contentMd = _result;
 
       // 1. 保存到本地 .md 文件
@@ -310,13 +375,18 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
         map['user_id'] = userId;
       }
 
-      await SupabaseConfig.client.from('archives').upsert(map, onConflict: 'file_hash');
+      await SupabaseConfig.client
+          .from('archives')
+          .upsert(map, onConflict: 'file_hash');
       // [BUG-14 Fix] 标记为已上传，防止 FileSyncAgent 下次扫描时再次 insert
       await UploadCache.mark(hash);
 
       if (mounted && userId.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('✅ 已保存到本地 .md 文件与存档中心'), backgroundColor: Colors.green),
+          SnackBar(
+            content: Text('✅ 已保存到本地 .md 文件与存档中心'),
+            backgroundColor: Colors.green,
+          ),
         );
       }
     } catch (e) {
@@ -327,7 +397,10 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
         );
       }
     } finally {
-      if (mounted) setState(() { _isSaving = false; });
+      if (mounted)
+        setState(() {
+          _isSaving = false;
+        });
     }
   }
 
@@ -343,7 +416,13 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
             IconButton(
               icon: const Icon(Icons.history_edu),
               tooltip: '查看存档',
-              onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen(initialModuleFilter: 'grammar'))),
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) =>
+                      const HistoryScreen(initialModuleFilter: 'grammar'),
+                ),
+              ),
             ),
             const SizedBox(width: 8),
           ],
@@ -359,7 +438,13 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
           IconButton(
             icon: const Icon(Icons.history_edu),
             tooltip: '查看存档',
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen(initialModuleFilter: 'grammar'))),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    const HistoryScreen(initialModuleFilter: 'grammar'),
+              ),
+            ),
           ),
           const SizedBox(width: 8),
         ],
@@ -372,11 +457,20 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
             // Mode Toggle
             SegmentedButton<bool>(
               segments: const [
-                ButtonSegment(value: false, label: Text('单章练习'), icon: Icon(Icons.article_outlined)),
-                ButtonSegment(value: true, label: Text('综合练习'), icon: Icon(Icons.auto_stories)),
+                ButtonSegment(
+                  value: false,
+                  label: Text('单章练习'),
+                  icon: Icon(Icons.article_outlined),
+                ),
+                ButtonSegment(
+                  value: true,
+                  label: Text('综合练习'),
+                  icon: Icon(Icons.auto_stories),
+                ),
               ],
               selected: {_combinedMode},
-              onSelectionChanged: (s) => setState(() => _combinedMode = s.first),
+              onSelectionChanged: (s) =>
+                  setState(() => _combinedMode = s.first),
             ),
             const SizedBox(height: 24),
 
@@ -413,7 +507,10 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
               const SizedBox(height: 8),
               Text(
                 '已选 ${_selectedParts.length} 个章节（至少选 2 个）',
-                style: TextStyle(fontSize: 14, color: isDark ? Colors.white54 : Colors.grey[600]),
+                style: TextStyle(
+                  fontSize: 14,
+                  color: isDark ? Colors.white54 : Colors.grey[600],
+                ),
               ),
               const SizedBox(height: 8),
               ...?_parts?.map((p) {
@@ -448,18 +545,33 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
                 dropdownColor: isDark ? const Color(0xFF1E1E1E) : Colors.white,
                 decoration: InputDecoration(
                   labelText: 'Part',
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
-                  contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 16,
+                    vertical: 14,
+                  ),
                 ),
-                items: _parts?.map((p) => DropdownMenuItem(
-                  value: p,
-                  child: Text(p.title, overflow: TextOverflow.ellipsis),
-                )).toList() ?? [],
+                items:
+                    _parts
+                        ?.map(
+                          (p) => DropdownMenuItem(
+                            value: p,
+                            child: Text(
+                              p.title,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList() ??
+                    [],
                 onChanged: (p) {
-                  if (p != null) setState(() {
-                    _selectedPart = p;
-                    _selectedUnits = {};
-                  });
+                  if (p != null)
+                    setState(() {
+                      _selectedPart = p;
+                      _selectedUnits = {};
+                    });
                 },
               ),
               const SizedBox(height: 12),
@@ -519,7 +631,8 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
                       Text(t.label),
                     ],
                   ),
-                  onSelected: (v) => setState(() => _selectedTheme = v ? t.value : null),
+                  onSelected: (v) =>
+                      setState(() => _selectedTheme = v ? t.value : null),
                   selectedColor: Colors.green.withValues(alpha: 0.2),
                   backgroundColor: isDark ? Colors.grey[800] : Colors.grey[100],
                   labelStyle: TextStyle(
@@ -538,14 +651,20 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
               child: ElevatedButton.icon(
                 onPressed: _canGenerate && !_isLoading ? _generate : null,
                 icon: _isLoading
-                    ? const SizedBox(width: 18, height: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
                     : const Icon(Icons.auto_awesome, size: 18),
                 label: Text(_isLoading ? '生成中...' : '🚀 生成范文'),
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.green,
                   foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 14),
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
                 ),
               ),
             ),
@@ -574,5 +693,9 @@ class _ThemeOption {
   final IconData icon;
   final String label;
   final String value;
-  const _ThemeOption({required this.icon, required this.label, required this.value});
+  const _ThemeOption({
+    required this.icon,
+    required this.label,
+    required this.value,
+  });
 }

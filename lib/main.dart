@@ -17,6 +17,7 @@ import 'services/diagnostic_log_service.dart';
 import 'models.dart';
 import 'models/session_ready_event.dart';
 import 'services/note_navigation_service.dart';
+import 'services/foreground_display_service.dart';
 
 late MyAudioHandler globalAudioHandler;
 
@@ -53,16 +54,25 @@ class JeffNotesApp extends StatefulWidget {
   State<JeffNotesApp> createState() => _JeffNotesAppState();
 }
 
-class _JeffNotesAppState extends State<JeffNotesApp> {
+class _JeffNotesAppState extends State<JeffNotesApp>
+    with WidgetsBindingObserver {
   StreamSubscription<SessionReadyEvent>? _readySubscription;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(ForegroundDisplayService.setActive(true));
     final provider = context.read<RecordingProvider>();
     _readySubscription = provider.sessionReadyStream.listen((event) {
       unawaited(_surfaceReadyNote(provider, event));
     });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final isForeground = state == AppLifecycleState.resumed;
+    unawaited(ForegroundDisplayService.setActive(isForeground));
   }
 
   String _displayPathFor(SessionReadyEvent event) {
@@ -75,14 +85,15 @@ class _JeffNotesAppState extends State<JeffNotesApp> {
     RecordingProvider provider,
     SessionReadyEvent event,
   ) async {
-    final shouldSurface =
-        event.isFinal &&
-        (event.mode == AppMode.exam || event.mode == AppMode.lecture);
-    if (!shouldSurface) return;
+    if (!event.shouldPromoteReadyNote) return;
 
     final path = _displayPathFor(event);
     final promoted = await provider.promoteReadyNote(event, path);
     if (!promoted || !mounted) return;
+
+    // FreeTalk should expose a persistent success/open entry without forcing
+    // the reader screen on top of the user's current work.
+    if (!event.shouldAutoOpen) return;
 
     await NoteNavigationService.instance.openNote(
       path: path,
@@ -92,6 +103,8 @@ class _JeffNotesAppState extends State<JeffNotesApp> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    unawaited(ForegroundDisplayService.setActive(false));
     _readySubscription?.cancel();
     super.dispose();
   }

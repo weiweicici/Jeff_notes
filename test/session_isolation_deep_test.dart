@@ -3,6 +3,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/api_scheduler.dart';
 import 'package:jeff_notes/models.dart';
 import 'package:jeff_notes/models/recording_session_context.dart';
+import 'package:jeff_notes/models/session_ready_event.dart';
 import 'package:jeff_notes/openai_service.dart';
 import 'package:jeff_notes/services/shadow_draft_service.dart';
 import 'package:jeff_notes/services/session_background_processor.dart';
@@ -367,5 +368,52 @@ void main() {
       expect(content, isNot(contains('AI速记整理未完成')));
       expect(content, isNot(contains('\n\n')));
     });
+
+    test(
+      '9. FreeTalk saves available transcript and keeps recovery draft when finalization fails',
+      () async {
+        final context = RecordingSessionContext.create(
+          mode: AppMode.freeTalk,
+          unit: PathwaysUnit.none,
+          baseDirectory: tempDir.path,
+          customSessionId: 'freetalk_partial_export_test',
+        );
+        context.addNote(
+          InsightNote(
+            summary: '',
+            transcript: 'The available transcript must still be saved.',
+            translatedContent: '现有转写仍然必须保存。',
+            timestamp: DateTime.now(),
+          ),
+        );
+        expect(await context.saveShadowDraft(), isTrue);
+        context.runPipeline(() async {
+          throw StateError('simulated finalization failure');
+        });
+        context.sealPipelines();
+
+        SessionReadyEvent? readyEvent;
+        String? warning;
+        await SessionBackgroundProcessor.instance.submit(
+          HandoverPayload(
+            context: context,
+            enableFinalRecap: false,
+            onDone: (event) => readyEvent = event,
+            onStatus: (_) {},
+            onError: (message) => warning = message,
+          ),
+        );
+
+        final markdown = File(context.exportPath);
+        expect(readyEvent, isNotNull);
+        expect(await markdown.exists(), isTrue);
+        expect(
+          await markdown.readAsString(),
+          contains('The available transcript must still be saved.'),
+        );
+        expect(await File(context.shadowDraftPath).exists(), isTrue);
+        expect(warning, contains('recovery draft'));
+      },
+    );
   });
 }

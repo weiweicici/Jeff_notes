@@ -16,12 +16,16 @@ class TtsPlayerBar extends StatefulWidget {
   /// 当次讲座真实录音拼合后的 .wav 文件路径（若存在则直接放现场录音）
   final String? recordedAudioPath;
 
+  /// 作文专用：按句重复播放，方便脱离屏幕进行听写。
+  final bool enableEnglishDictation;
+
   const TtsPlayerBar({
     super.key,
     String? chineseText,
     String? englishText,
     String? text,
     this.recordedAudioPath,
+    this.enableEnglishDictation = false,
     required this.siliconFlowKey,
   }) : chineseText = chineseText ?? text ?? '',
        englishText = englishText ?? text ?? '';
@@ -839,6 +843,15 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     final isSynthesizing = tts.isEnglishSynthesizing;
     final isPlaying = tts.isEnglishPlaying;
     final currentSpeed = tts.englishSpeed;
+    final sentenceCount = TtsService.splitEnglishSentences(
+      widget.englishText,
+    ).length;
+    final dictationEstimate = TtsService.estimateEnglishDictationDuration(
+      widget.englishText,
+      repeatCount: 3,
+      pauseBetweenSentences: const Duration(seconds: 3),
+      speed: currentSpeed,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -884,6 +897,74 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             ),
           ],
         ),
+
+        if (widget.enableEnglishDictation) ...[
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.indigo.withOpacity(0.09),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Row(
+              children: [
+                const Icon(
+                  Icons.edit_note_rounded,
+                  size: 15,
+                  color: Colors.indigo,
+                ),
+                const SizedBox(width: 5),
+                Expanded(
+                  child: Text(
+                    tts.isEnglishDictationPlaying
+                        ? '听写中：第 ${tts.dictationSentenceIndex}/${tts.dictationSentenceCount} 句 · 第 ${tts.dictationRepeatIndex}/${tts.dictationRepeatCount} 次'
+                        : '听写：$sentenceCount 句 · 每句 3 次 · 约 ${_formatDuration(dictationEstimate)}',
+                    style: const TextStyle(
+                      fontSize: 10,
+                      fontWeight: FontWeight.w600,
+                      color: Colors.indigo,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: isSynthesizing
+                      ? null
+                      : () async {
+                          try {
+                            final provider = Provider.of<RecordingProvider>(
+                              context,
+                              listen: false,
+                            );
+                            await tts.startEnglishDictation(
+                              widget.englishText,
+                              geminiKey: provider.geminiKey,
+                              siliconFlowKey: widget.siliconFlowKey,
+                            );
+                          } catch (e) {
+                            if (!context.mounted) return;
+                            if (e.toString().contains('NoHeadphones')) {
+                              _showNoHeadphonesSnackBar(
+                                context,
+                                debug: e.toString(),
+                              );
+                            } else {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(content: Text('听写启动失败: $e')),
+                              );
+                            }
+                          }
+                        },
+                  style: TextButton.styleFrom(
+                    minimumSize: Size.zero,
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                  ),
+                  child: const Text('开始', style: TextStyle(fontSize: 10)),
+                ),
+              ],
+            ),
+          ),
+        ],
 
         // 进度条（针对 AI 包含精准 Seek 功能）
         StreamBuilder<Duration?>(

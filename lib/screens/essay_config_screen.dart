@@ -18,6 +18,7 @@ import '../services/file_sync_agent.dart';
 import 'history_screen.dart';
 
 enum EssayCategory {
+  practicedComparison,
   transportation,
   technology,
   lifestyle,
@@ -39,89 +40,278 @@ class PresetTopic {
 }
 
 const Map<EssayCategory, List<PresetTopic>> presetTopicsByCategory = {
+  EssayCategory.practicedComparison: [
+    PresetTopic(
+      topic:
+          "Choose two well-known movie stars and compare them using the required direction",
+      chineseLabel: "两位电影明星",
+    ),
+    PresetTopic(
+      topic:
+          "Choose two well-known singers and compare them using the required direction",
+      chineseLabel: "两位歌星",
+    ),
+    PresetTopic(
+      topic:
+          "Choose two well-known comedians and compare them using the required direction",
+      chineseLabel: "两位喜剧演员",
+    ),
+    PresetTopic(topic: "Vancouver and Hong Kong", chineseLabel: "温哥华和香港"),
+    PresetTopic(
+      topic: "New Year's Day and Lunar New Year",
+      chineseLabel: "New Year和农历新年",
+    ),
+    PresetTopic(
+      topic:
+          "Choose two familiar subjects from the same category and compare them using the required direction",
+      chineseLabel: "AI自选同类主题",
+    ),
+  ],
   EssayCategory.transportation: [
-    PresetTopic(topic: "Taking the bus vs. Driving a private car", chineseLabel: "坐公交 vs 开私家车"),
-    PresetTopic(topic: "Taking the train vs. Flying by airplane", chineseLabel: "坐火车 vs 坐飞机"),
-    PresetTopic(topic: "Wearing face masks vs. Not wearing face masks", chineseLabel: "戴口罩 vs 不戴口罩"),
-    PresetTopic(topic: "Wearing bicycle helmets vs. Not wearing bicycle helmets", chineseLabel: "戴头盔 vs 不戴头盔"),
-    PresetTopic(topic: "Using public transit vs. Using ride-sharing apps (like Uber)", chineseLabel: "公共交通 vs 打车软件"),
-    PresetTopic(topic: "Buying an electric vehicle (EV) vs. Buying a gas car", chineseLabel: "买电动车 vs 买燃油车"),
+    PresetTopic(
+      topic: "Taking the bus vs. Driving a private car",
+      chineseLabel: "坐公交 vs 开私家车",
+    ),
+    PresetTopic(
+      topic: "Taking the train vs. Flying by airplane",
+      chineseLabel: "坐火车 vs 坐飞机",
+    ),
+    PresetTopic(
+      topic: "Wearing face masks vs. Not wearing face masks",
+      chineseLabel: "戴口罩 vs 不戴口罩",
+    ),
+    PresetTopic(
+      topic: "Wearing bicycle helmets vs. Not wearing bicycle helmets",
+      chineseLabel: "戴头盔 vs 不戴头盔",
+    ),
+    PresetTopic(
+      topic: "Using public transit vs. Using ride-sharing apps (like Uber)",
+      chineseLabel: "公共交通 vs 打车软件",
+    ),
+    PresetTopic(
+      topic: "Buying an electric vehicle (EV) vs. Buying a gas car",
+      chineseLabel: "买电动车 vs 买燃油车",
+    ),
   ],
   EssayCategory.technology: [
-    PresetTopic(topic: "Online learning vs. Traditional classroom learning", chineseLabel: "在线学习 vs 传统课堂"),
-    PresetTopic(topic: "E-books vs. Printed textbooks", chineseLabel: "电子书 vs 纸质教材"),
-    PresetTopic(topic: "Working from home (Remote) vs. Working in the office", chineseLabel: "居家办公 vs 办公室工作"),
-    PresetTopic(topic: "Using cash vs. Using digital/mobile payment", chineseLabel: "现金支付 vs 移动支付"),
-    PresetTopic(topic: "Shopping online vs. Shopping in traditional stores", chineseLabel: "网购 vs 实体店购物"),
-    PresetTopic(topic: "Using AI tools for study vs. Doing research completely by oneself", chineseLabel: "用 AI 学习 vs 完全自主研究"),
+    PresetTopic(
+      topic: "Online learning vs. Traditional classroom learning",
+      chineseLabel: "在线学习 vs 传统课堂",
+    ),
+    PresetTopic(
+      topic: "E-books vs. Printed textbooks",
+      chineseLabel: "电子书 vs 纸质教材",
+    ),
+    PresetTopic(
+      topic: "Working from home (Remote) vs. Working in the office",
+      chineseLabel: "居家办公 vs 办公室工作",
+    ),
+    PresetTopic(
+      topic: "Using cash vs. Using digital/mobile payment",
+      chineseLabel: "现金支付 vs 移动支付",
+    ),
+    PresetTopic(
+      topic: "Shopping online vs. Shopping in traditional stores",
+      chineseLabel: "网购 vs 实体店购物",
+    ),
+    PresetTopic(
+      topic:
+          "Using AI tools for study vs. Doing research completely by oneself",
+      chineseLabel: "用 AI 学习 vs 完全自主研究",
+    ),
   ],
   EssayCategory.lifestyle: [
-    PresetTopic(topic: "Living in a big city vs. Living in a small town", chineseLabel: "住大城市 vs 住小城镇"),
-    PresetTopic(topic: "Cooking at home vs. Eating at restaurants", chineseLabel: "在家做饭 vs 下馆子"),
-    PresetTopic(topic: "Using plastic bags (Paid) vs. Bringing reusable bags", chineseLabel: "用塑料袋 vs 自带环保袋"),
-    PresetTopic(topic: "Renting a house vs. Buying a house", chineseLabel: "租房 vs 买房"),
-    PresetTopic(topic: "Going to the gym vs. Exercising outdoors", chineseLabel: "去健身房 vs 户外运动"),
-    PresetTopic(topic: "Traveling domestically vs. Traveling internationally", chineseLabel: "国内旅游 vs 出国旅游"),
+    PresetTopic(
+      topic: "Living in a big city vs. Living in a small town",
+      chineseLabel: "住大城市 vs 住小城镇",
+    ),
+    PresetTopic(
+      topic: "Cooking at home vs. Eating at restaurants",
+      chineseLabel: "在家做饭 vs 下馆子",
+    ),
+    PresetTopic(
+      topic: "Using plastic bags (Paid) vs. Bringing reusable bags",
+      chineseLabel: "用塑料袋 vs 自带环保袋",
+    ),
+    PresetTopic(
+      topic: "Renting a house vs. Buying a house",
+      chineseLabel: "租房 vs 买房",
+    ),
+    PresetTopic(
+      topic: "Going to the gym vs. Exercising outdoors",
+      chineseLabel: "去健身房 vs 户外运动",
+    ),
+    PresetTopic(
+      topic: "Traveling domestically vs. Traveling internationally",
+      chineseLabel: "国内旅游 vs 出国旅游",
+    ),
   ],
   EssayCategory.school: [
-    PresetTopic(topic: "Free school lunches vs. Paid school lunches", chineseLabel: "免费午餐 vs 付费午餐"),
-    PresetTopic(topic: "Studying alone vs. Studying in groups", chineseLabel: "独自学习 vs 小组学习"),
-    PresetTopic(topic: "Taking notes by hand vs. Typing notes on a laptop", chineseLabel: "手写笔记 vs 电脑打字"),
-    PresetTopic(topic: "Wearing school uniforms vs. Casual dress code", chineseLabel: "穿校服 vs 自由着装"),
-    PresetTopic(topic: "Mandatory class attendance vs. Optional class attendance", chineseLabel: "强制上课 vs 自愿上课"),
-    PresetTopic(topic: "Banning smartphones in school vs. Allowing smartphones in school", chineseLabel: "校园禁手机 vs 允许手机"),
+    PresetTopic(
+      topic: "Free school lunches vs. Paid school lunches",
+      chineseLabel: "免费午餐 vs 付费午餐",
+    ),
+    PresetTopic(
+      topic: "Studying alone vs. Studying in groups",
+      chineseLabel: "独自学习 vs 小组学习",
+    ),
+    PresetTopic(
+      topic: "Taking notes by hand vs. Typing notes on a laptop",
+      chineseLabel: "手写笔记 vs 电脑打字",
+    ),
+    PresetTopic(
+      topic: "Wearing school uniforms vs. Casual dress code",
+      chineseLabel: "穿校服 vs 自由着装",
+    ),
+    PresetTopic(
+      topic: "Mandatory class attendance vs. Optional class attendance",
+      chineseLabel: "强制上课 vs 自愿上课",
+    ),
+    PresetTopic(
+      topic: "Banning smartphones in school vs. Allowing smartphones in school",
+      chineseLabel: "校园禁手机 vs 允许手机",
+    ),
   ],
   EssayCategory.career: [
-    PresetTopic(topic: "Working a full-time job vs. Starting one's own business", chineseLabel: "全职工作 vs 自主创业"),
-    PresetTopic(topic: "Choosing a high-paying job with high stress vs. A low-paying job with more free time", chineseLabel: "高薪高压 vs 低薪自由"),
-    PresetTopic(topic: "Working for a large corporation vs. Working for a small local company", chineseLabel: "大公司 vs 小公司"),
-    PresetTopic(topic: "Staying in the same career path vs. Changing careers entirely in mid-life", chineseLabel: "同一职业 vs 中年转行"),
+    PresetTopic(
+      topic: "Working a full-time job vs. Starting one's own business",
+      chineseLabel: "全职工作 vs 自主创业",
+    ),
+    PresetTopic(
+      topic:
+          "Choosing a high-paying job with high stress vs. A low-paying job with more free time",
+      chineseLabel: "高薪高压 vs 低薪自由",
+    ),
+    PresetTopic(
+      topic:
+          "Working for a large corporation vs. Working for a small local company",
+      chineseLabel: "大公司 vs 小公司",
+    ),
+    PresetTopic(
+      topic:
+          "Staying in the same career path vs. Changing careers entirely in mid-life",
+      chineseLabel: "同一职业 vs 中年转行",
+    ),
   ],
   EssayCategory.media: [
-    PresetTopic(topic: "Watching movies at home (Streaming) vs. Going to a movie theater", chineseLabel: "在家看流媒体 vs 去电影院"),
-    PresetTopic(topic: "Reading news from social media vs. Reading news from official websites", chineseLabel: "社交媒体看新闻 vs 官网看新闻"),
-    PresetTopic(topic: "Traveling to natural areas (Eco-tourism) vs. Visiting historic big cities", chineseLabel: "自然生态游 vs 历史名城游"),
-    PresetTopic(topic: "Living completely without internet for a weekend vs. Staying connected 24/7", chineseLabel: "断网周末 vs 全天联网"),
+    PresetTopic(
+      topic: "Watching movies at home (Streaming) vs. Going to a movie theater",
+      chineseLabel: "在家看流媒体 vs 去电影院",
+    ),
+    PresetTopic(
+      topic:
+          "Reading news from social media vs. Reading news from official websites",
+      chineseLabel: "社交媒体看新闻 vs 官网看新闻",
+    ),
+    PresetTopic(
+      topic:
+          "Traveling to natural areas (Eco-tourism) vs. Visiting historic big cities",
+      chineseLabel: "自然生态游 vs 历史名城游",
+    ),
+    PresetTopic(
+      topic:
+          "Living completely without internet for a weekend vs. Staying connected 24/7",
+      chineseLabel: "断网周末 vs 全天联网",
+    ),
   ],
   EssayCategory.health: [
-    PresetTopic(topic: "Exercising regularly vs. Leading a sedentary lifestyle", chineseLabel: "规律运动 vs 久坐不动"),
-    PresetTopic(topic: "Eating fast food vs. Cooking home-made meals", chineseLabel: "吃快餐 vs 自己做饭"),
-    PresetTopic(topic: "Paying attention to mental health vs. Ignoring mental well-being", chineseLabel: "关注心理健康 vs 忽视心理状态"),
-    PresetTopic(topic: "Getting enough sleep vs. Staying up late", chineseLabel: "保证充足睡眠 vs 经常熬夜"),
+    PresetTopic(
+      topic: "Exercising regularly vs. Leading a sedentary lifestyle",
+      chineseLabel: "规律运动 vs 久坐不动",
+    ),
+    PresetTopic(
+      topic: "Eating fast food vs. Cooking home-made meals",
+      chineseLabel: "吃快餐 vs 自己做饭",
+    ),
+    PresetTopic(
+      topic: "Paying attention to mental health vs. Ignoring mental well-being",
+      chineseLabel: "关注心理健康 vs 忽视心理状态",
+    ),
+    PresetTopic(
+      topic: "Getting enough sleep vs. Staying up late",
+      chineseLabel: "保证充足睡眠 vs 经常熬夜",
+    ),
   ],
   EssayCategory.environment: [
-    PresetTopic(topic: "Protecting the environment vs. Prioritizing economic development", chineseLabel: "保护环境 vs 优先发展经济"),
-    PresetTopic(topic: "Using renewable energy vs. Relying on fossil fuels", chineseLabel: "使用可再生能源 vs 依赖化石燃料"),
-    PresetTopic(topic: "Reducing consumption vs. Recycling waste", chineseLabel: "减少消费 vs 回收利用垃圾"),
+    PresetTopic(
+      topic: "Protecting the environment vs. Prioritizing economic development",
+      chineseLabel: "保护环境 vs 优先发展经济",
+    ),
+    PresetTopic(
+      topic: "Using renewable energy vs. Relying on fossil fuels",
+      chineseLabel: "使用可再生能源 vs 依赖化石燃料",
+    ),
+    PresetTopic(
+      topic: "Reducing consumption vs. Recycling waste",
+      chineseLabel: "减少消费 vs 回收利用垃圾",
+    ),
   ],
   EssayCategory.society: [
-    PresetTopic(topic: "Living in a multicultural society vs. Preserving traditional culture", chineseLabel: "多元文化社会 vs 保持传统文化"),
-    PresetTopic(topic: "Living and working abroad vs. Staying in one's home country", chineseLabel: "出国发展 vs 留在祖国"),
-    PresetTopic(topic: "Promoting gender equality vs. Maintaining traditional gender roles", chineseLabel: "提倡性别平等 vs 维持传统性别角色"),
+    PresetTopic(
+      topic:
+          "Living in a multicultural society vs. Preserving traditional culture",
+      chineseLabel: "多元文化社会 vs 保持传统文化",
+    ),
+    PresetTopic(
+      topic: "Living and working abroad vs. Staying in one's home country",
+      chineseLabel: "出国发展 vs 留在祖国",
+    ),
+    PresetTopic(
+      topic:
+          "Promoting gender equality vs. Maintaining traditional gender roles",
+      chineseLabel: "提倡性别平等 vs 维持传统性别角色",
+    ),
   ],
   EssayCategory.family: [
-    PresetTopic(topic: "Living in a nuclear family vs. Living in an extended family", chineseLabel: "核心家庭 vs 大家庭"),
-    PresetTopic(topic: "Raising children in the city vs. Raising children in the countryside", chineseLabel: "城市养娃 vs 农村养娃"),
+    PresetTopic(
+      topic: "Living in a nuclear family vs. Living in an extended family",
+      chineseLabel: "核心家庭 vs 大家庭",
+    ),
+    PresetTopic(
+      topic:
+          "Raising children in the city vs. Raising children in the countryside",
+      chineseLabel: "城市养娃 vs 农村养娃",
+    ),
   ],
   EssayCategory.ethics: [
-    PresetTopic(topic: "AI replacing human jobs vs. AI creating new job opportunities", chineseLabel: "AI 取代工作 vs AI 创造新岗位"),
-    PresetTopic(topic: "Protecting data privacy vs. Enjoying the convenience of technology", chineseLabel: "保护数据隐私 vs 享受科技便利"),
+    PresetTopic(
+      topic: "AI replacing human jobs vs. AI creating new job opportunities",
+      chineseLabel: "AI 取代工作 vs AI 创造新岗位",
+    ),
+    PresetTopic(
+      topic:
+          "Protecting data privacy vs. Enjoying the convenience of technology",
+      chineseLabel: "保护数据隐私 vs 享受科技便利",
+    ),
   ],
 };
 
 String _categoryLabel(EssayCategory c) {
   switch (c) {
-    case EssayCategory.transportation: return '🚗 交通与公共安全';
-    case EssayCategory.technology:     return '💻 科技与数字化';
-    case EssayCategory.lifestyle:      return '🏠 日常生活与消费';
-    case EssayCategory.school:         return '📚 学校与学习';
-    case EssayCategory.career:         return '💼 工作与未来职场';
-    case EssayCategory.media:          return '🎬 媒体与娱乐生活';
-    case EssayCategory.health:         return '🏃 健康与生活方式';
-    case EssayCategory.environment:    return '🌿 环境与可持续发展';
-    case EssayCategory.society:        return '🌍 社会与文化';
-    case EssayCategory.family:         return '👨‍👩‍👧‍👦 家庭与人际关系';
-    case EssayCategory.ethics:         return '🤖 伦理与科技边界';
+    case EssayCategory.practicedComparison:
+      return '⭐ 已练对比题';
+    case EssayCategory.transportation:
+      return '🚗 交通与公共安全';
+    case EssayCategory.technology:
+      return '💻 科技与数字化';
+    case EssayCategory.lifestyle:
+      return '🏠 日常生活与消费';
+    case EssayCategory.school:
+      return '📚 学校与学习';
+    case EssayCategory.career:
+      return '💼 工作与未来职场';
+    case EssayCategory.media:
+      return '🎬 媒体与娱乐生活';
+    case EssayCategory.health:
+      return '🏃 健康与生活方式';
+    case EssayCategory.environment:
+      return '🌿 环境与可持续发展';
+    case EssayCategory.society:
+      return '🌍 社会与文化';
+    case EssayCategory.family:
+      return '👨‍👩‍👧‍👦 家庭与人际关系';
+    case EssayCategory.ethics:
+      return '🤖 伦理与科技边界';
   }
 }
 
@@ -135,10 +325,12 @@ class EssayConfigScreen extends StatefulWidget {
 class _EssayConfigScreenState extends State<EssayConfigScreen> {
   final _customController = TextEditingController();
 
-  EssayCategory _selectedCategory = EssayCategory.school;
-  PresetTopic _selectedPreset = presetTopicsByCategory[EssayCategory.school]!.first;
+  EssayCategory _selectedCategory = EssayCategory.practicedComparison;
+  PresetTopic _selectedPreset =
+      presetTopicsByCategory[EssayCategory.practicedComparison]!.first;
 
-  String _essayType = 'Argumentative';
+  String _essayType = 'Comparison';
+  String? _comparisonFocus;
 
   bool _isGenerating = false;
   String? _resultMarkdown;
@@ -164,7 +356,19 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
   Future<void> _confirmAndGenerate() async {
     if (_finalTopic.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('请输入或选择一个写作话题'), backgroundColor: Colors.orange),
+        const SnackBar(
+          content: Text('请输入或选择一个写作话题'),
+          backgroundColor: Colors.orange,
+        ),
+      );
+      return;
+    }
+    if (_essayType == 'Comparison' && _comparisonFocus == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('请选择只比较相同点，或只比较不同点'),
+          backgroundColor: Colors.orange,
+        ),
       );
       return;
     }
@@ -184,11 +388,26 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('即将调用 AI 生成作文：', style: TextStyle(fontSize: 13, color: Colors.grey)),
+            const Text(
+              '即将调用 AI 生成作文：',
+              style: TextStyle(fontSize: 13, color: Colors.grey),
+            ),
             const SizedBox(height: 12),
             _confirmRow('话题', _finalTopic),
             const SizedBox(height: 6),
-            _confirmRow('类型', _essayType == 'Comparison' ? '对比文 (Comparison)' : '议论文 (Argumentative)'),
+            _confirmRow(
+              '类型',
+              _essayType == 'Comparison'
+                  ? '对比文 (Comparison)'
+                  : '议论文 (Argumentative)',
+            ),
+            if (_essayType == 'Comparison') ...[
+              const SizedBox(height: 6),
+              _confirmRow(
+                '方向',
+                _comparisonFocus == 'Similarities' ? '只比较相同点' : '只比较不同点',
+              ),
+            ],
           ],
         ),
         actions: [
@@ -199,10 +418,18 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
           ElevatedButton(
             style: ElevatedButton.styleFrom(
               backgroundColor: Colors.blueAccent,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
             ),
             onPressed: () => Navigator.pop(ctx, true),
-            child: const Text('确认生成', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+            child: const Text(
+              '确认生成',
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+              ),
+            ),
           ),
         ],
       ),
@@ -216,7 +443,13 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       text: TextSpan(
         style: const TextStyle(fontSize: 14, color: Colors.black87),
         children: [
-          TextSpan(text: '$label: ', style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueAccent)),
+          TextSpan(
+            text: '$label: ',
+            style: const TextStyle(
+              fontWeight: FontWeight.bold,
+              color: Colors.blueAccent,
+            ),
+          ),
           TextSpan(text: value),
         ],
       ),
@@ -244,7 +477,8 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
         Navigator.pushReplacement(
           context,
           MaterialPageRoute(
-            builder: (_) => NoteDetailScreen(file: File(savedPath)),
+            builder: (_) =>
+                NoteDetailScreen(file: File(savedPath), autoPlayEnglish: true),
           ),
         );
       }
@@ -261,13 +495,17 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       return await provider.generateEssayMatrix(
         _finalTopic,
         essayType: _essayType,
+        comparisonFocus: _comparisonFocus,
       );
     } catch (firstError) {
-      debugPrint('[Essay] First attempt failed: $firstError — retrying in 5s...');
+      debugPrint(
+        '[Essay] First attempt failed: $firstError — retrying in 5s...',
+      );
       await Future.delayed(const Duration(seconds: 5));
       return await provider.generateEssayMatrix(
         _finalTopic,
         essayType: _essayType,
+        comparisonFocus: _comparisonFocus,
       );
     }
   }
@@ -276,7 +514,9 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
     try {
       final now = DateTime.now();
       final dateStr = DateFormat('yyyyMMdd_HHmm').format(now);
-      final safeTopic = _finalTopic.replaceAll(RegExp(r'[\\/:*?"<>|]'), '').replaceAll(' ', '_');
+      final safeTopic = _finalTopic
+          .replaceAll(RegExp(r'[\\/:*?"<>|]'), '')
+          .replaceAll(' ', '_');
       final filename = "Jeff_Essay_${safeTopic}_$dateStr.md";
       final directory = await getApplicationDocumentsDirectory();
       final file = File('${directory.path}/$filename');
@@ -316,7 +556,8 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
     try {
       final title = 'Jeff_Essay_${_finalTopic.replaceAll(' ', '_')}.pdf';
       Rect? bounds;
-      final renderBox = _pdfButtonKey.currentContext?.findRenderObject() as RenderBox?;
+      final renderBox =
+          _pdfButtonKey.currentContext?.findRenderObject() as RenderBox?;
       if (renderBox != null) {
         final offset = renderBox.localToGlobal(Offset.zero);
         bounds = offset & renderBox.size;
@@ -325,7 +566,10 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('❌ PDF 导出失败: $e'), backgroundColor: Colors.redAccent),
+          SnackBar(
+            content: Text('❌ PDF 导出失败: $e'),
+            backgroundColor: Colors.redAccent,
+          ),
         );
       }
     }
@@ -345,7 +589,13 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
           IconButton(
             icon: const Icon(Icons.history_edu),
             tooltip: "查看历史记录",
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const HistoryScreen(initialModuleFilter: 'essay'))),
+            onPressed: () => Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) =>
+                    const HistoryScreen(initialModuleFilter: 'essay'),
+              ),
+            ),
           ),
           const SizedBox(width: 8),
         ],
@@ -358,14 +608,25 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: isDark
-                ? [const Color(0xFF0F0F1A), const Color(0xFF161626), const Color(0xFF1E1C2C)]
-                : [const Color(0xFFF7F8FC), const Color(0xFFEEF1F7), const Color(0xFFE5E9F3)],
+                ? [
+                    const Color(0xFF0F0F1A),
+                    const Color(0xFF161626),
+                    const Color(0xFF1E1C2C),
+                  ]
+                : [
+                    const Color(0xFFF7F8FC),
+                    const Color(0xFFEEF1F7),
+                    const Color(0xFFE5E9F3),
+                  ],
           ),
         ),
         child: SafeArea(
           child: SingleChildScrollView(
             physics: const BouncingScrollPhysics(),
-            padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 16.0),
+            padding: const EdgeInsets.symmetric(
+              horizontal: 24.0,
+              vertical: 16.0,
+            ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -395,16 +656,25 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
             color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
             blurRadius: 15,
             offset: const Offset(0, 6),
-          )
+          ),
         ],
-        border: Border.all(color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04)),
+        border: Border.all(
+          color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04),
+        ),
       ),
       child: Row(
         children: [
           Container(
             padding: const EdgeInsets.all(12),
-            decoration: BoxDecoration(color: Colors.blue.withOpacity(0.15), shape: BoxShape.circle),
-            child: const Icon(Icons.psychology_outlined, color: Colors.blueAccent, size: 28),
+            decoration: BoxDecoration(
+              color: Colors.blue.withOpacity(0.15),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.psychology_outlined,
+              color: Colors.blueAccent,
+              size: 28,
+            ),
           ),
           const SizedBox(width: 16),
           Expanded(
@@ -422,11 +692,15 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
                 const SizedBox(height: 4),
                 Text(
                   "从「成本·时间·幸福感」三个维度展开论述，拒绝空话套话，写出自然的学术短文。",
-                  style: TextStyle(fontSize: 13, color: isDark ? Colors.grey[400] : Colors.grey[600], height: 1.3),
+                  style: TextStyle(
+                    fontSize: 13,
+                    color: isDark ? Colors.grey[400] : Colors.grey[600],
+                    height: 1.3,
+                  ),
                 ),
               ],
             ),
-          )
+          ),
         ],
       ),
     );
@@ -443,9 +717,11 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
             color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
             blurRadius: 15,
             offset: const Offset(0, 6),
-          )
+          ),
         ],
-        border: Border.all(color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04)),
+        border: Border.all(
+          color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04),
+        ),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -463,17 +739,30 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
             decoration: InputDecoration(
               labelText: "自定义话题（输入英文）",
               hintText: "例如: Should students wear school uniforms?",
-              hintStyle: TextStyle(color: isDark ? Colors.grey[600] : Colors.grey[400], fontSize: 13),
+              hintStyle: TextStyle(
+                color: isDark ? Colors.grey[600] : Colors.grey[400],
+                fontSize: 13,
+              ),
               helperText: "填此框则优先使用，忽略下方预设；建议用完整问句",
-              helperStyle: TextStyle(fontSize: 11, color: isDark ? Colors.grey[600] : Colors.grey[400]),
-              labelStyle: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
+              helperStyle: TextStyle(
+                fontSize: 11,
+                color: isDark ? Colors.grey[600] : Colors.grey[400],
+              ),
+              labelStyle: TextStyle(
+                color: isDark ? Colors.grey[400] : Colors.grey[600],
+              ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: isDark ? Colors.white10 : Colors.black12),
+                borderSide: BorderSide(
+                  color: isDark ? Colors.white10 : Colors.black12,
+                ),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
+                borderSide: const BorderSide(
+                  color: Colors.blueAccent,
+                  width: 2,
+                ),
               ),
             ),
           ),
@@ -482,18 +771,28 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
           DropdownButtonFormField<EssayCategory>(
             value: _selectedCategory,
             dropdownColor: isDark ? const Color(0xFF1E1E2F) : Colors.white,
-            style: TextStyle(color: isDark ? Colors.white : Colors.black87, fontSize: 14),
+            style: TextStyle(
+              color: isDark ? Colors.white : Colors.black87,
+              fontSize: 14,
+            ),
             isExpanded: true,
             decoration: InputDecoration(
               labelText: "预设分类",
-              labelStyle: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600]),
+              labelStyle: TextStyle(
+                color: isDark ? Colors.grey[400] : Colors.grey[600],
+              ),
               enabledBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(color: isDark ? Colors.white10 : Colors.black12),
+                borderSide: BorderSide(
+                  color: isDark ? Colors.white10 : Colors.black12,
+                ),
               ),
               focusedBorder: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(12),
-                borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
+                borderSide: const BorderSide(
+                  color: Colors.blueAccent,
+                  width: 2,
+                ),
               ),
             ),
             items: EssayCategory.values.map((c) {
@@ -504,6 +803,9 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
               setState(() {
                 _selectedCategory = val;
                 _selectedPreset = presetTopicsByCategory[val]!.first;
+                if (val == EssayCategory.practicedComparison) {
+                  _essayType = 'Comparison';
+                }
               });
             },
           ),
@@ -531,15 +833,23 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
                       p.chineseLabel,
                       style: TextStyle(
                         fontSize: 13,
-                        fontWeight: selected ? FontWeight.w600 : FontWeight.normal,
-                        color: selected ? Colors.white : (isDark ? Colors.grey[300] : Colors.black87),
+                        fontWeight: selected
+                            ? FontWeight.w600
+                            : FontWeight.normal,
+                        color: selected
+                            ? Colors.white
+                            : (isDark ? Colors.grey[300] : Colors.black87),
                       ),
                     ),
                     selected: selected,
                     selectedColor: Colors.blueAccent,
-                    backgroundColor: isDark ? const Color(0xFF2A2A3E) : Colors.grey[100],
+                    backgroundColor: isDark
+                        ? const Color(0xFF2A2A3E)
+                        : Colors.grey[100],
                     side: BorderSide.none,
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(20),
+                    ),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     visualDensity: VisualDensity.compact,
                     onSelected: (val) {
@@ -563,6 +873,37 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
               ),
             ],
           ),
+          if (_essayType == 'Comparison') ...[
+            const SizedBox(height: 14),
+            Text(
+              '比较方向（必选）',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: isDark ? Colors.grey[300] : Colors.grey[700],
+              ),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: _buildComparisonFocusChip(
+                    'Similarities',
+                    '🤝 只写相同点',
+                    isDark,
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: _buildComparisonFocusChip(
+                    'Differences',
+                    '↔️ 只写不同点',
+                    isDark,
+                  ),
+                ),
+              ],
+            ),
+          ],
           const SizedBox(height: 28),
 
           SizedBox(
@@ -573,19 +914,40 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
                 backgroundColor: Colors.blueAccent,
                 foregroundColor: Colors.white,
                 elevation: 0,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
               ),
               onPressed: _isGenerating ? null : _confirmAndGenerate,
               child: _isGenerating
                   ? const Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
-                        SizedBox(width: 20, height: 20, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
+                        SizedBox(
+                          width: 20,
+                          height: 20,
+                          child: CircularProgressIndicator(
+                            color: Colors.white,
+                            strokeWidth: 2,
+                          ),
+                        ),
                         SizedBox(width: 12),
-                        Text("生成中...", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        Text(
+                          "生成中...",
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ],
                     )
-                  : const Text("生成作文", style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  : const Text(
+                      "生成作文",
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
             ),
           ),
         ],
@@ -606,7 +968,9 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
               : (isDark ? Colors.white12 : Colors.grey[100]),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(
-            color: selected ? Colors.blueAccent : (isDark ? Colors.white10 : Colors.black12),
+            color: selected
+                ? Colors.blueAccent
+                : (isDark ? Colors.white10 : Colors.black12),
           ),
         ),
         child: Center(
@@ -615,7 +979,43 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
             style: TextStyle(
               fontSize: 14,
               fontWeight: FontWeight.bold,
-              color: selected ? Colors.white : (isDark ? Colors.grey[400] : Colors.grey[700]),
+              color: selected
+                  ? Colors.white
+                  : (isDark ? Colors.grey[400] : Colors.grey[700]),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildComparisonFocusChip(String focus, String label, bool isDark) {
+    final selected = _comparisonFocus == focus;
+    return GestureDetector(
+      onTap: () => setState(() => _comparisonFocus = focus),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(vertical: 12),
+        decoration: BoxDecoration(
+          color: selected
+              ? Colors.teal
+              : (isDark ? Colors.white12 : Colors.grey[100]),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(
+            color: selected
+                ? Colors.teal
+                : (isDark ? Colors.white10 : Colors.black12),
+          ),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.bold,
+              color: selected
+                  ? Colors.white
+                  : (isDark ? Colors.grey[400] : Colors.grey[700]),
             ),
           ),
         ),
@@ -636,10 +1036,18 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text('❌ 生成失败（已自动重试一次）',
-              style: TextStyle(color: Colors.redAccent, fontWeight: FontWeight.bold)),
+          const Text(
+            '❌ 生成失败（已自动重试一次）',
+            style: TextStyle(
+              color: Colors.redAccent,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
           const SizedBox(height: 6),
-          Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent, fontSize: 13)),
+          Text(
+            _errorMessage!,
+            style: const TextStyle(color: Colors.redAccent, fontSize: 13),
+          ),
         ],
       ),
     );
@@ -653,11 +1061,19 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
           children: [
             const LinearProgressIndicator(color: Colors.blueAccent),
             const SizedBox(height: 16),
-            Text(_getLoadingLabel(), style: TextStyle(color: isDark ? Colors.grey[400] : Colors.grey[600])),
+            Text(
+              _getLoadingLabel(),
+              style: TextStyle(
+                color: isDark ? Colors.grey[400] : Colors.grey[600],
+              ),
+            ),
             const SizedBox(height: 8),
             Text(
               "如超时将自动重试一次，请耐心等待",
-              style: TextStyle(fontSize: 12, color: isDark ? Colors.grey[600] : Colors.grey[400]),
+              style: TextStyle(
+                fontSize: 12,
+                color: isDark ? Colors.grey[600] : Colors.grey[400],
+              ),
             ),
           ],
         ),
@@ -685,7 +1101,11 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
                 Expanded(
                   child: Text(
                     '已自动保存到历史记录（可在 History 中查看）',
-                    style: TextStyle(color: Colors.green, fontSize: 13, fontWeight: FontWeight.w600),
+                    style: TextStyle(
+                      color: Colors.green,
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],
@@ -697,21 +1117,33 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
           children: [
             Text(
               "生成结果",
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: isDark ? Colors.white : Colors.black87),
+              style: TextStyle(
+                fontSize: 18,
+                fontWeight: FontWeight.bold,
+                color: isDark ? Colors.white : Colors.black87,
+              ),
             ),
             Row(
               children: [
                 IconButton(
-                  icon: const Icon(Icons.copy_rounded, color: Colors.blueAccent),
+                  icon: const Icon(
+                    Icons.copy_rounded,
+                    color: Colors.blueAccent,
+                  ),
                   tooltip: '复制全文',
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: _resultMarkdown!));
-                    ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("✅ 已复制到剪贴板")));
+                    ScaffoldMessenger.of(
+                      context,
+                    ).showSnackBar(const SnackBar(content: Text("✅ 已复制到剪贴板")));
                   },
                 ),
                 IconButton(
                   key: _pdfButtonKey,
-                  icon: const Icon(Icons.picture_as_pdf_rounded, color: Colors.deepPurpleAccent),
+                  icon: const Icon(
+                    Icons.picture_as_pdf_rounded,
+                    color: Colors.deepPurpleAccent,
+                  ),
                   tooltip: '导出 PDF',
                   onPressed: _exportPdf,
                 ),
@@ -731,9 +1163,11 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
                 color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
                 blurRadius: 15,
                 offset: const Offset(0, 6),
-              )
+              ),
             ],
-            border: Border.all(color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04)),
+            border: Border.all(
+              color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04),
+            ),
           ),
           child: MarkdownBody(
             data: _resultMarkdown!,

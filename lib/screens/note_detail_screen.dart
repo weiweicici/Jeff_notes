@@ -11,6 +11,7 @@ import '../services/reading_quiz_service.dart';
 import '../widgets/academic_markdown.dart';
 import '../widgets/tts_player_bar.dart';
 import '../widgets/tap_page_turn_region.dart';
+import '../widgets/timed_expansion_controller.dart';
 import '../services/supabase_config.dart';
 import '../services/tts_service.dart';
 import '../services/vocab_service.dart';
@@ -21,7 +22,13 @@ enum _NoteMenuAction { toggleRendered, extractVocab, exportPdf, delete }
 
 class NoteDetailScreen extends StatefulWidget {
   final File file;
-  const NoteDetailScreen({super.key, required this.file});
+  final bool autoPlayEnglish;
+
+  const NoteDetailScreen({
+    super.key,
+    required this.file,
+    this.autoPlayEnglish = false,
+  });
   @override
   State<NoteDetailScreen> createState() => _NoteDetailScreenState();
 }
@@ -42,9 +49,20 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   bool _autoScrollTimerStarted = false;
   bool _readerPreferencesLoaded = false;
   bool _readingPositionRestored = false;
-  bool _playerExpanded = false;
-  Timer? _playerAutoHideTimer;
+  bool _englishAutoPlayScheduled = false;
+  late final TimedExpansionController _playerPanel;
   late RecordingProvider _recordingProvider;
+
+  @override
+  void initState() {
+    super.initState();
+    _playerPanel = TimedExpansionController();
+    _playerPanel.addListener(_refreshPlayerPanel);
+  }
+
+  void _refreshPlayerPanel() {
+    if (mounted) setState(() {});
+  }
 
   @override
   void didChangeDependencies() {
@@ -170,7 +188,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
       );
     }
     _stopAutoScrollTimer();
-    _playerAutoHideTimer?.cancel();
+    _playerPanel
+      ..removeListener(_refreshPlayerPanel)
+      ..dispose();
     if (!TtsService().playbackBlockedForRecording) {
       unawaited(TtsService().stop());
     }
@@ -327,6 +347,42 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     }).toList();
 
     return purelyEnglishLines.join('\n\n');
+  }
+
+  void _scheduleEnglishAutoPlay() {
+    if (!widget.autoPlayEnglish || _englishAutoPlayScheduled) return;
+    final englishText = _englishOnlyText?.trim() ?? '';
+    if (englishText.isEmpty) return;
+
+    _englishAutoPlayScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) unawaited(_autoPlayEnglish(englishText));
+    });
+  }
+
+  Future<void> _autoPlayEnglish(String englishText) async {
+    final tts = TtsService();
+    try {
+      await tts.startEnglishDictation(
+        englishText,
+        geminiKey: _recordingProvider.geminiKey,
+        siliconFlowKey: _recordingProvider.siliconFlowKey,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message =
+          error.toString().contains('NoHeadphones') ||
+              error.toString().contains('Unsafe audio route')
+          ? '⚠️ 新作文已生成；连接耳机后点击播放即可听写练习'
+          : 'TTS 自动播放失败：$error';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
   }
 
   Future<void> _exportPdf() async {
@@ -687,6 +743,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
             _chineseOnlyText = _extractChineseOnly(currentContent);
             _englishOnlyText = _extractEnglishOnly(currentContent);
             _lastLoadedContent = currentContent;
+            _scheduleEnglishAutoPlay();
           }
           final allParagraphs = currentContent
               .split(RegExp(r'\n{2,}'))
@@ -742,22 +799,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                   ),
                 ),
               GestureDetector(
-                onTap: () {
-                  setState(() {
-                    _playerExpanded = !_playerExpanded;
-                    if (_playerExpanded) {
-                      _playerAutoHideTimer?.cancel();
-                      _playerAutoHideTimer = Timer(
-                        const Duration(seconds: 10),
-                        () {
-                          if (mounted) setState(() => _playerExpanded = false);
-                        },
-                      );
-                    } else {
-                      _playerAutoHideTimer?.cancel();
-                    }
-                  });
-                },
+                onTap: _playerPanel.toggleManually,
                 child: Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 16,
@@ -770,7 +812,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                   child: Row(
                     children: [
                       Icon(
-                        _playerExpanded ? Icons.expand_less : Icons.expand_more,
+                        _playerPanel.isExpanded
+                            ? Icons.expand_less
+                            : Icons.expand_more,
                         size: 16,
                         color: Colors.grey[600],
                       ),
@@ -782,7 +826,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                       ),
                       const SizedBox(width: 6),
                       Text(
-                        _playerExpanded ? '点击收起播放器' : '🎧 TTS 播放器',
+                        _playerPanel.isExpanded ? '点击收起播放器' : '🎧 TTS 播放器',
                         style: TextStyle(
                           fontSize: 12,
                           color: Colors.grey[600],
@@ -793,12 +837,16 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                   ),
                 ),
               ),
-              if (_playerExpanded) ...[
+              if (_playerPanel.isExpanded) ...[
                 const SizedBox(height: 8),
                 TtsPlayerBar(
                   chineseText: _chineseOnlyText ?? '',
                   englishText: _englishOnlyText ?? '',
                   recordedAudioPath: hasWav ? wavFile.path : null,
+                  enableEnglishDictation: widget.file.path
+                      .split('/')
+                      .last
+                      .startsWith('Jeff_Essay_'),
                   siliconFlowKey: context
                       .read<RecordingProvider>()
                       .siliconFlowKey,

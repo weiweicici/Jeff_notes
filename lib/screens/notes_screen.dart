@@ -25,6 +25,9 @@ class _NotesScreenState extends State<NotesScreen> {
   final ScrollController _scrollController = ScrollController();
   bool _isSummaryPanelExpanded = false;
 
+  String _historyFilterFor(RecordingProvider provider) =>
+      provider.currentSessionMode == AppMode.freeTalk ? 'freetalk' : 'notes';
+
   /// 帧安全顺滑滚动 —— 在当前帧布局完成后再执行滚动，
   /// 彻底防止由于高度未更新导致的计算偏差或 jumpTo 引起的界面突变。
   void _scrollToBottom() {
@@ -613,8 +616,9 @@ class _NotesScreenState extends State<NotesScreen> {
             onPressed: () => Navigator.push(
               context,
               MaterialPageRoute(
-                builder: (context) =>
-                    const HistoryScreen(initialModuleFilter: 'notes'),
+                builder: (context) => HistoryScreen(
+                  initialModuleFilter: _historyFilterFor(provider),
+                ),
               ),
             ),
             icon: const Icon(Icons.history_edu),
@@ -641,7 +645,7 @@ class _NotesScreenState extends State<NotesScreen> {
                   );
                   if (!opened && context.mounted) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('最新速记文件不存在或尚未写入完成')),
+                      const SnackBar(content: Text('最新保存文档不存在或尚未写入完成')),
                     );
                   }
                 },
@@ -667,7 +671,7 @@ class _NotesScreenState extends State<NotesScreen> {
                       SizedBox(width: 8),
                       Expanded(
                         child: Text(
-                          '继续阅读最新速记',
+                          '打开最新保存文档',
                           style: TextStyle(
                             color: Colors.blueAccent,
                             fontSize: 12,
@@ -904,8 +908,10 @@ class _NotesScreenState extends State<NotesScreen> {
                             Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (context) => const HistoryScreen(
-                                  initialModuleFilter: 'notes',
+                                builder: (context) => HistoryScreen(
+                                  initialModuleFilter: _historyFilterFor(
+                                    provider,
+                                  ),
                                 ),
                               ),
                             );
