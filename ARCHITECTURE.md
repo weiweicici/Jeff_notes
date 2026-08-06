@@ -969,4 +969,27 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 - 范文生成完成（combined 或单 unit 模式）弹出结果对话框后，`unawaited(_playEnglish(context, startDictation: true))` 自动开始英文听写播放；`_saveToArchive()` 自动存档逻辑不变。其余为 `dart format` 排版。
 
+### 15.16 Follow-up：Edge 整篇合成听写 · Essay 英文提取自动播放 · 上传非阻塞
+
+> 本节覆盖 2026-08-06 第二批改动（未提交 commit），把 15.15 的听写从「逐句调用 TTS」升级为「Edge 整篇合成 + 句子边界切片」。
+
+**Edge 整篇合成听写** — `lib/services/tts_service.dart`（+318）
+
+- 新增 `_synthesizeEnglishEssayWithEdgeBoundaries()`：一次请求用 Edge TTS 合成**整篇范文音频**并捕获每句的边界 offset（超时 60s，失败抛 `TimeoutException`/空音频异常），替换原逐句 `_flutterTts.speak` 的听写实现。
+- 音频按文本哈希缓存：`<cacheDir>/english_dictation_$textHash.mp3` + `.json` 边界索引；缓存命中则直接切片播放，避免重复合成。
+- `startEnglishDictation()` 改为：加载/合成整篇 → 按边界逐段 `_audioPlayer` 播放（每段暂停 `pauseBetweenSentences`），metadata 带 `artist: '第 N / count 次 · 微软 Jenny'`；`_dictationRunId` 失效机制保留；每段结束后 `setClip()` 释放。
+- `estimateEnglishDictationDuration()` 持续用于播放条预估。
+
+**Essay 英文提取自动播放** — `lib/screens/note_detail_screen.dart`、`test/essay_tts_autoplay_test.dart`（新增）
+
+- 新增 `@visibleForTesting` `extractGeneratedEssayEnglish()`：仅从生成作文里提取英文 Part 1（兼容 `Part 1/2` 标签、`英文全文`/`English Essay`/Markdown heading 变体），在 `---`/`中文翻译`/`Part 2` 处截断；标签缺失时取分隔线前文本。
+- `_extractEnglishOnly()`：`Jeff_Essay_*.md` 优先走该提取器，其余逻辑（英文段落、FreeTalk、fallback）不变。
+- 作文自动播放现在只播英文范文（TTS），不再被中文翻译污染。
+
+**Essay 上传非阻塞** — `lib/screens/essay_config_screen.dart`
+
+- 导出作文后不再原地同步上传，改为 `unawaited(_syncSavedEssay(file, filename))` 后台执行：写入 Supabase archives（module=essay）→ mark UploadCache → finally `FileSyncAgent.syncNow()`；本地打开/TTS 启动不再等待网络。
+
+**其他**：`notes_screen.dart` 播放条自动收起 10s → 30s；`tts_player_bar.dart` 听写模式跳过英文预取；`timed_expansion_controller.dart` 重构（+37，`test/timed_expansion_controller_test.dart` 同步）。
+
 
