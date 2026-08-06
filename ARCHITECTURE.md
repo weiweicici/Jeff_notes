@@ -1019,4 +1019,22 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 **其他**：`tts_player_bar.dart`（+34）随听写 UI 与回调联动；`test/tts_loop_policy_test.dart`（+113）覆盖暂停门/快速重放/循环互斥。
 
+### 15.19 Follow-up：iOS AVPlayerItem KVO 崩溃修复（听写改为 seek 切片播放）
+
+> 本节覆盖 2026-08-06 第五批改动（未提交 commit）。iOS 实机（iPhone OS 27.0）在听写中崩溃，`.ips` 崩溃报告定位为 **`-[AudioPlayer dispose:] → removeItemObservers: → removeObserver:forKeyPath:]`**，即 just_audio 原生 player 在 dispose 时因观察者重复/残留导致的 **KVO 崩溃（SIGABRT）**。
+
+**根因**：听写逐句调用 `AudioPlayer.setClip()` 播句子切片，iOS 上每次切 clip 都会重载原生 `AVPlayerItem` 并重挂 KVO 观察者；多次操作后原生 player dispose 时观察者状态不一致，触发 `objc_exception_rethrow` 崩溃。
+
+**修复** — `lib/services/tts_service.dart`（+740 累计）
+
+- **弃用逐句 `setClip()`**：改为 Edge 整篇合成文件 + `seek(clipStart)` + 播放到 `clipEnd` 边界后 `pause()` 的方式切片播放，不再重载 `AVPlayerItem`。
+- **不再 dispose 共享播放器**：`TtsService.dispose()` 移除 `_audioPlayer.dispose()`（该 player 由 `AudioService` 持有，dispose 职责交还宿主），避免原生层观察者清理竞态。
+- 边界元数据（`clipStart`/`clipEnd`/`clipDuration`/句号次/轮次）改为结构体传入，新增「非计数重放」防护：快速恢复的媒体事件以 `unawaited(_audioPlayer.pause())` 拦停。
+
+**回归保障** — `test/tts_ios_crash_regression_test.dart`（新增）
+
+- 断言 `tts_service.dart` 不含 `.setClip(`；
+- 断言 `dispose()` 不包含 `_audioPlayer.dispose`。
+
+**其他**：`test/tts_headphone_safety_test.dart`（+21）新增 `shouldKeepHeadphoneMonitorAlive()` 静态判定（听写进行中即使暂停也保持耳机监视存活）及其 12 个用例。
 
