@@ -1118,6 +1118,7 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 **联动**：`recording_provider.dart`（±155）、`notes_screen.dart`（±31）、`session_background_processor.dart`（累计 +96）随前批速记块重命名与层级清理微调；`credential_store_test.dart`（−6）删 SiliconFlow 断言。
 
+
 ### 15.24 Follow-up：组合写作模式完整化（话题定向 · 单元级选择 · 全语法要求开关）
 
 > 本节覆盖 2026-08-07 第三批改动（未提交 commit），##完成 15.22 的组合写作入口：在 `combination` 基础文案上补齐**话题定向、具体语法单元选择、自动/指定覆盖策略**。
@@ -1132,5 +1133,20 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 **提示词适配** — `lib/prompt_provider.dart`
 
 - `getCombinedWritingPrompt()` 扩展参数 `availableParts`/`selectedParts`/`selectedUnits`/`requireAllSelectedGrammar`；用 `hasExactUnits && (!tooManyExactUnits || requireAllSelectedGrammar)`、`(!tooManyParts || requireAllSelectedGrammar)` 判定「逐项覆盖 vs 挑取」并写入指令（教师需求开关保留“择优集”的余地）。
-- `grammar_service.dart` `generateCombinedSample()` 透传上述选择与话题文本，`buildCombinedWritingUserMessage()` 组装最终 user message。
 
+
+
+### 15.25 Follow-up：听力速记中文听写（Edge zh-CN）与自动排程
+
+> 本节覆盖 2026-08-07 第四批改动（未提交 commit）。新增**中文听写**链路，把听力速记（`Jeff_速记_*` / 含 `【全篇逻辑播报·可播放】` 的 exam 整理）的中文播报从 SiliconFlow 晓晓女声迁到 Edge，并在打开文档时自动排程。
+
+**中文听写** — `lib/services/tts_service.dart`（累计 +370）、`lib/widgets/tts_player_bar.dart`（累计 +253）
+
+- 新增 `startListeningChineseDictation(text)`：中文逐句听写，`voiceName='zh-CN-XiaoxiaoNeural'`、`language='zh-CN'`、`cachePrefix='listening_chinese_dictation'`、`repeatCount=2`（每句两次，适合听力）；`isChineseDictationPlaying` 由 `ActiveAudioType.chinese` 判定；移除 SiliconFlow 中文晓晓女声（`speech:zh-CN-XiaoxiaoNeural`）旧路径，统一 Edge 合成。
+- 新增静态 `splitChineseSentences(text, {chineseLineBreaksEndSentences})`：中文分句器，控制换行是否作为句边界；组装 `buildEnglishDictationRequirement` 类逻辑（英文 `en-US-JennyNeural` 同保持）。
+- `tts_player_bar.dart`：新增 `enableChineseDictation` 参数与「🇨🇳 中文速记(Edge)」通道标识；`isChinesePlaying`/`isChineseDictationPlaying` 联动；生成文档听写 UI 补充 `听写：M 句 · 每句 j 次 · 每轮约 N 分钟` 估计时长，并透传 `generatedDocumentDictationRepeatCount/Pause`。
+
+**Document 自动排程** — `lib/screens/note_detail_screen.dart`（+101）& `test/essay_tts_autoplay_test.dart`（+80）
+
+- `supportsListeningChineseDictationDocument(fileName, fullText)`：文件名 `Jeff_速记_` 或全文含 `【全篇逻辑播报·可播放】` 时判为支持。
+- `_scheduleListeningChineseAutoPlay(fullText)`：打开文档后若支持、且 `_chineseOnlyText` 非空则自动启动中文听写（`_listeningChineseAutoPlayScheduled` 去重）；`extractListeningShorthandNarration`（15.22）复用为英文部分。测试新增对应 autoplay 覆盖。
