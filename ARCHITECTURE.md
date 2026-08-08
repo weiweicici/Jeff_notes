@@ -1118,3 +1118,19 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 **联动**：`recording_provider.dart`（±155）、`notes_screen.dart`（±31）、`session_background_processor.dart`（累计 +96）随前批速记块重命名与层级清理微调；`credential_store_test.dart`（−6）删 SiliconFlow 断言。
 
+### 15.24 Follow-up：组合写作模式完整化（话题定向 · 单元级选择 · 全语法要求开关）
+
+> 本节覆盖 2026-08-07 第三批改动（未提交 commit），##完成 15.22 的组合写作入口：在 `combination` 基础文案上补齐**话题定向、具体语法单元选择、自动/指定覆盖策略**。
+
+**话题与单元级选择** — `lib/screens/grammar_writing_screen.dart`（累计 +275）、`lib/prompt_provider.dart`（累计 +253）、`lib/services/grammar_service.dart`（+228 累计）
+
+- `grammar_writing_screen.dart` 组合写作 UI 升级：`_combinedMode=true` 默认进入组合模式；可同时勾选章（`_selectedCombinedParts`）与具体语法单元（`_selectedCombinedUnits`），默认优先 `widget.unit` 进入。
+- 话题输入三态：预设话题 Tab（活动/日常、经历、物品/事物、计划/目标、问题/建议、其他 + `value: a topic of your choice`）、自定义 `_combinedTopicController`（`combinedWritingTopic` 输入框，可留空由 AI 自选）、留空自动搭配。
+- `_combinedCoverageSelectionCount` 选择数定义覆盖策略：**1–6 个具体语法 → 逐项覆盖**；多于 6 个（含留空自动搭配）→ AI 从中挑最适合题目的 4–6 个；全部留空 → 自动搭配 4–6 种。
+- 新增 `requireAllSelectedGrammar` 开关（`SwitchListTile.adaptive`，选择 > 6 个时显示）：老师指定必须覆盖全部所选章节/语法，否则宽松挑选。
+
+**提示词适配** — `lib/prompt_provider.dart`
+
+- `getCombinedWritingPrompt()` 扩展参数 `availableParts`/`selectedParts`/`selectedUnits`/`requireAllSelectedGrammar`；用 `hasExactUnits && (!tooManyExactUnits || requireAllSelectedGrammar)`、`(!tooManyParts || requireAllSelectedGrammar)` 判定「逐项覆盖 vs 挑取」并写入指令（教师需求开关保留“择优集”的余地）。
+- `grammar_service.dart` `generateCombinedSample()` 透传上述选择与话题文本，`buildCombinedWritingUserMessage()` 组装最终 user message。
+
