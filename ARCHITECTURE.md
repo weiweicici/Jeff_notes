@@ -1150,3 +1150,21 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 - `supportsListeningChineseDictationDocument(fileName, fullText)`：文件名 `Jeff_速记_` 或全文含 `【全篇逻辑播报·可播放】` 时判为支持。
 - `_scheduleListeningChineseAutoPlay(fullText)`：打开文档后若支持、且 `_chineseOnlyText` 非空则自动启动中文听写（`_listeningChineseAutoPlayScheduled` 去重）；`extractListeningShorthandNarration`（15.22）复用为英文部分。测试新增对应 autoplay 覆盖。
+
+### 15.26 Follow-up：Essay 生成迁 Groq/OpenRouter · 处理状态横幅 · 听写次数按播音块
+
+> 本节覆盖 2026-08-08 第一批改动（未提交 commit）。
+
+**Essay 生成提供层迁移** — `lib/recording_provider.dart`（累计 +247）& `lib/screens/notes_screen.dart`（累计 +108）
+
+- Gemini 首选的 essay 生成链，失败兜底由 **SiliconFlow Qwen 换成 Groq**：新增泛化 `_generateEssayWithChatCompletion({providerName, ...})`，分别调用 Groq（`openai/gpt-oss-120b`）与 OpenRouter；日志改「Gemini failed ... falling back to Groq」「No Gemini key configured, using Groq...」。
+- `notes_screen.dart` 将 `siliconFlowKey` 传参改为 `openRouterKey`。
+
+**处理状态横幅** — `lib/screens/notes_screen.dart`
+
+- 当 `provider.isProcessingRecording || processingErrorMessage != null` 时，列表顶部渲染状态横幅：蓝（处理中）/红（出错）半透明背景 + 描边，提示后台整理状态；错误呈现可区分颜色语义。
+
+**听写次数按播音块** — `lib/services/tts_service.dart`（累计 +421 & `test/essay_tts_autoplay_test.dart`（+91）
+
+- 静态置顶 `listeningOverviewRepeatCount=1`（`【全篇逻辑播报·可播放】`）与 `listeningAnswerFocusRepeatCount=2`（`【答题重点与危险位置·可播放】`）：`startListeningChineseDictation` 按文本是否含答案定位 marker（`markerIndex>=0`）选择 1 次或 2 次/句。
+- 播报设置新增 `voiceLabel`（`微软 Jenny` / `微软晓晓`），状态栏显示 `第 i / M 次 · <voiceLabel>`；`isChineseDictationPlaying` 同时校验 `_isEnglishDictationPlaying && ActiveAudioType.chinese`。
