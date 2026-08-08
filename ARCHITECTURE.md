@@ -1095,3 +1095,26 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 - 回退上批话题搜索：`PresetTopicSearchResult`、`searchPresetTopics()`、`_buildTopicSearchField()`、`_selectSearchedTopic()` 全部删除；补回 `test/essay_config_screen_test.dart`、`test/grammar_writing_screen_test.dart`、`test/grammar_writing_prompt_test.dart`。场景校验微调：`final_exam_notes_pipeline_test.dart`（+16）、`session_isolation_deep_test.dart`（+29）随速记块重命名更新。
 
+### 15.23 Follow-up：AI 提供层迁移 OpenRouter · Smart Vocab 闪卡 · Grammar 考试范围收敛
+
+> 本节覆盖 2026-08-07 第二批改动（未提交 commit）。AI 提供层整体收拢到 **Groq/Gemini/OpenRouter**、移除硅基流动（SiliconFlow），并补全单词卡闪卡 UI 与收敛语法考试单元。
+
+**提供层迁移** — `lib/services/credential_store.dart`（−7）、`lib/services/vocab_extractor_service.dart`（+115）、`lib/services/tts_service.dart`（+83/−165）、`lib/ai_orchestrator_service.dart`（+44 改动）、`lib/openai_service.dart`（+25）
+
+- `credential_store.dart` 移除 `api_key_siliconFlow` 及其全部别名映射，新增 `keyOpenRouter`。
+- `vocab_extractor_service.dart` 生词提取为 **Gemini 主 → Groq → OpenRouter 兜底**三级：Gemini 失败回退 Groq（`openai/gpt-oss-120b`，`api.groq.com/openai/v1/chat/completions`），Groq 无 key 才用 OpenRouter（`openrouter.ai/api/v1/chat/completions`），两者皆空才抛「请配置 Groq 或 OpenRouter API Key」；响应解析兼容 ````json` 围栏剥除与 `choices[0].message.content` 的 JSON 映射为 `VocabCard`。
+- `tts_service.dart` 预取 `prefetchEnglish()` 移除 **SiliconFlow** 声道：改为 EdgeNeural 主 + **OpenRouter** 兜底（原 Gemini/SiliconFlow 兜底都移除），签名增 `{String? openRouterKey}`。
+- `ai_orchestrator_service.dart` 翻译链路固定 **Groq（实时主）→ Gemini（免费次）→ OpenRouter（付费兜底）**：仅当 Groq 与 Gemini 均失败才走 `translationFallbackService`，状态文案「Groq and Gemini failed. Using OpenRouter...」。
+- `openai_service.dart` 剔除硅基流动特判与 SenseVoice 400 调试注释，保留通用 Bearer 头。
+
+**Smart Vocab 闪卡 UI** — `lib/screens/smart_vocab_screen.dart`（+238 累计）
+
+- `SmartVocabScreen({initialCards, sourceTitle})` 支持外部注入卡组；新增「📖 待复习 / ✅ 已掌握」双 Tab（按 `isMastered` 过滤计数）、卡片正反面（`_buildCardFront`/`_buildCardBack`）、翻卡切换、掌握状态标记、`saveCard()` 持久化与按掌握度着色的索引/按钮。
+
+**Grammar 考试范围收敛** — `lib/data/grammar_content.dart`（±326）、`test/grammar_exam_scope_test.dart`（新增）
+
+- `GrammarContent` 收窄为教师确认的 **14 个考试单元**（`unit_2/3/4/5/7/8/17/18/19/20/21/22/24/25`），剔除不在范围的否定疑问句等内容并精简标题（如 `Unit 7: Tag Questions — 反义疑问句`）。
+- 新增 `grammar_exam_scope_test.dart` 断言 `GrammarRepository.loadParts()` 恰好只含上述 14 个 unit ID（`unorderedEquals`）。
+
+**联动**：`recording_provider.dart`（±155）、`notes_screen.dart`（±31）、`session_background_processor.dart`（累计 +96）随前批速记块重命名与层级清理微调；`credential_store_test.dart`（−6）删 SiliconFlow 断言。
+
