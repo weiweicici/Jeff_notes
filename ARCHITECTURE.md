@@ -1168,3 +1168,20 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 
 - 静态置顶 `listeningOverviewRepeatCount=1`（`【全篇逻辑播报·可播放】`）与 `listeningAnswerFocusRepeatCount=2`（`【答题重点与危险位置·可播放】`）：`startListeningChineseDictation` 按文本是否含答案定位 marker（`markerIndex>=0`）选择 1 次或 2 次/句。
 - 播报设置新增 `voiceLabel`（`微软 Jenny` / `微软晓晓`），状态栏显示 `第 i / M 次 · <voiceLabel>`；`isChineseDictationPlaying` 同时校验 `_isEnglishDictationPlaying && ActiveAudioType.chinese`。
+
+### 15.27 Follow-up：iOS UIScene 隐式引擎 · iOS/watchOS 部署目标固化 · 签名团队更新
+
+> 本节覆盖 2026-08-08 第二批改动（未提交 commit），全部为 **iOS/watchOS 原生工程**配置。
+
+**UIScene 与 Flutter 隐式引擎** — `ios/Runner/Info.plist`（+21）、`ios/Runner/AppDelegate.swift`（+22）
+
+- `Info.plist` 新增 `UIApplicationSceneManifest`（`UIApplicationSupportsMultipleScenes=false`、`UIWindowSceneSessionRoleApplication` → `UISceneDelegateClassName=$(PRODUCT_MODULE_NAME).SceneDelegate`、Storyboard `Main`），启用 Flutter `SceneDelegate`。
+- `AppDelegate.swift` 重构：`application(_:didFinishLaunchingWithOptions:)` 只留 `super` 调用；原有 `wakelock` 与 `watch_sync` 两个 `FlutterMethodChannel` 注册逻辑拆成 `configureWakelockChannel` / `configureWatchSyncChannel`，改在 `didInitializeImplicitFlutterEngine(_:)` 内用 `engineBridge.applicationRegistrar.messenger()` 注册（适配新引擎初始化路径）。
+
+**部署目标** — `ios/Runner.xcodeproj/project.pbxproj`、`ios/Podfile`（+3）
+
+- iPhone 部署目标 `13.0 → 15.5`（配合 Flutter 3.41/iOS 15.5+ 基线）；`Podfile` `post_install` 对所有 pod target 强制 `IPHONEOS_DEPLOYMENT_TARGET=15.5`。
+
+**Watch 工程固化** — `ios/Runner.xcodeproj/project.pbxproj`、`ios/JeffNotesWatch/Info.plist`（+2）
+
+- Watch target：`SUPPORTED_PLATFORMS="watchos watchsimulator" → watchos`、新增 `ARCHS=arm64_32`、`Info.plist` 加 `WKWatchKitApp=true`；签名后 `DEVELOPMENT_TEAM` 由 `U78542Q47D → 45G7A3R6R7`。
