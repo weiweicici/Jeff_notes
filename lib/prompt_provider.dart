@@ -214,13 +214,14 @@ transcript, predicted questions, greetings, or explanations.''';
         ? 'No textbook unit is selected. Detect the lecture structure from the audio.'
         : 'Selected study unit: ${_getUnitName(unit)}. Use its note-taking skill only when supported by the audio.';
     return '''# Role
-You produce an ultra-compact first-listening shorthand sheet for a student using
+You produce a structured first-listening spoken study guide for a student using
 Pathways 3: Listening, Speaking, and Critical Thinking, Third Edition, Level 3.
 
 # Goal
-After one listening, the student must immediately understand the lecture and
-have usable notes even if the audio is never played again. During an optional
-second listening, the student should only need to verify explicitly marked gaps.
+After one recorded listening, create a logically ordered spoken study guide
+that lets the student write useful notes without looking at the original
+questions. The recording might never be captured again, so preserve every
+exam-useful main point, example and exact answer candidate supported by audio.
 $selectedUnit
 
 # Evidence Rules
@@ -239,65 +240,67 @@ $selectedUnit
 # Pathways 3 Level 3 Skills
 $_allLevel3ListeningSkills
 
-# Bilingual Shorthand Rules
-1. The 30-second overview is natural Chinese suitable for TTS playback. Write
-   80-140 Chinese characters covering topic, progression, decisive evidence and
-   conclusion; it must not become a detailed review essay.
-2. All shorthand content is English-first. Immediately after the first use of
-   each English keyword or short phrase, add a concise Chinese aid in full-width
-   parentheses, for example `environmental fatigue（环境疲劳）`.
-3. Chinese is only a comprehension scaffold. Except for the 30-second overview
-   and verification instructions, do not write a Chinese-only note line.
-4. Use compact note forms and symbols: `→`, `↑`, `↓`, `＋`, `/`, `=`, `✓`, `✗`,
-   `?`, `b/c`, `w/`, `w/o`, `vs`. Explain a symbol inline at its first important
-   use, such as `→（导致）` or `↑（提高）`.
-5. For a case-driven lecture, count every distinct case before writing and
-   output exactly one division for every case. Never omit a case to meet the
-   phone-screen target; compress each case instead. For other lectures, use 3-6
-   divisions and choose exactly one suitable label from
-   `Main Points（要点）`, `Process（流程）`, `Comparison（对比）`, or
-   `Cause & Effect（因果）`. Do not force an Examples section when none exists.
+# Spoken Note Rules
+1. Write natural Chinese that can be played directly by TTS. This is a spoken
+   lecture map, not a short abstract and not a visual outline made of fragments.
+2. Detect the lecture's real number of main points; never force four. Start by
+   saying the topic, speaker purpose, and `全文共有X个主要内容`.
+3. Present every main point in audio order. For each one, explicitly say what
+   it means and how many distinct examples it contains. Then explain every
+   example using all supported parts of this chain: person/place + problem or
+   starting condition + action/process + result + why the speaker mentioned it.
+   If it has no example, say so and identify whether the evidence is a
+   definition, reason, process, comparison, or conclusion.
+4. Do not omit an example merely to shorten the response. Preserve important
+   names, places, dates, quantities, percentages, technical terms and results.
+5. Part 1 has no minimum length. Stop as soon as every supported main point and
+   example has been explained clearly. Never repeat, generalize, or add outside
+   knowledge merely to reach a length target. Keep it under 1200 Chinese
+   characters; a simple lecture should be much shorter.
+6. For an exact English term that the student may need to write, display the
+   Chinese meaning first followed by the heard English form in full-width
+   parentheses, for example `消费者行为（consumer behavior）` or
+   `中国（China）`. The TTS layer converts parentheses to pauses, so do not write
+   words such as “左括号” or “右括号”. Never translate away the exact English form.
+7. Use complete spoken sentences. Avoid abbreviations, symbol-heavy shorthand,
+   tables, bullets and Markdown formatting inside the two playable sections.
 
-# Compact Layout — Mandatory
+# Part 2 Exam-Evidence Rules
+1. List likely fill-in evidence in audio order, using only exact words, names,
+   places, dates and numbers actually heard. For each item, say its ordinal,
+   Chinese meaning, exact English form, and brief context. Do not invent a blank.
+2. Extract every high-value True/False danger point supported by the audio:
+   negation, correction, contrast, before-versus-now change, similar numbers,
+   and scope words such as some, most, only, always, usually, may and must.
+3. Explain each danger point as a complete contrast: what was first stated or
+   might be misunderstood, what the speaker actually said after the turn, and
+   which meaning is correct. Preserve the exact English signal word when useful.
+4. If no reliable fill-in candidate or TF danger point exists, say that plainly;
+   never manufacture one from textbook knowledge.
+
+# Playable Layout — Mandatory
 1. Output no blank lines anywhere, including after labels and before the
    transcript boundary.
 2. Do not use Markdown headings (`#`, `##`, `###`), Markdown horizontal rules
    (`---`), bullets, tables, bold, emojis, code fences, greetings or commentary.
-3. Put `━━━━━━━━━━━━` on one line between main blocks.
-4. A division heading must itself be the separator, formatted exactly as
-   `── English label（中文） · key number if useful ──`.
-5. Keep the complete shorthand compact enough for roughly one to two phone
-   screens. Remove repetition before removing an exam-relevant fact.
+3. Put `━━━━━━━━━━━━` on one line between the two playable blocks.
+4. Do not add decorative subheadings inside either playable block. Introduce
+   main points, examples, fill-in candidates and TF warnings in natural speech.
+5. Remove filler and repeated explanation before removing exam-relevant facts.
 6. Do not output the Chinese or English transcript. The app appends those fixed
    playback sections after this response.
 
 # Exact Output Contract
-【30秒理解·可播放】
-[one compact natural-Chinese paragraph; no manual blank line]
+【全篇逻辑播报·可播放】
+[natural Chinese narration: topic and purpose; actual number of main points;
+each main point in order; exact example count and complete details for every
+example; important terms/numbers; speaker conclusion and attitude]
 ━━━━━━━━━━━━
-【Purpose（目的）】
-[English shorthand（中文辅助）→（关系说明）English shorthand（中文辅助）]
-[optional second purpose/structure line only when necessary]
-━━━━━━━━━━━━
-【Examples（案例）】
-── Country/topic（中文） · number if important ──
-[problem/definition in English shorthand（中文辅助）]
-[action/process in English shorthand（中文辅助）→ result（结果）]
-[significance only when supported]
-[repeat compact divisions; replace Examples with the one adaptive label above
-when the lecture is not case-driven]
-━━━━━━━━━━━━
-【Conclusion（结论）】
-[speaker's conclusion/attitude in English shorthand with concise Chinese aids]
-━━━━━━━━━━━━
-【二听】
-?（待核对）[only the highest-value uncertain item, one per line]
-✓（已确认）[the most important confirmed mapping, only when useful]
-[write `✓（已确认）no critical gaps（无关键缺口）` if there is no uncertainty]
-━━━━━━━━━━━━
-【符号】
-→ 导致/过程/结果｜↑ 提高｜↓ 减少｜＋ 包含｜/ 并列
-= 定义｜✓ 已确认/赞同｜✗ 否定｜? 二听核对｜w/o 没有''';
+【答题重点与危险位置·可播放】
+[natural Chinese narration: likely fill-in evidence in audio order with exact
+English forms; numbers/names/places; then every supported TF correction,
+negation, contrast, qualifier or easily confused detail]
+''';
   }
 
   static String getFinalExamFirstPassPrompt(PathwaysUnit unit) =>
@@ -1360,71 +1363,101 @@ $requirement
 $annotation''';
   }
 
-  static String getCombinedWritingPrompt(
-    List<String> partIds,
-    List<String> partTitles,
-    List<String> partRequirements,
-  ) {
-    final combinedReqs = partRequirements.map((r) => r.trim()).join('\n');
-    final partsList = partIds
-        .map((id) {
-          final idx = partIds.indexOf(id);
-          return '${partTitles[idx]} — ${_writingAnnotationHint(id)}';
-        })
+  static String getCombinedWritingPrompt({
+    required List<GrammarPart> availableParts,
+    required List<GrammarPart> selectedParts,
+    required List<GrammarUnit> selectedUnits,
+    bool requireAllSelectedGrammar = false,
+  }) {
+    // A large selection is normally a convenient pool for an exam-sized
+    // essay. The explicit teacher-requirement switch preserves the option to
+    // cover every item when the prompt genuinely demands it.
+    final hasExactUnits = selectedUnits.isNotEmpty;
+    final exactUnitCount = selectedUnits.length;
+    final tooManyExactUnits = exactUnitCount > 6;
+    final tooManyParts = selectedParts.length > 6;
+    final mustCoverExactUnits =
+        hasExactUnits && (!tooManyExactUnits || requireAllSelectedGrammar);
+    final mustCoverParts =
+        !hasExactUnits &&
+        selectedParts.isNotEmpty &&
+        (!tooManyParts || requireAllSelectedGrammar);
+    final availableCatalog = availableParts
+        .map(
+          (part) => '''- ${part.title}
+  ${part.units.map((unit) => unit.title).join(' / ')}''',
+        )
         .join('\n');
+    final selectedPartDetails = selectedParts
+        .map(
+          (part) => '''## ${part.title}
+可选知识点：${part.units.map((unit) => unit.title).join(' / ')}''',
+        )
+        .join('\n\n');
+    final selectedUnitDetails = selectedUnits
+        .map(
+          (unit) => tooManyExactUnits
+              ? '- ${unit.title}'
+              : '''## ${unit.title}
+${unit.keyRules}''',
+        )
+        .join('\n\n');
+    final selectionPolicy = selectedParts.isEmpty && selectedUnits.isEmpty
+        ? '- 用户没有指定语法：从下面的已学范围中自动选择 4–6 种，优先分布在不同章节。'
+        : hasExactUnits
+        ? '''${mustCoverExactUnits ? (tooManyExactUnits ? '- 老师要求所有 $exactUnitCount 个已选具体语法都至少正确使用一次。' : '- 每个已选具体语法至少正确使用一次。') : '- 用户选了 $exactUnitCount 个具体语法。这是备选范围：从中选择最适合题目的 4–6 项正确使用；不要强行覆盖全部。'}
+${selectedParts.isEmpty ? '' : '- 已选章节只提供额外的可选范围；具体语法的要求优先。'}'''
+        : '''${mustCoverParts ? '- 老师要求每个已选章节至少使用一个适合主题的知识点。' : '- 用户选了 ${selectedParts.length} 个章节。这是备选范围：从中选择最适合题目的 4–6 个章节，各使用一个合适知识点。'}''';
 
-    return '''# Role: 英语写作示范教师
-# Task: 根据指定的多个语法章节和主题，写一篇有逻辑、自然流畅的短篇范文。
-# 要求：必须同时使用以下 ${partIds.length} 个语法章节的核心语法结构。
+    return '''# Role: 英语考试写作示范教师
+# Task: 根据用户提供或省略的题目、内容类型和语法选择，写一篇三段式英文短文。
 
-## 目标语法章节:
-$partsList
+# 最高优先级
+- 用户输入可能是老师的完整原题，也可能只是若干关键词或简短要求，任何非空输入都具有最高优先级。
+- 如果输入是完整原题，必须严格保持其主题、人物、事件、活动、地点和写作意图。
+- 如果输入只是普通关键词，把它们理解为主题方向和内容偏好，优先自然采用；不要求把每个词机械地逐字写入正文，也不要为了覆盖次要关键词破坏文章逻辑。可以补足必要的人物关系、时间线和因果连接，但不能改变核心主题或加入与输入冲突的情节。
+- 只有输入明确出现“必须、至少、务必、必须包括、必须使用、must、at least、include、use”等限制语，才把对应数量、内容或语法视为不可遗漏的硬性要求。
+- 内容类型可以与输入题目同时使用，但只能补充写作方向，绝不能覆盖输入题目。
+- 如果没有输入题目但选择了内容类型，选择一个符合该类型的简单具体主题。
+- 如果题目和内容类型都没有选择，自动选择一个适合练习目标语法的简单主题。
+- 指定语法可以分布在全文任何段落，不必按段落机械分配。
+- 一句话可以同时使用多项语法。
+- 语法覆盖按“目标语法是否自然出现”计数，不按句子数计。先建立围绕同一主题的清晰时间线与因果关系，再把多个语法自然叠加到有关联的句子中；绝不能为了触发某项语法而添加无关人物、事件或句子。
+- 内部构思模板（只学习组织方法，不要照抄、不要输出模板或语法说明）：先交代与题目直接相关的背景或更早发生的事；再通过人物的话、条件、计划或被动动作推进同一个主要事件；最后说明事件结果、目前影响或未来变化。可在一个有关联的复合句中同时容纳“过去动作＋转述及其时态变化＋条件关系＋将来概念＋被动结构”，再用后续句自然补充完成时或进行时。具体人物、地点、物品和事件必须完全来自用户题目或围绕所选主题自行构思，不能从本提示中套用固定故事。全文应遵循“背景—主要事件—结果/影响”的逻辑，而不是堆砌语法。
+- 在输出前静默检查题目一致性、语法覆盖和词数，不要输出检查过程。
+
+# 语法选择规则
+$selectionPolicy
+
+# 已学语法范围
+$availableCatalog
+
+# 已选章节
+${selectedPartDetails.isEmpty ? '无（由 AI 自动搭配）' : selectedPartDetails}
+
+# 已选具体语法及核心规则
+${selectedUnitDetails.isEmpty ? '无（根据已选章节或由 AI 自动搭配）' : selectedUnitDetails}
 
 # 输出要求：
-- 全文 8-12 句话
-- 必须使用到所有 ${partIds.length} 个语法章节的语法结构，每个章节至少用到 1-2 次
-- 字数 100-140 词
-- 用词：**简单基础词汇**，不要用高级或学术词汇
-- 核心目标：清晰展示每个语法结构用得是否正确，不是展示写作水平
-- 风格：简单直白，像初中生写的句子
-- **句式多样：避免连续多句以同一个词开头，混合使用不同句式结构**
+- 英文正文不超过 200 个英文单词
+- 正文必须恰好三段：Introduction、Body 1、Conclusion
+- Introduction 引入老师给出的主题
+- Body 1 集中展开人物、地点、活动或事件的主要内容
+- Conclusion 简洁总结感受、意义或影响
+- 语法可以复杂，但词汇必须简单：正文以常见、容易记忆的 A2–B1 日常和课堂词汇为主。
+- 题目必需的专有名词或主题词可以保留；除此之外，只要有准确的常用词，就不要使用正式、文学化、生僻或刻意炫技的同义词。
+- 避免不必要的高级形容词、冷门习语和冗长表达。输出前静默把可以简化的难词换成常用词，同时保持原意和语法要求。
+- 语法必须服务于内容，不要为了凑结构而写生硬句子
+- 不要输出中文翻译、语法标注、解释、项目符号或额外建议
+- 不要在正文中显示 Introduction、Body 1、Conclusion 等段落标题
 
 # 输出格式：
 ## 英文全文
 
-[英文范文正文]
+[第一段：Introduction]
 
-## 中文翻译
+[第二段：Body 1]
 
-[对应的中文翻译]
-
-## 语法标注
-- 分别标注每个语法章节对应的句子和说明
-- 格式：[句子片段] — [章节名]: [语法结构说明]''';
-  }
-
-  static String _writingAnnotationHint(String partId) {
-    switch (partId) {
-      case 'part_1':
-        return '时态（一般现在/现在进行/一般过去/现在完成/过去完成等）';
-      case 'part_2':
-        return '将来时态（will/be going to/将来进行/将来完成等）';
-      case 'part_3':
-        return '否定疑问句/反义疑问句/So/Too/Neither/But 补充';
-      case 'part_4':
-        return '动名词/不定式/使役动词/短语动词';
-      case 'part_5':
-        return '形容词从句（who/which/that/whose/where/when）';
-      case 'part_6':
-        return '情态动词/过去建议/过去推测';
-      case 'part_7':
-        return '被动语态/情态动词被动/被动使役';
-      case 'part_8':
-        return '条件句（First/Second/Third/I Wish）';
-      case 'part_9':
-        return '间接引语/嵌入问句/时态回退';
-      default:
-        return '目标语法结构';
-    }
+[第三段：Conclusion]''';
   }
 }

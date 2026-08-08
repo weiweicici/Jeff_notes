@@ -401,15 +401,20 @@ class AIOrchestratorService {
           priority: 1,
           sessionId: sessionId,
         );
-      } catch (mainError) {
+      } catch (mainError, mainStackTrace) {
         debugPrint(
           "[Orchestrator] Main translation service failed: $mainError",
         );
-        bool geminiTried = false;
-        if (translationFallbackService != null) {
+        // Keep the paid OpenRouter provider as the final layer: Groq is the
+        // fast real-time primary, Gemini is the free second attempt, then
+        // OpenRouter is used only if both of them fail.
+        final geminiResult = await _callGemini(textToTranslate);
+        if (geminiResult != null) {
+          translatedText = geminiResult;
+        } else if (translationFallbackService != null) {
           try {
-            onStatus?.call("Main failed. Using fallback...");
-            debugPrint("[Orchestrator] Attempting translation fallback...");
+            onStatus?.call("Groq and Gemini failed. Using OpenRouter...");
+            debugPrint("[Orchestrator] Attempting OpenRouter fallback...");
             translatedText = await ApiScheduler().enqueue(
               () => translationFallbackService!.translate(
                 textToTranslate,
@@ -418,35 +423,14 @@ class AIOrchestratorService {
               priority: 1,
               sessionId: sessionId,
             );
-          } catch (fallbackError) {
+          } catch (fallbackError, fallbackStackTrace) {
             debugPrint(
-              "[Orchestrator] Fallback also failed, trying Gemini: $fallbackError",
+              "[Orchestrator] OpenRouter fallback also failed: $fallbackError",
             );
-            onStatus?.call("Fallback failed. Trying Gemini...");
-            final geminiResult = await _callGemini(textToTranslate);
-            if (geminiResult != null) {
-              translatedText = geminiResult;
-              geminiTried = true;
-            } else {
-              rethrow;
-            }
+            Error.throwWithStackTrace(fallbackError, fallbackStackTrace);
           }
         } else {
-          final geminiResult = await _callGemini(textToTranslate);
-          if (geminiResult != null) {
-            translatedText = geminiResult;
-            geminiTried = true;
-          } else {
-            rethrow;
-          }
-        }
-        if (!geminiTried) {
-          final geminiResult = await _callGemini(textToTranslate);
-          if (geminiResult != null) {
-            translatedText = geminiResult;
-          } else {
-            rethrow;
-          }
+          Error.throwWithStackTrace(mainError, mainStackTrace);
         }
       }
 

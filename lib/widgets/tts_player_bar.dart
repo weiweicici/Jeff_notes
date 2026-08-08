@@ -18,17 +18,26 @@ class TtsPlayerBar extends StatefulWidget {
   /// 纯中文总结文本（使用本地系统 TTS 0毫秒播放）
   final String chineseText;
 
-  /// 纯英文听力文本（使用 SiliconFlow AI 拟真音色 + 精确进度条）
+  /// 纯英文听力文本（使用 Edge / OpenRouter TTS + 精确进度条）
   final String englishText;
 
-  /// SiliconFlow API key
-  final String siliconFlowKey;
+  /// OpenRouter API key（Edge 失败后的低成本 TTS 备用）
+  final String openRouterKey;
 
   /// 当次讲座真实录音拼合后的 .wav 文件路径（若存在则直接放现场录音）
   final String? recordedAudioPath;
 
   /// 作文专用：按句重复播放，方便脱离屏幕进行听写。
   final bool enableEnglishDictation;
+
+  /// 听力速记专用：概述一遍、答题重点按句两遍，并启用耳机按句控制。
+  final bool enableChineseDictation;
+
+  /// 同步给 Apple Watch 阅读的完整 Markdown；播放仍只使用对应语言文本。
+  final String? sourceMarkdown;
+
+  /// Apple Watch 本地文档列表中显示的标题。
+  final String? documentTitle;
 
   const TtsPlayerBar({
     super.key,
@@ -37,7 +46,10 @@ class TtsPlayerBar extends StatefulWidget {
     String? text,
     this.recordedAudioPath,
     this.enableEnglishDictation = false,
-    required this.siliconFlowKey,
+    this.enableChineseDictation = false,
+    this.sourceMarkdown,
+    this.documentTitle,
+    required this.openRouterKey,
   }) : chineseText = chineseText ?? text ?? '',
        englishText = englishText ?? text ?? '';
 
@@ -69,8 +81,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
       final provider = Provider.of<RecordingProvider>(context, listen: false);
       TtsService().prefetchEnglish(
         widget.englishText,
-        geminiKey: provider.geminiKey,
-        siliconFlowKey: widget.siliconFlowKey,
+        openRouterKey: provider.openRouterKey,
       );
     }
   }
@@ -285,8 +296,11 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     bool isDark,
   ) {
     final isSynthesizing = tts.isChineseSynthesizing;
-    final isPlaying = tts.isChinesePlaying;
+    final isPlaying = tts.isChinesePlaying || tts.isChineseDictationPlaying;
     final currentSpeed = tts.chineseSpeed;
+    final sentenceCount = TtsService.splitChineseSentences(
+      widget.chineseText,
+    ).length;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -300,7 +314,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
             ),
             const SizedBox(width: 6),
             Text(
-              tts.chineseEngine == ChineseTtsEngine.iosNative
+              widget.enableChineseDictation
+                  ? '🇨🇳 中文速记(Edge)'
+                  : tts.chineseEngine == ChineseTtsEngine.iosNative
                   ? '🇨🇳 中文(iOS)'
                   : '🇨🇳 中文(Edge)',
               style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
@@ -340,97 +356,124 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
         ),
         const SizedBox(height: 6),
 
-        // 中文方案一与方案二极简选择按钮
-        Container(
-          decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF14141E) : Colors.grey[250],
-            borderRadius: BorderRadius.circular(8),
-          ),
-          padding: const EdgeInsets.all(2),
-          child: Row(
-            children: [
-              Expanded(
-                child: GestureDetector(
-                  onTap: () => tts.setChineseEngine(ChineseTtsEngine.iosNative),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(vertical: 5),
-                    decoration: BoxDecoration(
-                      color: tts.chineseEngine == ChineseTtsEngine.iosNative
-                          ? (isDark ? const Color(0xFF2E2E42) : Colors.white)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(6),
-                      boxShadow: tts.chineseEngine == ChineseTtsEngine.iosNative
-                          ? [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.08),
-                                blurRadius: 3,
-                              ),
-                            ]
-                          : [],
-                    ),
-                    child: Center(
-                      child: Text(
-                        '📱 iOS原生',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight:
-                              tts.chineseEngine == ChineseTtsEngine.iosNative
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          color: tts.chineseEngine == ChineseTtsEngine.iosNative
-                              ? (isDark ? Colors.amberAccent : Colors.teal)
-                              : (isDark ? Colors.white54 : Colors.black54),
+        // 中文方案一与方案二极简选择按钮。听力速记需要 Edge 的句子
+        // 边界数据，因此不显示会破坏按句控制的引擎切换。
+        if (!widget.enableChineseDictation)
+          Container(
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF14141E) : Colors.grey[250],
+              borderRadius: BorderRadius.circular(8),
+            ),
+            padding: const EdgeInsets.all(2),
+            child: Row(
+              children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () =>
+                        tts.setChineseEngine(ChineseTtsEngine.iosNative),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      decoration: BoxDecoration(
+                        color: tts.chineseEngine == ChineseTtsEngine.iosNative
+                            ? (isDark ? const Color(0xFF2E2E42) : Colors.white)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(6),
+                        boxShadow:
+                            tts.chineseEngine == ChineseTtsEngine.iosNative
+                            ? [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.08),
+                                  blurRadius: 3,
+                                ),
+                              ]
+                            : [],
+                      ),
+                      child: Center(
+                        child: Text(
+                          '📱 iOS原生',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight:
+                                tts.chineseEngine == ChineseTtsEngine.iosNative
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                            color:
+                                tts.chineseEngine == ChineseTtsEngine.iosNative
+                                ? (isDark ? Colors.amberAccent : Colors.teal)
+                                : (isDark ? Colors.white54 : Colors.black54),
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              Expanded(
-                child: GestureDetector(
-                  onTap: () =>
-                      tts.setChineseEngine(ChineseTtsEngine.edgeNeural),
-                  child: AnimatedContainer(
-                    duration: const Duration(milliseconds: 180),
-                    padding: const EdgeInsets.symmetric(vertical: 5),
-                    decoration: BoxDecoration(
-                      color: tts.chineseEngine == ChineseTtsEngine.edgeNeural
-                          ? (isDark ? const Color(0xFF2E2E42) : Colors.white)
-                          : Colors.transparent,
-                      borderRadius: BorderRadius.circular(6),
-                      boxShadow:
-                          tts.chineseEngine == ChineseTtsEngine.edgeNeural
-                          ? [
-                              BoxShadow(
-                                color: Colors.black.withOpacity(0.08),
-                                blurRadius: 3,
-                              ),
-                            ]
-                          : [],
-                    ),
-                    child: Center(
-                      child: Text(
-                        '🌐 微软Edge',
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight:
-                              tts.chineseEngine == ChineseTtsEngine.edgeNeural
-                              ? FontWeight.bold
-                              : FontWeight.normal,
-                          color:
-                              tts.chineseEngine == ChineseTtsEngine.edgeNeural
-                              ? (isDark ? Colors.cyanAccent : Colors.teal)
-                              : (isDark ? Colors.white54 : Colors.black54),
+                Expanded(
+                  child: GestureDetector(
+                    onTap: () =>
+                        tts.setChineseEngine(ChineseTtsEngine.edgeNeural),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 180),
+                      padding: const EdgeInsets.symmetric(vertical: 5),
+                      decoration: BoxDecoration(
+                        color: tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                            ? (isDark ? const Color(0xFF2E2E42) : Colors.white)
+                            : Colors.transparent,
+                        borderRadius: BorderRadius.circular(6),
+                        boxShadow:
+                            tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                            ? [
+                                BoxShadow(
+                                  color: Colors.black.withOpacity(0.08),
+                                  blurRadius: 3,
+                                ),
+                              ]
+                            : [],
+                      ),
+                      child: Center(
+                        child: Text(
+                          '🌐 微软Edge',
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight:
+                                tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                                ? FontWeight.bold
+                                : FontWeight.normal,
+                            color:
+                                tts.chineseEngine == ChineseTtsEngine.edgeNeural
+                                ? (isDark ? Colors.cyanAccent : Colors.teal)
+                                : (isDark ? Colors.white54 : Colors.black54),
+                          ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
-        ),
+
+        if (widget.enableChineseDictation) ...[
+          const SizedBox(height: 6),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+            decoration: BoxDecoration(
+              color: Colors.teal.withOpacity(0.09),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Text(
+              tts.isChineseDictationPlaying
+                  ? '${tts.isEnglishDictationExtraReplay ? "额外重播（不计次数）" : (tts.isEnglishDictationPaused ? "已暂停" : "速记第 ${tts.dictationCycleIndex} 轮")}：第 ${tts.dictationSentenceIndex}/${tts.dictationSentenceCount} 句 · 计划第 ${tts.dictationRepeatIndex}/${tts.dictationRepeatCount} 次'
+                  : '中文速记：$sentenceCount 句 · 逻辑概述 1 次 · 答题重点每句 2 次 · 默认循环',
+              style: const TextStyle(
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+                color: Colors.teal,
+              ),
+            ),
+          ),
+        ],
 
         // 进度条（支持 60fps 动态实时刷新及精准 Seek）
         StreamBuilder<Duration?>(
@@ -541,9 +584,17 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             IconButton(
-              icon: const Icon(Icons.replay_10_rounded),
+              icon: Icon(
+                widget.enableChineseDictation
+                    ? Icons.skip_previous_rounded
+                    : Icons.replay_10_rounded,
+              ),
               iconSize: 22,
               onPressed: () async {
+                if (widget.enableChineseDictation) {
+                  tts.requestPreviousEnglishDictationSentence();
+                  return;
+                }
                 final pos = tts.currentPosition;
                 final newPos = pos - const Duration(seconds: 10);
                 await tts.seekChinese(
@@ -583,6 +634,12 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                       if (tts.currentAudioType == ActiveAudioType.chinese &&
                           tts.currentPosition > Duration.zero) {
                         await tts.playChinese();
+                      } else if (widget.enableChineseDictation) {
+                        await tts.startListeningChineseDictation(
+                          widget.chineseText,
+                          sourceMarkdown: widget.sourceMarkdown,
+                          watchTitle: widget.documentTitle,
+                        );
                       } else {
                         final provider = Provider.of<RecordingProvider>(
                           context,
@@ -590,8 +647,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         );
                         await tts.speakChinese(
                           widget.chineseText,
-                          geminiKey: provider.geminiKey,
-                          siliconFlowKey: widget.siliconFlowKey,
+                          openRouterKey: provider.openRouterKey,
                         );
                       }
                     } catch (e) {
@@ -610,9 +666,17 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
 
             const SizedBox(width: 8),
             IconButton(
-              icon: const Icon(Icons.forward_10_rounded),
+              icon: Icon(
+                widget.enableChineseDictation
+                    ? Icons.skip_next_rounded
+                    : Icons.forward_10_rounded,
+              ),
               iconSize: 22,
               onPressed: () async {
+                if (widget.enableChineseDictation) {
+                  tts.requestNextEnglishDictationSentence();
+                  return;
+                }
                 final pos = tts.currentPosition;
                 await tts.seekChinese(pos + const Duration(seconds: 10));
               },
@@ -882,8 +946,8 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     ).length;
     final dictationEstimate = TtsService.estimateEnglishDictationDuration(
       widget.englishText,
-      repeatCount: 3,
-      pauseBetweenSentences: const Duration(seconds: 3),
+      repeatCount: TtsService.generatedDocumentDictationRepeatCount,
+      pauseBetweenSentences: TtsService.generatedDocumentDictationPause,
       speed: currentSpeed,
     );
 
@@ -953,7 +1017,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                   child: Text(
                     tts.isEnglishDictationPlaying
                         ? '${tts.isEnglishDictationExtraReplay ? "额外重播（不计次数）" : (tts.isEnglishDictationPaused ? "已暂停" : "听写第 ${tts.dictationCycleIndex} 轮")}：第 ${tts.dictationSentenceIndex}/${tts.dictationSentenceCount} 句 · 计划第 ${tts.dictationRepeatIndex}/${tts.dictationRepeatCount} 次'
-                        : '听写：$sentenceCount 句 · 每句 3 次 · 每轮约 ${_formatDuration(dictationEstimate)}',
+                        : '听写：$sentenceCount 句 · 每句 ${TtsService.generatedDocumentDictationRepeatCount} 次 · 每轮约 ${_formatDuration(dictationEstimate)}',
                     style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w600,
@@ -966,14 +1030,10 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                       ? null
                       : () async {
                           try {
-                            final provider = Provider.of<RecordingProvider>(
-                              context,
-                              listen: false,
-                            );
-                            await tts.startEnglishDictation(
+                            await tts.startGeneratedDocumentDictation(
                               widget.englishText,
-                              geminiKey: provider.geminiKey,
-                              siliconFlowKey: widget.siliconFlowKey,
+                              sourceMarkdown: widget.sourceMarkdown,
+                              watchTitle: widget.documentTitle,
                             );
                           } catch (e) {
                             if (!context.mounted) return;
@@ -1148,8 +1208,7 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                         );
                         await tts.speakEnglish(
                           widget.englishText,
-                          geminiKey: provider.geminiKey,
-                          siliconFlowKey: widget.siliconFlowKey,
+                          openRouterKey: provider.openRouterKey,
                         );
                       }
                     } catch (e) {

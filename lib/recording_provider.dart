@@ -160,7 +160,6 @@ class RecordingProvider extends ChangeNotifier {
   int _autoScrollSecondsPerPage = 30;
 
   final Map<AIProvider, String> _apiKeys = {
-    AIProvider.siliconFlow: "",
     AIProvider.groq: "",
     AIProvider.gemini: "",
   };
@@ -173,6 +172,10 @@ class RecordingProvider extends ChangeNotifier {
 
   final List<InsightNote> _allNotes = [];
   String? _statusMessage;
+  bool _isProcessingRecording = false;
+  int _processingStep = 0;
+  String? _processingSessionId;
+  String? _processingErrorMessage;
 
   String? _finalReviewContent;
   String? _shorthandReviewContent;
@@ -214,6 +217,25 @@ class RecordingProvider extends ChangeNotifier {
   bool get autoScrollEnabled => _autoScrollEnabled;
   int get autoScrollSecondsPerPage => _autoScrollSecondsPerPage;
   String? get statusMessage => _statusMessage;
+  bool get isProcessingRecording => _isProcessingRecording;
+  int get processingStep => _processingStep;
+  String? get processingErrorMessage => _processingErrorMessage;
+  static const int processingStepCount = 4;
+  double get processingProgress {
+    switch (_processingStep) {
+      case 1:
+        return 0.2;
+      case 2:
+        return 0.45;
+      case 3:
+        return 0.72;
+      case 4:
+        return 0.92;
+      default:
+        return 0;
+    }
+  }
+
   String? get finalReviewContent => _finalReviewContent;
   String? get shorthandReviewContent => _shorthandReviewContent;
   bool get isGeneratingFinalReview => _isGeneratingFinalReview;
@@ -230,7 +252,6 @@ class RecordingProvider extends ChangeNotifier {
   AppMode get currentSessionMode => currentMode;
 
   String get groqKey => _apiKeys[AIProvider.groq] ?? '';
-  String get siliconFlowKey => _apiKeys[AIProvider.siliconFlow] ?? '';
   String get geminiKey => _apiKeys[AIProvider.gemini] ?? '';
   String get openRouterKey => _openRouterKey;
 
@@ -385,7 +406,6 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> updateSettings({
     String? groqKey,
-    String? siliconFlowKey,
     String? openRouterKey,
     String? geminiKey,
 
@@ -436,17 +456,6 @@ class RecordingProvider extends ChangeNotifier {
       );
       _apiKeys[AIProvider.groq] = trimmedKey;
       debugPrint("保存 Groq API Key 成功: ${CredentialStore.redact(trimmedKey)}");
-    }
-    if (siliconFlowKey != null) {
-      final trimmedKey = siliconFlowKey.trim();
-      await CredentialStore.instance.writeKey(
-        CredentialStore.keySiliconFlow,
-        trimmedKey,
-      );
-      _apiKeys[AIProvider.siliconFlow] = trimmedKey;
-      debugPrint(
-        "保存 SiliconFlow API Key 成功: ${CredentialStore.redact(trimmedKey)}",
-      );
     }
     if (geminiKey != null) {
       final trimmedKey = geminiKey.trim();
@@ -516,11 +525,6 @@ class RecordingProvider extends ChangeNotifier {
         '';
     _apiKeys[AIProvider.groq] =
         await CredentialStore.instance.readKey(CredentialStore.keyGroq) ?? '';
-    _apiKeys[AIProvider.siliconFlow] =
-        await CredentialStore.instance.readKey(
-          CredentialStore.keySiliconFlow,
-        ) ??
-        '';
     _apiKeys[AIProvider.gemini] =
         await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
 
@@ -660,13 +664,13 @@ class RecordingProvider extends ChangeNotifier {
         whisperModel: "whisper-large-v3",
         httpClient: client,
       );
-      final siliconKey = siliconFlowKey.trim();
-      final fallbackTrans = siliconKey.isEmpty
+      final routerKey = openRouterKey.trim();
+      final fallbackTrans = routerKey.isEmpty
           ? null
           : OpenAIService(
-              apiKey: siliconKey,
-              baseUrl: 'https://api.siliconflow.cn/v1',
-              defaultModel: 'Qwen/Qwen2.5-7B-Instruct',
+              apiKey: routerKey,
+              baseUrl: 'https://openrouter.ai/api/v1',
+              defaultModel: 'google/gemini-2.5-flash-lite',
               httpClient: client,
             );
       context.sttService = stt;
@@ -703,6 +707,7 @@ class RecordingProvider extends ChangeNotifier {
       _allNotes.clear();
       _segmentSummaries.clear();
       _finalReviewContent = null;
+      _processingErrorMessage = null;
       _statusMessage = null;
       notifyListeners();
 
@@ -767,6 +772,14 @@ class RecordingProvider extends ChangeNotifier {
 
     try {
       final context = _activeContext;
+      if (context != null) {
+        _processingSessionId = context.sessionId;
+        _isProcessingRecording = true;
+        _processingStep = 1;
+        _processingErrorMessage = null;
+        _statusMessage = '正在整理最后一批录音并完成识别';
+        notifyListeners();
+      }
       unawaited(
         DiagnosticLogService.instance.record(
           'recording',
@@ -799,12 +812,17 @@ class RecordingProvider extends ChangeNotifier {
               ),
             );
             _lastExportedPath = event.exportPath;
+            if (_processingSessionId == context.sessionId) {
+              _isProcessingRecording = false;
+              _processingStep = RecordingProvider.processingStepCount;
+              _statusMessage = '总结与录音已保存';
+              _processingSessionId = null;
+            }
             _sessionReadyController.add(event);
             notifyListeners();
           },
           onStatus: (msg) {
-            _statusMessage = msg;
-            notifyListeners();
+            _updateBackgroundProcessingStatus(context.sessionId, msg);
           },
           onError: (err) {
             unawaited(
@@ -816,6 +834,13 @@ class RecordingProvider extends ChangeNotifier {
               ),
             );
             debugPrint('[Handover Error] $err');
+            if (_processingSessionId == context.sessionId) {
+              _isProcessingRecording = false;
+              _statusMessage = '处理未完整完成，已保留可恢复内容';
+              _processingErrorMessage = '处理未完整完成，录音草稿已经保留，可以稍后恢复';
+              _processingSessionId = null;
+              notifyListeners();
+            }
           },
         );
 
@@ -839,7 +864,49 @@ class RecordingProvider extends ChangeNotifier {
     _shorthandReviewContent = null;
     _identifiedLectureContext = null;
     _sessionAudioPaths.clear();
-    _statusMessage = null;
+    // A stopped session keeps reporting its background finalization progress.
+    // Do not erase that status while preparing the provider for another session.
+    if (!_isProcessingRecording) _statusMessage = null;
+    notifyListeners();
+  }
+
+  void _updateBackgroundProcessingStatus(String sessionId, String rawStatus) {
+    if (_processingSessionId != sessionId) return;
+
+    final status = rawStatus.toLowerCase();
+    var nextStep = _processingStep;
+    var label = '正在处理录音内容';
+
+    if (status.contains('saving markdown')) {
+      nextStep = 4;
+      label = '总结已生成，正在保存 MD 文档和录音';
+    } else if (status.contains('saved ok') ||
+        status.contains('saved available')) {
+      nextStep = 4;
+      label = '总结与录音已保存';
+    } else if (status.contains('generating final ai')) {
+      nextStep = 3;
+      label = '已发送给 AI，正在生成讲座总结';
+    } else if (status.contains('finalizing translations')) {
+      nextStep = 2;
+      label = '正在完成转写和翻译';
+    } else if (status.contains('translation') ||
+        status.contains('chinese ready')) {
+      nextStep = 2;
+      label = '正在完成最后一批翻译';
+    } else if (status.contains('finalizing audio') ||
+        status.contains('flushing') ||
+        status.contains('stt') ||
+        status.contains('cleaning') ||
+        status.contains('displaying english')) {
+      nextStep = 1;
+      label = '正在整理最后一批录音并完成识别';
+    }
+
+    // Late callbacks from an earlier sub-step must never make progress go back.
+    if (nextStep < _processingStep) return;
+    if (nextStep > _processingStep) _processingStep = nextStep;
+    _statusMessage = label;
     notifyListeners();
   }
 
@@ -1355,15 +1422,11 @@ class RecordingProvider extends ChangeNotifier {
   String _generateFallbackShorthandFromTranscripts() {
     final transcripts = _allNotes.where((n) => !n.isSummary).toList();
     if (transcripts.isEmpty) return "";
-    return '【30秒理解·可播放】\n'
-        'AI速记整理未完成；请直接使用后方中英文全文，避免把未整理的6秒切片误当成完整笔记。\n'
+    return '【全篇逻辑播报·可播放】\n'
+        'AI逻辑播报整理未完成，请直接使用后方中英文全文核对讲座内容。\n'
         '━━━━━━━━━━━━\n'
-        '【二听】\n'
-        '?（待核对）最终速记生成失败，请根据全文核对讲座结构与关键细节。\n'
-        '━━━━━━━━━━━━\n'
-        '【符号】\n'
-        '→ 导致/过程/结果｜↑ 提高｜↓ 减少｜＋ 包含｜/ 并列\n'
-        '= 定义｜✓ 已确认/赞同｜✗ 否定｜? 二听核对｜w/o 没有';
+        '【答题重点与危险位置·可播放】\n'
+        'AI答题证据整理未完成，请根据全文核对英文原词、数字、否定、转折和限定范围。';
   }
 
   String _compactShorthandLayout(String content) => content
@@ -1924,57 +1987,87 @@ Part 2: The sentence-by-sentence Chinese translation.""";
           }
         }
         debugPrint(
-          "[Essay] Gemini failed (${response.statusCode}), falling back to SiliconFlow Qwen...",
+          "[Essay] Gemini failed (${response.statusCode}), falling back to Groq...",
         );
       } catch (e) {
-        debugPrint(
-          "[Essay] Gemini exception: $e, falling back to SiliconFlow Qwen...",
-        );
+        debugPrint("[Essay] Gemini exception: $e, falling back to Groq...");
       }
     } else {
-      debugPrint("[Essay] No Gemini key configured, using SiliconFlow Qwen...");
+      debugPrint("[Essay] No Gemini key configured, using Groq...");
     }
 
-    // Fallback: SiliconFlow Qwen via OpenAI-compatible API
-    final siliconKey = siliconFlowKey.trim();
-    if (siliconKey.isEmpty) {
-      throw Exception(
-        "Gemini API Key not configured and no SiliconFlow key available. Please add a key in Settings.",
-      );
-    }
+    final groqResult = await _generateEssayWithChatCompletion(
+      baseUrl: 'https://api.groq.com/openai/v1/chat/completions',
+      apiKey: groqKey.trim(),
+      model: 'openai/gpt-oss-120b',
+      systemPrompt: systemPrompt,
+      userRequest: userRequest,
+      temperature: generationTemperature,
+      providerName: 'Groq',
+    );
+    if (groqResult != null) return groqResult;
 
-    final url = Uri.parse("https://api.siliconflow.cn/v1/chat/completions");
-    final response = await http
-        .post(
-          url,
-          headers: {
-            "Authorization": "Bearer $siliconKey",
-            "Content-Type": "application/json",
-          },
-          body: jsonEncode({
-            "model": "Qwen/Qwen2.5-7B-Instruct",
-            "messages": [
-              {"role": "system", "content": systemPrompt},
-              {"role": "user", "content": userRequest},
-            ],
-            "temperature": generationTemperature,
-            "max_tokens": 4096,
-          }),
-        )
-        .timeout(const Duration(seconds: 120));
+    final openRouterResult = await _generateEssayWithChatCompletion(
+      baseUrl: 'https://openrouter.ai/api/v1/chat/completions',
+      apiKey: openRouterKey.trim(),
+      model: 'google/gemini-2.5-flash-lite',
+      systemPrompt: systemPrompt,
+      userRequest: userRequest,
+      temperature: generationTemperature,
+      providerName: 'OpenRouter',
+    );
+    if (openRouterResult != null) return openRouterResult;
 
-    if (response.statusCode != 200) {
-      throw Exception(
-        "SiliconFlow Qwen error ${response.statusCode}: ${response.body}",
-      );
-    }
+    throw Exception('作文生成失败：Gemini、Groq 和 OpenRouter 都没有返回可用内容。');
+  }
 
-    final data = jsonDecode(response.body);
-    final text = data['choices']?[0]?['message']?['content'] as String?;
-    if (text == null || text.trim().isEmpty) {
-      throw Exception("SiliconFlow Qwen returned empty essay");
+  Future<String?> _generateEssayWithChatCompletion({
+    required String baseUrl,
+    required String apiKey,
+    required String model,
+    required String systemPrompt,
+    required String userRequest,
+    required double temperature,
+    required String providerName,
+  }) async {
+    if (apiKey.isEmpty) {
+      debugPrint('[Essay] $providerName API Key is not configured.');
+      return null;
     }
-    return text.trim();
+    try {
+      final response = await http
+          .post(
+            Uri.parse(baseUrl),
+            headers: {
+              'Authorization': 'Bearer $apiKey',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'model': model,
+              'messages': [
+                {'role': 'system', 'content': systemPrompt},
+                {'role': 'user', 'content': userRequest},
+              ],
+              'temperature': temperature,
+              'max_tokens': 4096,
+            }),
+          )
+          .timeout(const Duration(seconds: 120));
+      if (response.statusCode != 200) {
+        debugPrint('[Essay] $providerName failed (${response.statusCode}).');
+        return null;
+      }
+      final data = jsonDecode(response.body);
+      final text = data['choices']?[0]?['message']?['content'] as String?;
+      if (text == null || text.trim().isEmpty) {
+        debugPrint('[Essay] $providerName returned an empty essay.');
+        return null;
+      }
+      return text.trim();
+    } catch (e) {
+      debugPrint('[Essay] $providerName exception: $e');
+      return null;
+    }
   }
 
   @override

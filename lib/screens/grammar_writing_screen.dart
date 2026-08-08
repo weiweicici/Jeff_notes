@@ -14,6 +14,27 @@ import '../services/file_sync_agent.dart';
 import 'history_screen.dart';
 import 'note_detail_screen.dart';
 
+String buildGrammarArchiveFilename({
+  required String topic,
+  String? contentType,
+  required String dateStamp,
+}) {
+  final preferredLabel = topic.trim().isNotEmpty
+      ? topic.trim()
+      : (contentType?.trim().isNotEmpty == true
+            ? contentType!.trim()
+            : 'Writing');
+  final sanitized = preferredLabel
+      .replaceAll(RegExp(r'[\\/:*?"<>|]'), '')
+      .replaceAll(RegExp(r'\s+'), '_')
+      .replaceAll(RegExp(r'^[_\.]+|[_\.]+$'), '');
+  // iOS limits one filename component to 255 UTF-8 bytes. Forty-eight Unicode
+  // code points leave ample room for the fixed prefix, date, and extension.
+  final shortLabel = String.fromCharCodes(sanitized.runes.take(48));
+  final label = shortLabel.isEmpty ? 'Writing' : shortLabel;
+  return 'Jeff_Grammar_${label}_$dateStamp.md';
+}
+
 class GrammarWritingScreen extends StatefulWidget {
   final GrammarUnit? unit;
   const GrammarWritingScreen({super.key, this.unit});
@@ -25,18 +46,58 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
   List<GrammarPart>? _parts;
   GrammarPart? _selectedPart;
   Set<GrammarUnit> _selectedUnits = {};
-  final Set<GrammarPart> _selectedParts = {};
+  final Set<GrammarPart> _selectedCombinedParts = {};
+  final Set<GrammarUnit> _selectedCombinedUnits = {};
+  final TextEditingController _combinedTopicController =
+      TextEditingController();
   String? _selectedTheme;
   bool _isLoading = false;
   bool _isSaving = false;
   bool _loadingParts = true;
   String _result = '';
-  bool _combinedMode = false;
+  bool _combinedMode = true;
+  bool _requireAllSelectedGrammar = false;
+
+  int get _combinedCoverageSelectionCount => _selectedCombinedUnits.isNotEmpty
+      ? _selectedCombinedUnits.length
+      : _selectedCombinedParts.length;
+
+  bool get _showsRequireAllGrammarOption => _combinedCoverageSelectionCount > 6;
 
   static const _themes = [
     _ThemeOption(icon: Icons.place, label: '地点', value: 'a place'),
     _ThemeOption(icon: Icons.person, label: '人物', value: 'a person'),
     _ThemeOption(icon: Icons.event, label: '事件', value: 'an event'),
+    _ThemeOption(
+      icon: Icons.directions_run,
+      label: '活动/日常',
+      value: 'an activity or daily routine',
+    ),
+    _ThemeOption(
+      icon: Icons.photo_album,
+      label: '经历',
+      value: 'a personal experience',
+    ),
+    _ThemeOption(
+      icon: Icons.card_giftcard,
+      label: '物品/事物',
+      value: 'an important object or thing',
+    ),
+    _ThemeOption(
+      icon: Icons.flag,
+      label: '计划/目标',
+      value: 'a future plan or goal',
+    ),
+    _ThemeOption(
+      icon: Icons.tips_and_updates,
+      label: '问题/建议',
+      value: 'a problem and possible advice or solutions',
+    ),
+    _ThemeOption(
+      icon: Icons.more_horiz,
+      label: '其他',
+      value: 'a topic of your choice',
+    ),
   ];
 
   @override
@@ -44,9 +105,16 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
     super.initState();
     if (widget.unit != null) {
       _selectedUnits = {widget.unit!};
+      _selectedCombinedUnits.add(widget.unit!);
       _selectedPart = _partContaining(widget.unit!);
     }
     _loadParts();
+  }
+
+  @override
+  void dispose() {
+    _combinedTopicController.dispose();
+    super.dispose();
   }
 
   GrammarPart? _partContaining(GrammarUnit unit) {
@@ -75,8 +143,8 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
   }
 
   bool get _canGenerate {
+    if (_combinedMode) return true;
     if (_selectedTheme == null) return false;
-    if (_combinedMode) return _selectedParts.length >= 2;
     return _selectedPart != null;
   }
 
@@ -88,10 +156,14 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
     });
     try {
       if (_combinedMode) {
-        final parts = _selectedParts.toList();
+        final units = _selectedCombinedUnits.toList();
         final result = await GrammarService.generateCombinedSample(
-          parts,
-          _selectedTheme!,
+          availableParts: _parts ?? const [],
+          selectedParts: _selectedCombinedParts.toList(),
+          selectedUnits: units,
+          topic: _combinedTopicController.text.trim(),
+          contentType: _selectedTheme,
+          requireAllSelectedGrammar: _requireAllSelectedGrammar,
         );
         if (mounted) {
           await _openGeneratedWriting(result);
@@ -150,14 +222,11 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
     try {
       final now = DateTime.now();
       final dateStr = DateFormat('yyyyMMdd_HHmm').format(now);
-      final firstLine = _result.split('\n').firstOrNull ?? 'Grammar Writing';
-      final safeTopic = firstLine
-          .replaceAll(RegExp(r'[\\/:*?"<>|]'), '')
-          .replaceAll(' ', '_')
-          .trim();
-      final filename = safeTopic.isNotEmpty
-          ? 'Jeff_Grammar_${safeTopic}_$dateStr.md'
-          : 'Jeff_Grammar_$dateStr.md';
+      final filename = buildGrammarArchiveFilename(
+        topic: _combinedMode ? _combinedTopicController.text : '',
+        contentType: _selectedTheme,
+        dateStamp: dateStr,
+      );
       final contentMd = _result;
 
       // 1. 保存到本地 .md 文件
@@ -223,6 +292,36 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
         await FileSyncAgent.instance.syncNow();
       }
     }
+  }
+
+  Widget _buildThemeChoices(bool isDark) {
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: _themes.map((theme) {
+        final selected = _selectedTheme == theme.value;
+        return ChoiceChip(
+          selected: selected,
+          label: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(theme.icon, size: 18),
+              const SizedBox(width: 6),
+              Text(theme.label),
+            ],
+          ),
+          onSelected: (value) =>
+              setState(() => _selectedTheme = value ? theme.value : null),
+          selectedColor: Colors.green.withValues(alpha: 0.2),
+          backgroundColor: isDark ? Colors.grey[800] : Colors.grey[100],
+          labelStyle: TextStyle(
+            color: selected
+                ? (isDark ? Colors.green[200] : Colors.green[800])
+                : (isDark ? Colors.white70 : Colors.black87),
+          ),
+        );
+      }).toList(),
+    );
   }
 
   @override
@@ -318,7 +417,52 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
             // Part Selection
             if (_combinedMode) ...[
               Text(
-                '选择要综合练习的章节',
+                '老师给出的写作主题',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                key: const ValueKey('combinedWritingTopic'),
+                controller: _combinedTopicController,
+                minLines: 2,
+                maxLines: 4,
+                textInputAction: TextInputAction.done,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText:
+                      '输入老师给出的完整题目，例如：Describe an important event in your life.',
+                  helperText: '可输入完整题目，也可留空使用预设或让 AI 自选',
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 16),
+              Text(
+                '快捷主题（可选）',
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w600,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '可单独使用，也可与输入内容一起作为写作要求',
+                style: TextStyle(
+                  fontSize: 13,
+                  color: isDark ? Colors.white54 : Colors.grey[600],
+                ),
+              ),
+              const SizedBox(height: 10),
+              _buildThemeChoices(isDark),
+              const SizedBox(height: 24),
+              Text(
+                '选择语法（可选）',
                 style: TextStyle(
                   fontSize: 18,
                   fontWeight: FontWeight.bold,
@@ -327,28 +471,83 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
               ),
               const SizedBox(height: 8),
               Text(
-                '已选 ${_selectedParts.length} 个章节（至少选 2 个）',
+                '已选 ${_selectedCombinedParts.length} 章、${_selectedCombinedUnits.length} 个具体语法。选 1–6 个具体语法会逐项覆盖；选更多时默认从中挑最适合题目的 4–6 个。全部留空则自动搭配 4–6 种。',
                 style: TextStyle(
                   fontSize: 14,
                   color: isDark ? Colors.white54 : Colors.grey[600],
                 ),
               ),
+              if (_showsRequireAllGrammarOption) ...[
+                const SizedBox(height: 4),
+                SwitchListTile.adaptive(
+                  key: const ValueKey('requireAllSelectedGrammarSwitch'),
+                  contentPadding: EdgeInsets.zero,
+                  value: _requireAllSelectedGrammar,
+                  onChanged: (value) =>
+                      setState(() => _requireAllSelectedGrammar = value),
+                  title: Text(
+                    _selectedCombinedUnits.isNotEmpty
+                        ? '老师指定：全部 $_combinedCoverageSelectionCount 个具体语法都必须覆盖'
+                        : '老师指定：全部 $_combinedCoverageSelectionCount 个章节都必须覆盖',
+                    style: const TextStyle(fontSize: 14),
+                  ),
+                  subtitle: const Text('默认关闭：AI 自动选择 4–6 项；老师明确要求 7 项以上时再打开。'),
+                ),
+              ],
               const SizedBox(height: 8),
               ...?_parts?.map((p) {
-                final selected = _selectedParts.contains(p);
-                return CheckboxListTile(
-                  dense: true,
-                  title: Text(p.title, style: const TextStyle(fontSize: 14)),
-                  value: selected,
-                  onChanged: (v) => setState(() {
-                    if (v == true) {
-                      _selectedParts.add(p);
-                    } else {
-                      _selectedParts.remove(p);
-                    }
-                  }),
-                  activeColor: Colors.green,
-                  controlAffinity: ListTileControlAffinity.leading,
+                final partSelected = _selectedCombinedParts.contains(p);
+                final selectedCount = p.units
+                    .where(_selectedCombinedUnits.contains)
+                    .length;
+                final selectionSummary = [
+                  if (partSelected) '整章已选',
+                  if (selectedCount > 0) '具体语法 $selectedCount 项',
+                ].join(' · ');
+                return Card(
+                  margin: const EdgeInsets.only(bottom: 8),
+                  clipBehavior: Clip.antiAlias,
+                  child: ExpansionTile(
+                    leading: Checkbox(
+                      key: ValueKey('combinedPartCheckbox_${p.id}'),
+                      value: partSelected,
+                      onChanged: (value) => setState(() {
+                        if (value == true) {
+                          _selectedCombinedParts.add(p);
+                        } else {
+                          _selectedCombinedParts.remove(p);
+                        }
+                      }),
+                    ),
+                    title: Text(p.title, style: const TextStyle(fontSize: 14)),
+                    subtitle: selectionSummary.isEmpty
+                        ? null
+                        : Text(selectionSummary),
+                    children: p.units.map((u) {
+                      final checked = _selectedCombinedUnits.contains(u);
+                      return CheckboxListTile(
+                        dense: true,
+                        contentPadding: const EdgeInsets.only(
+                          left: 16,
+                          right: 12,
+                        ),
+                        title: Text(
+                          u.title,
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        value: checked,
+                        onChanged: (v) => setState(() {
+                          if (v == true) {
+                            _selectedCombinedUnits.add(u);
+                          } else {
+                            _selectedCombinedUnits.remove(u);
+                          }
+                        }),
+                        activeColor: Colors.green,
+                        controlAffinity: ListTileControlAffinity.leading,
+                      );
+                    }).toList(),
+                  ),
                 );
               }),
             ] else ...[
@@ -427,44 +626,20 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
             ],
             const SizedBox(height: 24),
 
-            // Theme
-            Text(
-              '选择主题大类',
-              style: TextStyle(
-                fontSize: 18,
-                fontWeight: FontWeight.bold,
-                color: isDark ? Colors.white : Colors.black87,
+            if (!_combinedMode) ...[
+              // Keep the existing single-part theme flow unchanged.
+              Text(
+                '选择主题大类',
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: isDark ? Colors.white : Colors.black87,
+                ),
               ),
-            ),
-            const SizedBox(height: 12),
-            Wrap(
-              spacing: 12,
-              runSpacing: 12,
-              children: _themes.map((t) {
-                final selected = _selectedTheme == t.value;
-                return ChoiceChip(
-                  selected: selected,
-                  label: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(t.icon, size: 18),
-                      const SizedBox(width: 6),
-                      Text(t.label),
-                    ],
-                  ),
-                  onSelected: (v) =>
-                      setState(() => _selectedTheme = v ? t.value : null),
-                  selectedColor: Colors.green.withValues(alpha: 0.2),
-                  backgroundColor: isDark ? Colors.grey[800] : Colors.grey[100],
-                  labelStyle: TextStyle(
-                    color: selected
-                        ? (isDark ? Colors.green[200] : Colors.green[800])
-                        : (isDark ? Colors.white70 : Colors.black87),
-                  ),
-                );
-              }).toList(),
-            ),
-            const SizedBox(height: 24),
+              const SizedBox(height: 12),
+              _buildThemeChoices(isDark),
+              const SizedBox(height: 24),
+            ],
 
             // Generate Button
             SizedBox(

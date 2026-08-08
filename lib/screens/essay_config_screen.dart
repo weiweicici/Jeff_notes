@@ -40,16 +40,6 @@ class PresetTopic {
   const PresetTopic({required this.topic, required this.chineseLabel});
 }
 
-class PresetTopicSearchResult {
-  final EssayCategory category;
-  final PresetTopic preset;
-
-  const PresetTopicSearchResult({
-    required this.category,
-    required this.preset,
-  });
-}
-
 const Map<EssayCategory, List<PresetTopic>> presetTopicsByCategory = {
   EssayCategory.practicedComparison: [
     PresetTopic(
@@ -326,84 +316,12 @@ String _categoryLabel(EssayCategory c) {
   }
 }
 
-int get presetTopicCount => presetTopicsByCategory.values.fold<int>(
-  0,
-  (count, topics) => count + topics.length,
-);
-
-String _normalizeTopicSearchText(String value) => value
-    .toLowerCase()
-    .replaceAll(RegExp(r'[^a-z0-9\u3400-\u9fff]+'), ' ')
-    .trim();
-
-bool _topicSearchTokenMatches(String token, String haystack) {
-  if (haystack.contains(token)) return true;
-
-  const aliases = <String, List<String>>{
-    'subsidy': ['free'],
-    'subsidized': ['free'],
-    'bike': ['bicycle'],
-    'rider': ['bicycle'],
-    'riders': ['bicycle'],
-    'required': ['mandatory', 'wearing'],
-    'require': ['mandatory', 'wearing'],
-  };
-  return aliases[token]?.any(haystack.contains) ?? false;
-}
-
-List<PresetTopicSearchResult> searchPresetTopics(
-  String rawQuery, {
-  int limit = 8,
+String resolveEssayTopic({
+  required String input,
+  required PresetTopic fallbackPreset,
 }) {
-  final query = _normalizeTopicSearchText(rawQuery);
-  if (query.isEmpty || limit <= 0) return const [];
-
-  final tokens = query
-      .split(RegExp(r'\s+'))
-      .where((token) => token.length > 1 || token.codeUnitAt(0) > 127)
-      .toList();
-  if (tokens.isEmpty) return const [];
-
-  final scored = <({PresetTopicSearchResult result, int score})>[];
-  for (final categoryEntry in presetTopicsByCategory.entries) {
-    for (final preset in categoryEntry.value) {
-      final topic = _normalizeTopicSearchText(preset.topic);
-      final chineseLabel = _normalizeTopicSearchText(preset.chineseLabel);
-      final categoryLabel = _normalizeTopicSearchText(
-        _categoryLabel(categoryEntry.key),
-      );
-      final haystack = '$topic $chineseLabel $categoryLabel';
-      final matchedTokens = tokens
-          .where((token) => _topicSearchTokenMatches(token, haystack))
-          .length;
-      if (matchedTokens == 0) continue;
-
-      var score = matchedTokens * 100;
-      if (topic == query || chineseLabel == query) {
-        score += 1000;
-      } else if (topic.startsWith(query) || chineseLabel.startsWith(query)) {
-        score += 600;
-      } else if (haystack.contains(query)) {
-        score += 400;
-      }
-      if (matchedTokens == tokens.length) score += 200;
-
-      scored.add((
-        result: PresetTopicSearchResult(
-          category: categoryEntry.key,
-          preset: preset,
-        ),
-        score: score,
-      ));
-    }
-  }
-
-  scored.sort((a, b) {
-    final scoreOrder = b.score.compareTo(a.score);
-    if (scoreOrder != 0) return scoreOrder;
-    return a.result.preset.topic.compareTo(b.result.preset.topic);
-  });
-  return scored.take(limit).map((item) => item.result).toList();
+  final typedTopic = input.trim();
+  return typedTopic.isNotEmpty ? typedTopic : fallbackPreset.topic;
 }
 
 class EssayConfigScreen extends StatefulWidget {
@@ -415,7 +333,6 @@ class EssayConfigScreen extends StatefulWidget {
 
 class _EssayConfigScreenState extends State<EssayConfigScreen> {
   final _customController = TextEditingController();
-  final _customFocusNode = FocusNode();
 
   EssayCategory _selectedCategory = EssayCategory.practicedComparison;
   PresetTopic _selectedPreset =
@@ -434,15 +351,13 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
   @override
   void dispose() {
     _customController.dispose();
-    _customFocusNode.dispose();
     super.dispose();
   }
 
-  String get _finalTopic {
-    final custom = _customController.text.trim();
-    if (custom.isNotEmpty) return custom;
-    return _selectedPreset.topic;
-  }
+  String get _finalTopic => resolveEssayTopic(
+    input: _customController.text,
+    fallbackPreset: _selectedPreset,
+  );
 
   String _getLoadingLabel() => "AI 生成中... (~5-15s)";
 
@@ -722,162 +637,47 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
     );
   }
 
-  void _selectSearchedTopic(PresetTopicSearchResult result) {
-    setState(() {
-      _selectedCategory = result.category;
-      _selectedPreset = result.preset;
-      if (result.category == EssayCategory.practicedComparison) {
-        _essayType = 'Comparison';
-      }
-    });
-  }
-
-  Widget _buildTopicSearchField(bool isDark) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        return RawAutocomplete<PresetTopicSearchResult>(
-          textEditingController: _customController,
-          focusNode: _customFocusNode,
-          displayStringForOption: (result) => result.preset.topic,
-          optionsBuilder: (value) => searchPresetTopics(value.text),
-          onSelected: _selectSearchedTopic,
-          fieldViewBuilder:
-              (context, controller, focusNode, onFieldSubmitted) {
-                return TextField(
-                  controller: controller,
-                  focusNode: focusNode,
-                  keyboardType: TextInputType.text,
-                  textInputAction: TextInputAction.done,
-                  onSubmitted: (_) => onFieldSubmitted(),
-                  style: TextStyle(
-                    color: isDark ? Colors.white : Colors.black87,
-                  ),
-                  decoration: InputDecoration(
-                    labelText: "话题输入与搜索（中英文）",
-                    hintText: "例如：头盔、helmet、subsidy school lunches",
-                    hintStyle: TextStyle(
-                      color: isDark ? Colors.grey[600] : Colors.grey[400],
-                      fontSize: 13,
-                    ),
-                    helperText:
-                        "输入内容优先；可搜索 $presetTopicCount 个预设，也可直接输入关键词或新题目",
-                    helperMaxLines: 2,
-                    helperStyle: TextStyle(
-                      fontSize: 11,
-                      color: isDark ? Colors.grey[600] : Colors.grey[400],
-                    ),
-                    labelStyle: TextStyle(
-                      color: isDark ? Colors.grey[400] : Colors.grey[600],
-                    ),
-                    prefixIcon: const Icon(Icons.search),
-                    suffixIcon: IconButton(
-                      tooltip: '清空输入',
-                      onPressed: () {
-                        controller.clear();
-                        focusNode.requestFocus();
-                      },
-                      icon: const Icon(Icons.clear),
-                    ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: BorderSide(
-                        color: isDark ? Colors.white10 : Colors.black12,
-                      ),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(
-                        color: Colors.blueAccent,
-                        width: 2,
-                      ),
-                    ),
-                  ),
-                );
-              },
-          optionsViewBuilder: (context, onSelected, options) {
-            final results = options.toList();
-            return Align(
-              alignment: Alignment.topLeft,
-              child: Material(
-                elevation: 10,
-                color: isDark ? const Color(0xFF28283C) : Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                clipBehavior: Clip.antiAlias,
-                child: SizedBox(
-                  width: constraints.maxWidth,
-                  child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxHeight: 340),
-                    child: ListView.separated(
-                      padding: const EdgeInsets.symmetric(vertical: 6),
-                      shrinkWrap: true,
-                      itemCount: results.length,
-                      separatorBuilder: (_, _) => Divider(
-                        height: 1,
-                        color: isDark ? Colors.white10 : Colors.black12,
-                      ),
-                      itemBuilder: (context, index) {
-                        final result = results[index];
-                        final highlighted =
-                            AutocompleteHighlightedOption.of(context) == index;
-                        return InkWell(
-                          onTap: () => onSelected(result),
-                          child: Container(
-                            color: highlighted
-                                ? Colors.blueAccent.withOpacity(0.12)
-                                : null,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 10,
-                            ),
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  result.preset.chineseLabel,
-                                  style: TextStyle(
-                                    fontSize: 14,
-                                    fontWeight: FontWeight.w600,
-                                    color: isDark
-                                        ? Colors.white
-                                        : Colors.black87,
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  result.preset.topic,
-                                  maxLines: 2,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: TextStyle(
-                                    fontSize: 12,
-                                    height: 1.25,
-                                    color: isDark
-                                        ? Colors.grey[300]
-                                        : Colors.grey[700],
-                                  ),
-                                ),
-                                const SizedBox(height: 3),
-                                Text(
-                                  _categoryLabel(result.category),
-                                  style: TextStyle(
-                                    fontSize: 10,
-                                    color: isDark
-                                        ? Colors.grey[500]
-                                        : Colors.grey[500],
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        );
-                      },
-                    ),
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
+  Widget _buildTopicInputField(bool isDark) {
+    return TextField(
+      key: const ValueKey('essayTopicInput'),
+      controller: _customController,
+      keyboardType: TextInputType.text,
+      textInputAction: TextInputAction.done,
+      onSubmitted: (_) => FocusScope.of(context).unfocus(),
+      style: TextStyle(color: isDark ? Colors.white : Colors.black87),
+      decoration: InputDecoration(
+        labelText: "作文题目（输入优先）",
+        hintText: "输入老师给出的完整题目或关键词",
+        hintStyle: TextStyle(
+          color: isDark ? Colors.grey[600] : Colors.grey[400],
+          fontSize: 13,
+        ),
+        helperText: "有输入时直接使用输入内容；留空才使用下方预设",
+        helperMaxLines: 2,
+        helperStyle: TextStyle(
+          fontSize: 11,
+          color: isDark ? Colors.grey[600] : Colors.grey[400],
+        ),
+        labelStyle: TextStyle(
+          color: isDark ? Colors.grey[400] : Colors.grey[600],
+        ),
+        prefixIcon: const Icon(Icons.edit_note),
+        suffixIcon: IconButton(
+          tooltip: '清空输入',
+          onPressed: _customController.clear,
+          icon: const Icon(Icons.clear),
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: BorderSide(
+            color: isDark ? Colors.white10 : Colors.black12,
+          ),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(12),
+          borderSide: const BorderSide(color: Colors.blueAccent, width: 2),
+        ),
+      ),
     );
   }
 
@@ -901,7 +701,7 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildTopicSearchField(isDark),
+          _buildTopicInputField(isDark),
           const SizedBox(height: 12),
 
           DropdownButtonFormField<EssayCategory>(

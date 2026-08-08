@@ -15,6 +15,7 @@ import 'wakelock_service.dart';
 import 'route_detector.dart';
 import 'edge_tts_auth.dart';
 import 'diagnostic_log_service.dart';
+import 'watch_sync_service.dart';
 import '../main.dart';
 
 enum ActiveAudioType { none, chinese, english, recorded }
@@ -103,6 +104,12 @@ class TtsService extends ChangeNotifier {
   static final TtsService _instance = TtsService._internal();
   factory TtsService() => _instance;
 
+  static const int generatedDocumentDictationRepeatCount = 3;
+  static const int listeningOverviewRepeatCount = 1;
+  static const int listeningAnswerFocusRepeatCount = 2;
+  static const Duration generatedDocumentDictationPause = Duration(seconds: 3);
+  static const bool generatedDocumentDictationLoopEnabledByDefault = true;
+
   RouteDetector routeDetector = const SystemRouteDetector();
 
   AudioPlayer get _audioPlayer => globalAudioHandler.player;
@@ -163,7 +170,8 @@ class TtsService extends ChangeNotifier {
   bool _isEnglishSynthesizing = false;
   bool _isNativeEnglishPlaying = false;
   double _englishSpeed = 0.6;
-  bool _isLoopMode = true; // 默认：无限重复播放
+  bool _isLoopMode =
+      generatedDocumentDictationLoopEnabledByDefault; // 默认：无限重复播放
   bool _isEnglishDictationPlaying = false;
   int _dictationSentenceIndex = 0;
   int _dictationSentenceCount = 0;
@@ -175,6 +183,7 @@ class TtsService extends ChangeNotifier {
   int _dictationSentenceNavigationRequest = 0;
   Completer<void>? _dictationCommandSignal;
   bool _isEnglishDictationExtraReplay = false;
+  String _dictationVoiceLabel = '微软 Jenny';
   DateTime? _dictationMediaPauseAt;
   final DictationPauseGate _dictationPauseGate = DictationPauseGate();
   bool get isLoopMode => _isLoopMode;
@@ -187,6 +196,9 @@ class TtsService extends ChangeNotifier {
   int get dictationCycleIndex => _dictationCycleIndex;
   bool get isEnglishDictationPaused => _dictationPauseGate.isPaused;
   bool get isEnglishDictationExtraReplay => _isEnglishDictationExtraReplay;
+  bool get isChineseDictationPlaying =>
+      _isEnglishDictationPlaying &&
+      _currentAudioType == ActiveAudioType.chinese;
   bool get isEnglishPlaying =>
       (_audioPlayer.playing && _currentAudioType == ActiveAudioType.english) ||
       (_isNativeEnglishPlaying && _currentAudioType == ActiveAudioType.english);
@@ -255,6 +267,20 @@ class TtsService extends ChangeNotifier {
         .split(RegExp(r'(?<=[.!?])\s+'))
         .map((sentence) => sentence.trim())
         .where((sentence) => sentence.contains(RegExp(r'[A-Za-z]')))
+        .toList();
+    return sentences.isEmpty ? [clean] : sentences;
+  }
+
+  static List<String> splitChineseSentences(String text) {
+    final clean = normalizeTextForSpeech(text);
+    if (clean.isEmpty) return const [];
+
+    final sentences = clean
+        .split(RegExp(r'(?<=[。！？!?；;])\s*'))
+        .map((sentence) => sentence.trim())
+        .where(
+          (sentence) => RegExp(r'[\u4e00-\u9fffA-Za-z0-9]').hasMatch(sentence),
+        )
         .toList();
     return sentences.isEmpty ? [clean] : sentences;
   }
@@ -421,6 +447,7 @@ class TtsService extends ChangeNotifier {
   StreamSubscription? _devicesSubscription;
   Timer? _headphoneMonitor;
   bool _isCheckingHeadphones = false; // [BUG-03 Fix] 防止并发耳机检测堆积
+  bool _isPausedForUnsafeRoute = false;
   String lastRouteDebug = '';
 
   @visibleForTesting
@@ -435,7 +462,12 @@ class TtsService extends ChangeNotifier {
     try {
       final decision = await routeDetector.inspectCurrentOutput();
       lastRouteDebug = decision.isSafe ? '' : decision.reason;
-      if (decision.isSafe) return;
+      if (decision.isSafe) {
+        _isPausedForUnsafeRoute = false;
+        return;
+      }
+      if (_isPausedForUnsafeRoute) return;
+      _isPausedForUnsafeRoute = true;
       unawaited(
         DiagnosticLogService.instance.record(
           'tts',
@@ -449,12 +481,27 @@ class TtsService extends ChangeNotifier {
       );
       debugPrint(
         '[TtsService] Unsafe output route detected ($source): '
-        '${decision.outputTypes}. Stopping TTS immediately.',
+        '${decision.outputTypes}. Pausing TTS and retaining Now Playing.',
       );
-      await stopAll();
+      if (_isEnglishDictationPlaying) {
+        await _pauseDictationForUnsafeRoute();
+      } else {
+        await pauseAll();
+        globalAudioHandler.publishRemotePlaybackIntent(false);
+      }
     } finally {
       _isCheckingHeadphones = false;
     }
+  }
+
+  Future<void> _pauseDictationForUnsafeRoute() async {
+    if (!_isEnglishDictationPlaying) return;
+    _dictationPauseGate.pause();
+    _dictationMediaPauseAt = null;
+    await _flutterTts.pause();
+    await _audioPlayer.pause();
+    globalAudioHandler.publishRemotePlaybackIntent(false);
+    notifyListeners();
   }
 
   void _startHeadphoneMonitor() {
@@ -511,15 +558,22 @@ class TtsService extends ChangeNotifier {
       debugPrint(
         '[TtsService Safety Gate] BLOCKED playback ($playbackSource): ${decision.reason}',
       );
-      await stopAll();
+      if (_isEnglishDictationPlaying) {
+        _isPausedForUnsafeRoute = true;
+        await _pauseDictationForUnsafeRoute();
+      } else {
+        await stopAll();
+      }
       return false;
     }
+    _isPausedForUnsafeRoute = false;
     lastRouteDebug = '';
     return true;
   }
 
   Future<void> _playAudioSafely(String playbackSource) async {
     if (!await prepareSafePlayback(playbackSource: playbackSource)) {
+      if (_isEnglishDictationPlaying && _dictationPauseGate.isPaused) return;
       throw StateError('Unsafe audio route: $lastRouteDebug');
     }
     await _audioPlayer.play();
@@ -537,6 +591,7 @@ class TtsService extends ChangeNotifier {
     required Duration end,
   }) async {
     if (!await prepareSafePlayback(playbackSource: playbackSource)) {
+      if (_isEnglishDictationPlaying && _dictationPauseGate.isPaused) return;
       throw StateError('Unsafe audio route: $lastRouteDebug');
     }
 
@@ -664,22 +719,42 @@ class TtsService extends ChangeNotifier {
     return decision.isSafe;
   }
 
-  String _sanitizeMarkdown(String markdown) {
+  /// Converts display-friendly bilingual notation into speech-friendly text.
+  /// For example, `中国（China）` is spoken as `中国，China` without announcing
+  /// brackets. The visible Markdown remains unchanged.
+  @visibleForTesting
+  static String normalizeTextForSpeech(
+    String markdown, {
+    bool chineseLineBreaksEndSentences = false,
+  }) {
     String text = markdown;
     text = text.replaceAll(RegExp(r'[#\*_~=]'), '');
     text = text.replaceAll(RegExp(r'^\s*[\-\*\+]\s+', multiLine: true), '，');
     text = text.replaceAll(RegExp(r'^\s*\d+\.\s+', multiLine: true), '，');
     text = text.replaceAll(RegExp(r'^-{3,}\s*$', multiLine: true), '');
-    text = text.replaceAll(RegExp(r'[\|\-\+]+'), ' ');
+    text = text.replaceAll(RegExp(r'[\|\-\+━─—]+'), ' ');
     text = text.replaceAllMapped(
       RegExp(r'\[(.*?)\]\(.*?\)'),
       (match) => match[1] ?? '',
     );
+    text = text
+        .replaceAll(RegExp(r'[（(]'), '，')
+        .replaceAll(RegExp(r'[）)]'), '，')
+        .replaceAll('【', '')
+        .replaceAll('】', '，');
     final hasChinese = RegExp(r'[\u4e00-\u9fff]').hasMatch(markdown);
-    text = text.replaceAll(RegExp(r'\n+'), hasChinese ? '，' : ' ');
+    text = text.replaceAll(
+      RegExp(r'\n+'),
+      hasChinese && chineseLineBreaksEndSentences
+          ? '。'
+          : (hasChinese ? '，' : ' '),
+    );
+    text = text.replaceAll(RegExp(r'，{2,}'), '，');
     text = text.replaceAll(RegExp(r'\s+'), ' ');
     return text.trim();
   }
+
+  String _sanitizeMarkdown(String markdown) => normalizeTextForSpeech(markdown);
 
   List<String> _splitTextIntoChunks(String text, {int maxChunkSize = 800}) {
     if (text.length <= maxChunkSize) return [text];
@@ -718,11 +793,7 @@ class TtsService extends ChangeNotifier {
   }
 
   /// 后台静默预生成与下载英文神经网络音频（0 秒阻塞，全自动提前就绪）
-  Future<void> prefetchEnglish(
-    String text, {
-    String? geminiKey,
-    String? siliconFlowKey,
-  }) async {
+  Future<void> prefetchEnglish(String text, {String? openRouterKey}) async {
     final clean = _sanitizeMarkdown(text);
     if (clean.isEmpty) return;
 
@@ -749,39 +820,31 @@ class TtsService extends ChangeNotifier {
       );
       List<int>? synthesizedBytes;
 
-      final effectiveSiliconKey = (siliconFlowKey ?? '').trim();
-      final effectiveGeminiKey = (geminiKey ?? '').trim();
-
-      if (effectiveSiliconKey.isNotEmpty) {
-        try {
-          synthesizedBytes = await _synthesizeWithSiliconFlow(
-            clean,
-            effectiveSiliconKey,
-            textHash,
-          );
-        } catch (e) {
-          debugPrint("[TtsPrefetch] SiliconFlow prefetch error: $e");
-        }
-      }
-
-      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
-          effectiveGeminiKey.isNotEmpty) {
-        try {
-          synthesizedBytes = await _synthesizeWithGemini(
-            clean,
-            effectiveGeminiKey,
-          );
-        } catch (e) {
-          debugPrint("[TtsPrefetch] Gemini prefetch error: $e");
-        }
-      }
-
-      if (synthesizedBytes == null || synthesizedBytes.isEmpty) {
+      // Edge is free and normally fastest. OpenRouter is only used if Edge
+      // is unavailable, then the regular player still has native TTS as the
+      // final fallback.
+      try {
         synthesizedBytes = await _synthesizeWithEdgeNeural(clean);
+      } catch (e) {
+        debugPrint("[TtsPrefetch] Edge prefetch error: $e");
       }
 
-      if (synthesizedBytes.isNotEmpty) {
-        await cachedFile.writeAsBytes(synthesizedBytes);
+      final effectiveOpenRouterKey = (openRouterKey ?? '').trim();
+      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
+          effectiveOpenRouterKey.isNotEmpty) {
+        try {
+          synthesizedBytes = await _synthesizeWithOpenRouter(
+            clean,
+            effectiveOpenRouterKey,
+          );
+        } catch (e) {
+          debugPrint("[TtsPrefetch] OpenRouter prefetch error: $e");
+        }
+      }
+
+      final audioBytes = synthesizedBytes;
+      if (audioBytes != null && audioBytes.isNotEmpty) {
+        await cachedFile.writeAsBytes(audioBytes);
         debugPrint(
           "[TtsPrefetch] English audio successfully pre-fetched to disk cache!",
         );
@@ -872,12 +935,17 @@ class TtsService extends ChangeNotifier {
     required int repeatCount,
     required bool isExtraReplay,
   }) {
+    final isListeningShorthand = isChineseDictationPlaying;
+    final playbackName = isListeningShorthand ? '中文速记' : '听写';
+    final sectionName = isListeningShorthand
+        ? (repeatCount > listeningOverviewRepeatCount ? '答题重点' : '逻辑概述')
+        : _dictationVoiceLabel;
     globalAudioHandler.setPlaybackMetadata(
       title:
-          '听写第 $_dictationCycleIndex 轮：第 $_dictationSentenceIndex / $_dictationSentenceCount 句',
+          '$playbackName第 $_dictationCycleIndex 轮：第 $_dictationSentenceIndex / $_dictationSentenceCount 句',
       artist: isExtraReplay
           ? '额外重播 · 不计入 $_dictationRepeatIndex / $repeatCount 次'
-          : '第 $_dictationRepeatIndex / $repeatCount 次 · 微软 Jenny',
+          : '$sectionName · 第 $_dictationRepeatIndex / $repeatCount 次',
       duration: duration,
     );
   }
@@ -925,14 +993,106 @@ class TtsService extends ChangeNotifier {
 
   /// Synthesizes one complete Edge MP3 plus sentence offsets, then seeks and
   /// pauses within that single loaded file for dictation practice.
+  Future<void> startGeneratedDocumentDictation(
+    String text, {
+    String? sourceMarkdown,
+    String? watchTitle,
+  }) => startEnglishDictation(
+    text,
+    repeatCount: generatedDocumentDictationRepeatCount,
+    pauseBetweenSentences: generatedDocumentDictationPause,
+    sourceMarkdown: sourceMarkdown,
+    watchTitle: watchTitle,
+  );
+
   Future<void> startEnglishDictation(
     String text, {
-    String? geminiKey,
-    String? siliconFlowKey,
     int repeatCount = 3,
     Duration pauseBetweenSentences = const Duration(seconds: 3),
+    String? sourceMarkdown,
+    String? watchTitle,
+  }) => _startBoundaryDictation(
+    text,
+    repeatCount: repeatCount,
+    pauseBetweenSentences: pauseBetweenSentences,
+    voiceName: 'en-US-JennyNeural',
+    language: 'en-US',
+    audioType: ActiveAudioType.english,
+    cachePrefix: 'english_dictation',
+    voiceLabel: '微软 Jenny',
+    isChinese: false,
+    sourceMarkdown: sourceMarkdown,
+    watchTitle: watchTitle,
+  );
+
+  Future<void> startListeningChineseDictation(
+    String text, {
+    String? sourceMarkdown,
+    String? watchTitle,
+  }) => _startBoundaryDictation(
+    text,
+    repeatCount: listeningAnswerFocusRepeatCount,
+    repeatCountForSentence: (sentenceIndex) =>
+        listeningChineseRepeatCountForSentence(text, sentenceIndex),
+    pauseBetweenSentences: generatedDocumentDictationPause,
+    voiceName: 'zh-CN-XiaoxiaoNeural',
+    language: 'zh-CN',
+    audioType: ActiveAudioType.chinese,
+    cachePrefix: 'listening_chinese_dictation',
+    voiceLabel: '微软晓晓',
+    isChinese: true,
+    sourceMarkdown: sourceMarkdown,
+    watchTitle: watchTitle,
+  );
+
+  /// The listening shorthand player reads the lecture overview once, then
+  /// repeats only the answer-focus section sentence by sentence. The note
+  /// extractor inserts this stable spoken transition at the section boundary.
+  @visibleForTesting
+  static int listeningChineseRepeatCountForSentence(
+    String text,
+    int sentenceIndex,
+  ) {
+    const marker = '第二部分，答题重点与危险位置。';
+    final cleanText = normalizeTextForSpeech(
+      text,
+      chineseLineBreaksEndSentences: true,
+    );
+    final markerIndex = cleanText.indexOf(marker);
+    if (markerIndex < 0) return listeningOverviewRepeatCount;
+
+    final prefixThroughMarker = cleanText.substring(
+      0,
+      markerIndex + marker.length,
+    );
+    final answerFocusStartIndex = splitChineseSentences(
+      prefixThroughMarker,
+    ).length;
+    return sentenceIndex >= answerFocusStartIndex
+        ? listeningAnswerFocusRepeatCount
+        : listeningOverviewRepeatCount;
+  }
+
+  Future<void> _startBoundaryDictation(
+    String text, {
+    required int repeatCount,
+    int Function(int sentenceIndex)? repeatCountForSentence,
+    required Duration pauseBetweenSentences,
+    required String voiceName,
+    required String language,
+    required ActiveAudioType audioType,
+    required String cachePrefix,
+    required String voiceLabel,
+    required bool isChinese,
+    String? sourceMarkdown,
+    String? watchTitle,
   }) async {
-    final sentences = splitEnglishSentences(_sanitizeMarkdown(text));
+    final cleanText = isChinese
+        ? normalizeTextForSpeech(text, chineseLineBreaksEndSentences: true)
+        : _sanitizeMarkdown(text);
+    final sentences = isChinese
+        ? splitChineseSentences(cleanText)
+        : splitEnglishSentences(cleanText);
     if (sentences.isEmpty) return;
 
     await init();
@@ -946,12 +1106,16 @@ class TtsService extends ChangeNotifier {
 
     final runId = ++_dictationRunId;
     final safeRepeatCount = repeatCount.clamp(1, 5).toInt();
-    _isEnglishSynthesizing = true;
+    _isEnglishSynthesizing = !isChinese;
+    _isChineseSynthesizing = isChinese;
     _isEnglishDictationPlaying = true;
+    _dictationVoiceLabel = voiceLabel;
     _dictationSentenceCount = sentences.length;
     _dictationSentenceIndex = 0;
     _dictationRepeatIndex = 0;
-    _dictationRepeatCount = safeRepeatCount;
+    _dictationRepeatCount = (repeatCountForSentence?.call(0) ?? safeRepeatCount)
+        .clamp(1, 5)
+        .toInt();
     _dictationCycleIndex = 0;
     _dictationExtraReplayRequests = 0;
     _dictationSentenceNavigationRequest = 0;
@@ -961,10 +1125,15 @@ class TtsService extends ChangeNotifier {
     _dictationPauseGate.cancel();
     globalAudioHandler.onPlayRequested = _handleDictationMediaPlay;
     globalAudioHandler.onPauseRequested = _handleDictationMediaPause;
-    // OpenRun Pro: double-click sends nextTrack; triple-click sends
-    // previousTrack. Map those native media commands to dictation actions.
+    globalAudioHandler.onUnsafeRouteDetected = _pauseDictationForUnsafeRoute;
+    // Apple Watch and Bluetooth controls share the same native media commands:
+    // nextTrack advances one sentence and previousTrack goes back one sentence.
     globalAudioHandler.onSkipNext = requestNextEnglishDictationSentence;
-    globalAudioHandler.onSkipPrevious = _requestExtraEnglishDictationReplay;
+    globalAudioHandler.onSkipPrevious = requestPreviousEnglishDictationSentence;
+    globalAudioHandler.publishPreparingPlayback(
+      title: isChinese ? '中文速记准备中' : '英文听写准备中',
+      artist: 'Jeff Notes · 正在合成语音',
+    );
     notifyListeners();
 
     var dictationAudioLoaded = false;
@@ -972,13 +1141,10 @@ class TtsService extends ChangeNotifier {
       final docsDir = await getApplicationDocumentsDirectory();
       final cacheDir = Directory('${docsDir.path}/tts_cache');
       if (!await cacheDir.exists()) await cacheDir.create(recursive: true);
-      final cleanText = _sanitizeMarkdown(text);
       final textHash = md5.convert(utf8.encode(cleanText)).toString();
-      final audioFile = File(
-        '${cacheDir.path}/english_dictation_$textHash.mp3',
-      );
+      final audioFile = File('${cacheDir.path}/${cachePrefix}_$textHash.mp3');
       final boundaryFile = File(
-        '${cacheDir.path}/english_dictation_$textHash.json',
+        '${cacheDir.path}/${cachePrefix}_$textHash.json',
       );
       List<EdgeSentenceBoundary> boundaries = [];
 
@@ -1004,8 +1170,10 @@ class TtsService extends ChangeNotifier {
       }
 
       if (boundaries.isEmpty) {
-        final synthesized = await _synthesizeEnglishEssayWithEdgeBoundaries(
+        final synthesized = await _synthesizeDocumentWithEdgeBoundaries(
           cleanText,
+          voiceName: voiceName,
+          language: language,
         );
         if (runId != _dictationRunId) return;
         boundaries = synthesized.boundaries;
@@ -1020,15 +1188,47 @@ class TtsService extends ChangeNotifier {
         throw Exception('微软语音未返回句子时间数据，请重试');
       }
 
+      final watchRepeatCounts = List<int>.generate(
+        boundaries.length,
+        (index) => (repeatCountForSentence?.call(index) ?? safeRepeatCount)
+            .clamp(1, 3)
+            .toInt(),
+      );
+      unawaited(
+        WatchSyncService.instance
+            .queueDictationPackage(
+              documentId: '${cachePrefix}_$textHash',
+              title: watchTitle?.trim().isNotEmpty == true
+                  ? watchTitle!.trim()
+                  : (isChinese ? '中文速记' : '英文写作练习'),
+              markdown: sourceMarkdown?.trim().isNotEmpty == true
+                  ? sourceMarkdown!
+                  : text,
+              audioFile: audioFile,
+              boundaryFile: boundaryFile,
+              boundaries: boundaries
+                  .map((boundary) => boundary.toJson())
+                  .toList(),
+              repeatCounts: watchRepeatCounts,
+              loopEnabled: _isLoopMode,
+              pauseBetweenSentences: pauseBetweenSentences,
+            )
+            .catchError((Object error) {
+              debugPrint('[WatchSync] Package preparation failed: $error');
+              return false;
+            }),
+      );
+
       _isEnglishSynthesizing = false;
-      _currentAudioType = ActiveAudioType.english;
+      _isChineseSynthesizing = false;
+      _currentAudioType = audioType;
       WakelockService.enable();
       final fullDuration = await _audioPlayer.setFilePath(audioFile.path);
       dictationAudioLoaded = true;
       if (fullDuration == null || fullDuration <= Duration.zero) {
-        throw Exception('无法读取微软生成的作文语音文件');
+        throw Exception('无法读取微软生成的文档语音文件');
       }
-      await _audioPlayer.setSpeed(_englishSpeed);
+      await _audioPlayer.setSpeed(isChinese ? _chineseSpeed : _englishSpeed);
       await _audioPlayer.setLoopMode(LoopMode.off);
       _startHeadphoneMonitor();
       notifyListeners();
@@ -1068,9 +1268,14 @@ class TtsService extends ChangeNotifier {
         final clipDuration = clipEnd - clipStart;
         var navigationInterruptedSentence = false;
 
+        final sentenceRepeatCount =
+            (repeatCountForSentence?.call(sentenceIndex) ?? safeRepeatCount)
+                .clamp(1, 5)
+                .toInt();
+
         for (
           var repeatIndex = 0;
-          repeatIndex < safeRepeatCount;
+          repeatIndex < sentenceRepeatCount;
           repeatIndex++
         ) {
           if (runId != _dictationRunId) return;
@@ -1082,7 +1287,7 @@ class TtsService extends ChangeNotifier {
           _dictationRepeatIndex = repeatIndex + 1;
           _setEnglishDictationMetadata(
             duration: clipDuration,
-            repeatCount: safeRepeatCount,
+            repeatCount: sentenceRepeatCount,
             isExtraReplay: false,
           );
           await _audioPlayer.seek(clipStart);
@@ -1101,7 +1306,7 @@ class TtsService extends ChangeNotifier {
                 clipStart: clipStart,
                 clipEnd: clipEnd,
                 clipDuration: clipDuration,
-                repeatCount: safeRepeatCount,
+                repeatCount: sentenceRepeatCount,
               );
               if (!shouldContinue) return;
               if (_dictationSentenceNavigationRequest != 0) {
@@ -1110,7 +1315,7 @@ class TtsService extends ChangeNotifier {
               }
               _setEnglishDictationMetadata(
                 duration: clipDuration,
-                repeatCount: safeRepeatCount,
+                repeatCount: sentenceRepeatCount,
                 isExtraReplay: false,
               );
               await _audioPlayer.seek(clipStart);
@@ -1157,9 +1362,9 @@ class TtsService extends ChangeNotifier {
           continue;
         }
 
-        // Commands also remain responsive during the three-second gap. A
-        // triple-click here replays the sentence that just finished; next or
-        // previous changes sentence immediately without waiting out the gap.
+        // Commands also remain responsive during the three-second gap.
+        // Sentence navigation takes effect immediately without waiting out the
+        // gap; a rapid pause/play can still request an extra replay.
         while (runId == _dictationRunId) {
           if (_dictationSentenceNavigationRequest != 0) {
             final direction = _dictationSentenceNavigationRequest;
@@ -1178,7 +1383,7 @@ class TtsService extends ChangeNotifier {
               clipStart: clipStart,
               clipEnd: clipEnd,
               clipDuration: clipDuration,
-              repeatCount: safeRepeatCount,
+              repeatCount: sentenceRepeatCount,
             );
             if (!shouldContinue) return;
             continue;
@@ -1194,6 +1399,7 @@ class TtsService extends ChangeNotifier {
     } finally {
       if (runId == _dictationRunId) {
         _isEnglishSynthesizing = false;
+        _isChineseSynthesizing = false;
         _isEnglishDictationPlaying = false;
         _isNativeEnglishPlaying = false;
         _dictationRepeatIndex = 0;
@@ -1207,6 +1413,7 @@ class TtsService extends ChangeNotifier {
         _dictationPauseGate.cancel();
         globalAudioHandler.onPlayRequested = null;
         globalAudioHandler.onPauseRequested = null;
+        globalAudioHandler.onUnsafeRouteDetected = null;
         globalAudioHandler.onSkipNext = null;
         globalAudioHandler.onSkipPrevious = null;
         _currentAudioType = ActiveAudioType.none;
@@ -1231,11 +1438,7 @@ class TtsService extends ChangeNotifier {
   // 🇨🇳 中文朗读接口（方案 1: iOS 本地原生 / 方案 2: 微软 Edge 晓晓神经网络女声）
   // ════════════════════════════════════════════════════════════════════
 
-  Future<void> speakChinese(
-    String text, {
-    String? geminiKey,
-    String? siliconFlowKey,
-  }) async {
+  Future<void> speakChinese(String text, {String? openRouterKey}) async {
     _ensurePlaybackAllowed();
     await init();
     await stopAll();
@@ -1344,20 +1547,18 @@ class TtsService extends ChangeNotifier {
         }
       }
 
-      // 3. 硅基流动（SiliconFlow）第三级备用通道
-      final effectiveSiliconKey = (siliconFlowKey ?? '').trim();
+      // 3. OpenRouter TTS 付费备用通道
+      final effectiveOpenRouterKey = (openRouterKey ?? '').trim();
       if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
-          effectiveSiliconKey.isNotEmpty) {
+          effectiveOpenRouterKey.isNotEmpty) {
         try {
-          debugPrint(
-            "[TtsService] Synthesizing Chinese via SiliconFlow CosyVoice...",
-          );
-          synthesizedBytes = await _synthesizeChineseWithSiliconFlow(
+          debugPrint("[TtsService] Synthesizing Chinese via OpenRouter TTS...");
+          synthesizedBytes = await _synthesizeWithOpenRouter(
             clean,
-            effectiveSiliconKey,
+            effectiveOpenRouterKey,
           );
         } catch (e) {
-          debugPrint("[TtsService] SiliconFlow Chinese failed: $e");
+          debugPrint("[TtsService] OpenRouter Chinese TTS failed: $e");
         }
       }
 
@@ -1573,8 +1774,11 @@ class TtsService extends ChangeNotifier {
 
   /// Synthesizes one complete essay and captures Edge sentence offsets from
   /// the same request. The audio and metadata therefore share one timeline.
-  Future<_EdgeSynthesisWithBoundaries>
-  _synthesizeEnglishEssayWithEdgeBoundaries(String text) async {
+  Future<_EdgeSynthesisWithBoundaries> _synthesizeDocumentWithEdgeBoundaries(
+    String text, {
+    required String voiceName,
+    required String language,
+  }) async {
     final safeText = _escapeXml(text);
     final requestId = md5
         .convert(utf8.encode('${DateTime.now().toIso8601String()}$text'))
@@ -1657,16 +1861,16 @@ class TtsService extends ChangeNotifier {
         'Content-Type:application/ssml+xml\r\n'
         'Path:ssml\r\n\r\n'
         "<speak version='1.0' xmlns='http://www.w3.org/2001/10/synthesis' "
-        "xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='en-US'>"
-        "<voice name='en-US-JennyNeural'><prosody pitch='+0Hz' rate='+0%'>"
+        "xmlns:mstts='http://www.w3.org/2001/mstts' xml:lang='$language'>"
+        "<voice name='$voiceName'><prosody pitch='+0Hz' rate='+0%'>"
         '$safeText</prosody></voice></speak>',
       );
 
       await completer.future.timeout(
-        const Duration(seconds: 60),
+        const Duration(seconds: 120),
         onTimeout: () {
           unawaited(socket.close());
-          throw TimeoutException('Edge essay synthesis timeout after 60s');
+          throw TimeoutException('Edge document synthesis timeout after 120s');
         },
       );
       await socket.close();
@@ -1761,66 +1965,6 @@ class TtsService extends ChangeNotifier {
     return allMp3Bytes;
   }
 
-  Future<List<int>> _synthesizeChineseWithSiliconFlow(
-    String text,
-    String siliconFlowKey,
-  ) async {
-    final chunks = _splitTextIntoChunks(text, maxChunkSize: 600);
-    final allBytes = <int>[];
-
-    for (final chunk in chunks) {
-      final url = Uri.parse("https://api.siliconflow.cn/v1/audio/speech");
-
-      // 1. 优先使用 SiliconFlow 的 24kHz 中文神经网络晓晓女声 (speech:zh-CN-XiaoxiaoNeural)
-      var response = await http
-          .post(
-            url,
-            headers: {
-              "Authorization": "Bearer ${siliconFlowKey.trim()}",
-              "Content-Type": "application/json",
-            },
-            body: jsonEncode({
-              "model": "speech:zh-CN-XiaoxiaoNeural",
-              "input": chunk,
-              "voice": "speech:zh-CN-XiaoxiaoNeural",
-              "response_format": "mp3",
-              "stream": false,
-            }),
-          )
-          .timeout(const Duration(seconds: 20));
-
-      // 2. 若专有模型未提供，使用 CosyVoice 24kHz 高级双语女声 Bella 兜底
-      if (response.statusCode != 200) {
-        response = await http
-            .post(
-              url,
-              headers: {
-                "Authorization": "Bearer ${siliconFlowKey.trim()}",
-                "Content-Type": "application/json",
-              },
-              body: jsonEncode({
-                "model": "FunAudioLLM/CosyVoice2-0.5B",
-                "input": chunk,
-                "voice": "FunAudioLLM/CosyVoice2-0.5B:bella",
-                "response_format": "mp3",
-                "stream": false,
-              }),
-            )
-            .timeout(const Duration(seconds: 20));
-      }
-
-      if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
-        allBytes.addAll(response.bodyBytes);
-      } else {
-        throw Exception("SiliconFlow Chinese HTTP ${response.statusCode}");
-      }
-    }
-
-    if (allBytes.isEmpty)
-      throw Exception("SiliconFlow Chinese returned empty data");
-    return allBytes;
-  }
-
   Future<void> playChinese() async {
     _ensurePlaybackAllowed();
     await ensurePlaybackSession();
@@ -1829,6 +1973,12 @@ class TtsService extends ChangeNotifier {
       throw Exception("NoHeadphones | ${lastRouteDebug}");
     WakelockService.enable();
     _currentAudioType = ActiveAudioType.chinese;
+    if (isChineseDictationPlaying && _dictationPauseGate.isPaused) {
+      _dictationPauseGate.resume();
+      _startHeadphoneMonitor();
+      notifyListeners();
+      return;
+    }
     if (_isChineseNativePlaying ||
         (_chineseNativePosition > Duration.zero &&
             _chineseNativeDuration > Duration.zero)) {
@@ -1848,6 +1998,7 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> pauseChinese() async {
+    if (isChineseDictationPlaying) _dictationPauseGate.pause();
     if (_isChineseNativePlaying) {
       // 原生 TTS 暂停：停止 timer 和语音
       _isChineseNativePlaying = false;
@@ -1861,6 +2012,10 @@ class TtsService extends ChangeNotifier {
   }
 
   Future<void> stopChinese() async {
+    if (isChineseDictationPlaying) {
+      await stopAll();
+      return;
+    }
     await _flutterTts.stop();
     if (_currentAudioType == ActiveAudioType.chinese) {
       await _audioPlayer.stop();
@@ -1936,18 +2091,11 @@ class TtsService extends ChangeNotifier {
   }
 
   // ════════════════════════════════════════════════════════════════════
-  // 🇬🇧 英文 AI 拟真音色朗读接口（SiliconFlow AI + 2级缓存降级方案）
+  // 🇬🇧 英文神经网络朗读：Edge 优先，OpenRouter 备用，本地语音保底。
   // ════════════════════════════════════════════════════════════════════
 
   // ════════════════════════════════════════════════════════════════════
-  // 🇬🇧 英文 AI 拟真音色朗读接口（Gemini 2.0 Flash 原生 API + 硅基流动降级方案）
-  // ════════════════════════════════════════════════════════════════════
-
-  Future<void> speakEnglish(
-    String text, {
-    String? geminiKey,
-    String? siliconFlowKey,
-  }) async {
+  Future<void> speakEnglish(String text, {String? openRouterKey}) async {
     _ensurePlaybackAllowed();
     await init();
     await stopAll();
@@ -2040,8 +2188,7 @@ class TtsService extends ChangeNotifier {
 
       List<int>? synthesizedBytes;
 
-      final effectiveSiliconKey = (siliconFlowKey ?? '').trim();
-      final effectiveGeminiKey = (geminiKey ?? '').trim();
+      final effectiveOpenRouterKey = (openRouterKey ?? '').trim();
 
       // 1. 优先使用微软 Edge 官方 WebSocket 协议直连 (en-US-JennyNeural · 24kHz 播音美音)
       try {
@@ -2068,7 +2215,21 @@ class TtsService extends ChangeNotifier {
         }
       }
 
-      // 3. 三级兜底：iOS 原生离线语音（秒播 · 零延迟 · 零成本 · 不断网保障）
+      // 3. OpenRouter TTS 是在线的第一层备用；仅在 Edge 两条链路都失败时使用。
+      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
+          effectiveOpenRouterKey.isNotEmpty) {
+        try {
+          debugPrint("[TtsService] Synthesizing audio via OpenRouter TTS...");
+          synthesizedBytes = await _synthesizeWithOpenRouter(
+            clean,
+            effectiveOpenRouterKey,
+          );
+        } catch (e) {
+          debugPrint("[TtsService] OpenRouter English TTS failed: $e");
+        }
+      }
+
+      // 4. 最后一层：iOS 原生离线语音（零成本、不断网保障）
       if (synthesizedBytes == null || synthesizedBytes.isEmpty) {
         try {
           debugPrint(
@@ -2110,37 +2271,6 @@ class TtsService extends ChangeNotifier {
           return;
         } catch (iosErr) {
           debugPrint("[TtsService] iOS Native failed: $iosErr");
-        }
-      }
-
-      // 4. 若配置了 SiliconFlow Key，备用尝试 24kHz 播音级女声 Bella
-      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
-          effectiveSiliconKey.isNotEmpty) {
-        try {
-          debugPrint(
-            "[TtsService] Synthesizing audio via SiliconFlow Bella Female Voice...",
-          );
-          synthesizedBytes = await _synthesizeWithSiliconFlow(
-            clean,
-            effectiveSiliconKey,
-            textHash,
-          );
-        } catch (e) {
-          debugPrint("[TtsService] SiliconFlow Bella failed: $e");
-        }
-      }
-
-      // 5. 若配置了 Gemini Key，备用尝试 Google 官方播音女声
-      if ((synthesizedBytes == null || synthesizedBytes.isEmpty) &&
-          effectiveGeminiKey.isNotEmpty) {
-        try {
-          debugPrint("[TtsService] Synthesizing audio via Google API...");
-          synthesizedBytes = await _synthesizeWithGemini(
-            clean,
-            effectiveGeminiKey,
-          );
-        } catch (e) {
-          debugPrint("[TtsService] Gemini audio failed: $e");
         }
       }
 
@@ -2407,33 +2537,32 @@ class TtsService extends ChangeNotifier {
     return _addWavHeader(allAudioBytes, sampleRate: 24000);
   }
 
-  /// 硅基流动 API 备用合成方案
-  Future<List<int>> _synthesizeWithSiliconFlow(
+  /// OpenRouter 的低成本音频备用。GPT-4o Mini TTS 返回 MP3 字节流。
+  Future<List<int>> _synthesizeWithOpenRouter(
     String text,
-    String siliconFlowKey,
-    String textHash,
+    String openRouterKey,
   ) async {
     final chunks = _splitTextIntoChunks(text, maxChunkSize: 800);
     final chunkBytesList = <List<int>>[];
 
     for (int i = 0; i < chunks.length; i++) {
-      final url = Uri.parse("https://api.siliconflow.cn/v1/audio/speech");
+      final url = Uri.parse("https://openrouter.ai/api/v1/audio/speech");
       final response = await http
           .post(
             url,
             headers: {
-              "Authorization": "Bearer ${siliconFlowKey.trim()}",
+              "Authorization": "Bearer ${openRouterKey.trim()}",
               "Content-Type": "application/json",
             },
             body: jsonEncode({
-              "model": "FunAudioLLM/CosyVoice2-0.5B",
+              "model": "openai/gpt-4o-mini-tts-2025-12-15",
               "input": chunks[i],
-              "voice": "FunAudioLLM/CosyVoice2-0.5B:bella", // 高清流畅自然英文播音女声
+              "voice": "nova",
               "response_format": "mp3",
-              "stream": false,
+              "speed": 1.0,
             }),
           )
-          .timeout(const Duration(seconds: 30));
+          .timeout(const Duration(seconds: 45));
 
       if (response.statusCode == 200 && response.bodyBytes.isNotEmpty) {
         chunkBytesList.add(response.bodyBytes);
@@ -2442,7 +2571,7 @@ class TtsService extends ChangeNotifier {
             ? response.body.substring(0, 300)
             : response.body;
         throw Exception(
-          "SiliconFlow API 错误 (HTTP ${response.statusCode}): $errBody",
+          "OpenRouter TTS error (HTTP ${response.statusCode}): $errBody",
         );
       }
     }
@@ -2507,6 +2636,7 @@ class TtsService extends ChangeNotifier {
     await Future.delayed(const Duration(milliseconds: 300));
     if (!(await isHeadphonesConnected()))
       throw Exception("NoHeadphones | ${lastRouteDebug}");
+    _isPausedForUnsafeRoute = false;
     if (_isEnglishDictationPlaying && _dictationPauseGate.isPaused) {
       _dictationPauseGate.resume();
       _startHeadphoneMonitor();
@@ -2543,6 +2673,7 @@ class TtsService extends ChangeNotifier {
     _dictationPauseGate.cancel();
     globalAudioHandler.onPlayRequested = null;
     globalAudioHandler.onPauseRequested = null;
+    globalAudioHandler.onUnsafeRouteDetected = null;
     globalAudioHandler.onSkipNext = null;
     globalAudioHandler.onSkipPrevious = null;
     _isEnglishSynthesizing = false;
@@ -2602,6 +2733,8 @@ class TtsService extends ChangeNotifier {
     _dictationPauseGate.cancel();
     globalAudioHandler.onPlayRequested = null;
     globalAudioHandler.onPauseRequested = null;
+    globalAudioHandler.onUnsafeRouteDetected = null;
+    _isPausedForUnsafeRoute = false;
     globalAudioHandler.onSkipNext = null;
     globalAudioHandler.onSkipPrevious = null;
     WakelockService.disable();
@@ -2656,12 +2789,12 @@ class TtsService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> speak(String text, {String? siliconFlowKey}) async {
+  Future<void> speak(String text, {String? openRouterKey}) async {
     _ensurePlaybackAllowed();
-    if (siliconFlowKey != null && siliconFlowKey.isNotEmpty) {
-      await speakEnglish(text, siliconFlowKey: siliconFlowKey);
+    if (RegExp(r'[\u4e00-\u9fff]').hasMatch(text)) {
+      await speakChinese(text, openRouterKey: openRouterKey);
     } else {
-      await speakChinese(text);
+      await speakEnglish(text, openRouterKey: openRouterKey);
     }
   }
 

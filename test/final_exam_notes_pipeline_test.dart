@@ -39,14 +39,18 @@ void main() {
         AIProvider.groq,
         mode: AppMode.lecture,
       );
-      expect(lecture, contains('【30秒理解·可播放】'));
-      expect(lecture, contains('【Purpose（目的）】'));
-      expect(lecture, contains('【二听】'));
-      expect(lecture, contains('【符号】'));
+      expect(lecture, contains('【全篇逻辑播报·可播放】'));
+      expect(lecture, contains('【答题重点与危险位置·可播放】'));
+      expect(lecture, contains('no minimum length'));
+      expect(lecture, contains('Never repeat, generalize, or add outside'));
+      expect(lecture, contains('under 1200 Chinese'));
+      expect(lecture, contains('how many distinct examples'));
+      expect(lecture, contains('likely fill-in evidence in audio order'));
+      expect(lecture, contains('True/False danger point'));
+      expect(lecture, contains('中国（China）'));
       expect(lecture, contains('Output no blank lines anywhere'));
-      expect(lecture, contains('English-first'));
       expect(lecture, contains('━━━━━━━━━━━━'));
-      expect(lecture, contains('every distinct case'));
+      expect(lecture, contains('Do not omit an example'));
       expect(lecture, isNot(contains('One-Screen Quick View')));
 
       final directGeminiShorthand = PromptProvider.getFinalReviewPrompt(

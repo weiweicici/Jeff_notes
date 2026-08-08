@@ -65,6 +65,45 @@ bool supportsEnglishDictationDocument(String filePath) {
       fileName.startsWith('Jeff_Grammar_');
 }
 
+@visibleForTesting
+bool supportsListeningChineseDictationDocument(
+  String filePath,
+  String fullText,
+) {
+  final fileName = filePath.split('/').last;
+  return fileName.startsWith('Jeff_速记_') || fullText.contains('【全篇逻辑播报·可播放】');
+}
+
+/// Extracts the two TTS-first exam shorthand blocks and deliberately stops
+/// before the appended transcripts. The student hears the logical lecture map
+/// and exam evidence instead of a second full reading of the raw transcript.
+@visibleForTesting
+String extractListeningShorthandNarration(String fullText) {
+  final lines = fullText.split('\n');
+  final start = lines.indexWhere(
+    (line) => line.trim().contains('【全篇逻辑播报·可播放】'),
+  );
+  if (start < 0) return '';
+
+  final captured = <String>[];
+  for (var index = start + 1; index < lines.length; index++) {
+    final line = lines[index].trim();
+    if (line.contains('【中文全文】') ||
+        line.contains('【英文全文】') ||
+        line.contains('Chinese Transcript') ||
+        line.contains('English Transcript')) {
+      break;
+    }
+    if (line.isEmpty || RegExp(r'^[━─—\-=]+$').hasMatch(line)) continue;
+    if (line.contains('【答题重点与危险位置·可播放】')) {
+      captured.add('第二部分，答题重点与危险位置。');
+      continue;
+    }
+    captured.add(line);
+  }
+  return captured.join('\n\n').trim();
+}
+
 class NoteDetailScreen extends StatefulWidget {
   final File file;
   final bool autoPlayEnglish;
@@ -95,6 +134,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   bool _readerPreferencesLoaded = false;
   bool _readingPositionRestored = false;
   bool _englishAutoPlayScheduled = false;
+  bool _listeningChineseAutoPlayScheduled = false;
   late final TimedExpansionController _playerPanel;
   late RecordingProvider _recordingProvider;
 
@@ -249,6 +289,9 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   /// 策略 2：FreeTalk 模式 — 第一个 \n\n 之前的内容（中文块在前）
   /// 策略 3：兜底 — 提取含 >=3 个汉字的行
   String _extractChineseOnly(String fullText) {
+    final shorthandNarration = extractListeningShorthandNarration(fullText);
+    if (shorthandNarration.isNotEmpty) return shorthandNarration;
+
     final lines = fullText.split('\n');
     bool inChineseSection = false;
     final capturedLines = <String>[];
@@ -399,24 +442,77 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
     return purelyEnglishLines.join('\n\n');
   }
 
-  void _scheduleEnglishAutoPlay() {
+  void _scheduleEnglishAutoPlay(String fullText) {
     if (!widget.autoPlayEnglish || _englishAutoPlayScheduled) return;
     final englishText = _englishOnlyText?.trim() ?? '';
     if (englishText.isEmpty) return;
 
     _englishAutoPlayScheduled = true;
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) unawaited(_autoPlayEnglish(englishText));
+      if (mounted) unawaited(_autoPlayEnglish(englishText, fullText));
     });
   }
 
-  Future<void> _autoPlayEnglish(String englishText) async {
+  void _scheduleListeningChineseAutoPlay(String fullText) {
+    if (_listeningChineseAutoPlayScheduled ||
+        !supportsListeningChineseDictationDocument(
+          widget.file.path,
+          fullText,
+        )) {
+      return;
+    }
+    final chineseText = _chineseOnlyText?.trim() ?? '';
+    if (chineseText.isEmpty) return;
+
+    _listeningChineseAutoPlayScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) {
+        unawaited(_autoPlayListeningChinese(chineseText, fullText));
+      }
+    });
+  }
+
+  Future<void> _autoPlayListeningChinese(
+    String chineseText,
+    String fullText,
+  ) async {
     final tts = TtsService();
     try {
-      await tts.startEnglishDictation(
+      await tts.setLoopMode(
+        TtsService.generatedDocumentDictationLoopEnabledByDefault,
+      );
+      await tts.startListeningChineseDictation(
+        chineseText,
+        sourceMarkdown: fullText,
+        watchTitle: widget.file.uri.pathSegments.last,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      final message =
+          error.toString().contains('NoHeadphones') ||
+              error.toString().contains('Unsafe audio route')
+          ? '⚠️ 听力总结已生成；连接耳机后点击播放即可开始速记'
+          : '中文速记自动播放失败：$error';
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          backgroundColor: Colors.orange,
+          duration: const Duration(seconds: 5),
+        ),
+      );
+    }
+  }
+
+  Future<void> _autoPlayEnglish(String englishText, String fullText) async {
+    final tts = TtsService();
+    try {
+      await tts.setLoopMode(
+        TtsService.generatedDocumentDictationLoopEnabledByDefault,
+      );
+      await tts.startGeneratedDocumentDictation(
         englishText,
-        geminiKey: _recordingProvider.geminiKey,
-        siliconFlowKey: _recordingProvider.siliconFlowKey,
+        sourceMarkdown: fullText,
+        watchTitle: widget.file.uri.pathSegments.last,
       );
     } catch (error) {
       if (!mounted) return;
@@ -793,7 +889,8 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
             _chineseOnlyText = _extractChineseOnly(currentContent);
             _englishOnlyText = _extractEnglishOnly(currentContent);
             _lastLoadedContent = currentContent;
-            _scheduleEnglishAutoPlay();
+            _scheduleEnglishAutoPlay(currentContent);
+            _scheduleListeningChineseAutoPlay(currentContent);
           }
           final allParagraphs = currentContent
               .split(RegExp(r'\n{2,}'))
@@ -896,9 +993,16 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
                   enableEnglishDictation: supportsEnglishDictationDocument(
                     widget.file.path,
                   ),
-                  siliconFlowKey: context
+                  enableChineseDictation:
+                      supportsListeningChineseDictationDocument(
+                        widget.file.path,
+                        currentContent,
+                      ),
+                  sourceMarkdown: currentContent,
+                  documentTitle: widget.file.uri.pathSegments.last,
+                  openRouterKey: context
                       .read<RecordingProvider>()
-                      .siliconFlowKey,
+                      .openRouterKey,
                 ),
               ],
               Container(

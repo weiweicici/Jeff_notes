@@ -167,33 +167,27 @@ void main() {
     });
   });
 
-  group('Preset topic search', () {
-    test('searches all preset topics in English and Chinese', () {
-      expect(presetTopicCount, greaterThan(40));
+  group('Essay topic selection', () {
+    const fallback = PresetTopic(
+      topic: 'Preset topic that must not override typing',
+      chineseLabel: '预设题目',
+    );
+
+    test('typed input always wins over the selected preset', () {
       expect(
-        searchPresetTopics('helmet').first.preset.chineseLabel,
-        '戴头盔 vs 不戴头盔',
-      );
-      expect(
-        searchPresetTopics('头盔').first.preset.topic,
-        contains('bicycle helmets'),
+        resolveEssayTopic(
+          input: 'A new classroom topic outside every preset',
+          fallbackPreset: fallback,
+        ),
+        'A new classroom topic outside every preset',
       );
     });
 
-    test('ranks incomplete assignment wording by matching keywords', () {
+    test('selected preset is used only when input is empty', () {
       expect(
-        searchPresetTopics('subsidy school lunches').first.preset.topic,
-        'Free school lunches vs. Paid school lunches',
+        resolveEssayTopic(input: '   ', fallbackPreset: fallback),
+        fallback.topic,
       );
-      expect(
-        searchPresetTopics('required wear a helmets').first.preset.topic,
-        'Wearing bicycle helmets vs. Not wearing bicycle helmets',
-      );
-    });
-
-    test('empty queries stay available for unrestricted custom input', () {
-      expect(searchPresetTopics(''), isEmpty);
-      expect(searchPresetTopics('a'), isEmpty);
     });
   });
 }

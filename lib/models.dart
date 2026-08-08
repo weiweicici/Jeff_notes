@@ -1,6 +1,6 @@
 export 'models/insight_note.dart';
 
-enum AIProvider { groq, siliconFlow, gemini }
+enum AIProvider { groq, gemini }
 
 enum AppMode { lecture, discussion, freeTalk, exam }
 

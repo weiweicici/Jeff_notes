@@ -9,7 +9,8 @@ class GrammarContent {
         GrammarUnit(
           id: 'unit_1',
           title: 'Unit 1: Simple Present & Present Progressive',
-          outcomes: '''• Describe actions, states, and situations that happen regularly (描述经常发生的动作和状态)
+          outcomes:
+              '''• Describe actions, states, and situations that happen regularly (描述经常发生的动作和状态)
 • Describe actions that are happening now (描述正在发生的动作)
 • Talk about unchanging facts and general truths (谈论不变的事实和普遍真理)''',
           chart: '''## SIMPLE PRESENT — 一般现在时
@@ -112,7 +113,8 @@ class GrammarContent {
         GrammarUnit(
           id: 'unit_2',
           title: 'Unit 2: Simple Past & Past Progressive',
-          outcomes: '''• Describe one past action interrupted by another (描述一个过去动作被另一个打断)
+          outcomes:
+              '''• Describe one past action interrupted by another (描述一个过去动作被另一个打断)
 • Describe two past actions in progress at the same time (描述两个同时进行的过去动作)
 • Show the order of events in a description (展示事件发生的先后顺序)
 • Write about past events (描写过去的事件)''',
@@ -224,8 +226,10 @@ class GrammarContent {
         ),
         GrammarUnit(
           id: 'unit_3',
-          title: 'Unit 3: Simple Past, Present Perfect & Present Perfect Progressive',
-          outcomes: '''• Show that something started in the past and was not completed (表示过去开始但未结束)
+          title:
+              'Unit 3: Simple Past, Present Perfect & Present Perfect Progressive',
+          outcomes:
+              '''• Show that something started in the past and was not completed (表示过去开始但未结束)
 • Show that something happened at an indefinite time in the past (表示过去不确定的时间发生的事)
 • Use for or since to show duration (用 for/since 表示持续时间)
 • Distinguish between finished and unfinished actions (区分已完成和未完成的动作)''',
@@ -341,7 +345,8 @@ class GrammarContent {
         GrammarUnit(
           id: 'unit_4',
           title: 'Unit 4: Past Perfect & Past Perfect Progressive',
-          outcomes: '''• Describe events that happened before a specific time in the past (描述在过去某个时间之前已经发生的事)
+          outcomes:
+              '''• Describe events that happened before a specific time in the past (描述在过去某个时间之前已经发生的事)
 • Show the order of two past events (展示两个过去事件的先后顺序)
 • Use adverbs like already, yet, ever, never with past tenses (使用 already/yet/ever/never 等副词)
 • Write about someone's life and career (描写某人的生平事业)''',
@@ -455,7 +460,8 @@ class GrammarContent {
         GrammarUnit(
           id: 'unit_5',
           title: 'Unit 5: Future & Future Progressive',
-          outcomes: '''• Discuss future facts, predictions, plans, and scheduled events (讨论将来事实、预测、计划和既定安排)
+          outcomes:
+              '''• Discuss future facts, predictions, plans, and scheduled events (讨论将来事实、预测、计划和既定安排)
 • Describe events that will be in progress at a specific time in the future (描述将来某个时间点正在进行的动作)
 • Identify key details in a reading or recording (识别阅读或录音中的关键细节)
 • Discuss life in the future (讨论未来的生活)
@@ -596,7 +602,8 @@ class GrammarContent {
         GrammarUnit(
           id: 'unit_6',
           title: 'Unit 6: Future Perfect & Future Perfect Progressive',
-          outcomes: '''• Describe events that will happen, or be in progress, before a specific time in the future (描述将来某时间之前会完成或持续进行的动作)
+          outcomes:
+              '''• Describe events that will happen, or be in progress, before a specific time in the future (描述将来某时间之前会完成或持续进行的动作)
 • Show the order of two future events using adverbs and expressions with **by** (用副词和 **by** 短语表示两个将来事件的顺序)
 • Identify specific information in a business article and a conversation (识别商业文章和对话中的具体信息)
 • Discuss future goals and aspirations (讨论将来的目标和志向)
@@ -734,41 +741,18 @@ class GrammarContent {
     ),
     GrammarPart(
       id: 'part_3',
-      title: 'Part 3: 否定疑问句、反义疑问句 & 补充表达 (Negative Questions, Tag Questions, Additions)',
+      title: 'Part 3: 反义疑问句 & 补充表达 (Tag Questions & Additions)',
       units: [
         GrammarUnit(
           id: 'unit_7',
-          title: 'Unit 7: Negative Yes/No Questions & Tag Questions',
-          outcomes: '''• Check information or comment on a situation using negative yes/no questions or tag questions (用否定疑问句或反义疑问句核实信息或发表评论)
-• Identify key details in interview transcripts and recorded interviews (识别采访记录和录音中的关键细节)
-• Interview a classmate, asking questions and checking information (采访同学，提问并核实信息)
-• Discuss details about cities around the world (讨论世界各地的城市细节)
-• Write an interview transcript including questions and answers (撰写含问答的采访稿)''',
-          chart: '''## NEGATIVE YES/NO QUESTIONS — 否定疑问句
+          title: 'Unit 7: Tag Questions — 反义疑问句',
+          outcomes:
+              '''• Use tag questions to check information or invite agreement（用反义疑问句核实信息或寻求认同）
+• Match the tag with the statement's auxiliary verb and subject（让反问尾与陈述句的助动词、主语对应）
+• Use positive statements with negative tags, and negative statements with positive tags（掌握正陈述配否定反问尾、否定陈述配肯定反问尾）''',
+          chart: '''## TAG QUESTIONS — 反义疑问句
 
-### With Be as Main Verb
-| 问句 | 肯定回答 | 否定回答 |
-|---|---|---|
-| **Aren't** you from Rio? | Yes, I **am**. | No, I'm **not**. |
-
-### With Auxiliary Verbs (have, will, can, etc.)
-| 问句 | 肯定回答 | 否定回答 |
-|---|---|---|
-| **Aren't** you **moving**? | Yes, I **am**. | No, I'm **not**. |
-| **Hasn't** he **been** here before? | Yes, he **has**. | No, he **hasn't**. |
-| **Can't** they **move** tomorrow? | Yes, they **can**. | No, they **can't**. |
-
-### With Do as Auxiliary
-| 问句 | 肯定回答 | 否定回答 |
-|---|---|---|
-| **Doesn't** he **live** here? | Yes, he **does**. | No, he **doesn't**. |
-| **Didn't** they **move** last year? | Yes, they **did**. | No, they **didn't**. |
-
----
-
-## TAG QUESTIONS — 反义疑问句
-
-### With Be as Main Verb
+### 基本结构
 | 陈述句 | 反问尾 |
 |---|---|
 | You're from Rio, | **aren't** you? |
@@ -790,17 +774,9 @@ class GrammarContent {
 | They moved last year, | **didn't** they? |
 | He doesn't live here, | **does** he? |
 | They didn't move, | **did** they? |''',
-          chineseGuide: '''## 中文对比解析
+          chineseGuide: '''## 中文解析
 
-### 否定疑问句 — "难道不是…吗？"
-- 用于核实你**认为正确**的信息，或对某个情况发表评论
-  > **Doesn't** Anton live in Seoul?（你相信 Anton 住在首尔，只是想确认）
-  > **Isn't** it a nice day?（你在评论天气好，期待对方同意）
-- 与一般疑问句的区别：
-  - 一般疑问句：你**不知道**答案 → Do you work here?
-  - 否定疑问句：你**有猜测**想核实 → Don't you work here?
-
-### 反义疑问句 — "…，对吗？"
+### 反义疑问句 — “……，对吗？”
 - 结构：陈述句 + 简短反问尾
 - 陈述句肯定 → 反问尾否定 / 陈述句否定 → 反问尾肯定
   > You're Paul Logan, **aren't** you?
@@ -826,38 +802,23 @@ class GrammarContent {
 - 升调：真的想确认信息（期待对方回答）
 - 降调：只是评论，期待对方同意
   > You're **not** moving, **are** you?↗（确认信息）
-  > Seoul is interesting, **isn't** it?↘（评论求认同）
-
-### 否定疑问句必须用缩略形式
-> Isn't Caracas the capital?（不是 Is not Caracas...?）''',
+  > Seoul is interesting, **isn't** it?↘（评论求认同）''',
           keyRules: '''## 核心规则
 
-### 1️⃣ 否定疑问句
-- 用否定疑问句核实你相信为真的信息，或评论当前情况
-- 几乎总是用缩略形式（Isn't, Don't, Can't 等）
-- I 的否定疑问用 **Aren't I**，不是 Amn't I
-
-### 2️⃣ 反义疑问句
+### 反义疑问句
 - 陈述肯定 + 反问否定 / 陈述否定 + 反问肯定
 - 反问尾用陈述句中同样的 be/助动词/情态动词；没有则用 do
 - 主语是名词 → 反问尾用代词（Tom → he）
 - this/that → 反问尾用 it
 - there → 反问尾用 there
-- never, rarely, seldom 等否定副词 → 反问尾用肯定
-
-### 3️⃣ 回答否定疑问句和反义疑问句
-- 信息正确回答 Yes，不正确回答 No（与中文习惯相反）
-  > A: Don't you work in Vancouver? B: Yes, I do.（是的，我在温哥华工作）
-  > A: You work in Vancouver, don't you? B: No, I don't.（不，我在蒙特利尔工作）''',
+- never, rarely, seldom 等否定副词 → 反问尾用肯定''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| **Is not** Caracas the capital? | **Isn't** Caracas the capital? | 否定疑问句必须用缩略形式 |
-| Caracas is the capital, **is it not**? | Caracas is the capital, **isn't it**? | 反问尾也必须用缩略形式 |
 | The city is beautiful, **isn't the city**? | The city is beautiful, **isn't it**? | 反问尾不用名词，用代词 |
 | You have been here since 2016, **aren't you**? | You have been here since 2016, **haven't you**? | 反问尾用与陈述句相同的助动词 |
-| **Amn't** I right? | **Aren't** I right? | I 的否定疑问用 aren't，不是 amn't |
+| **Amn't** I right? | **Aren't** I right? | I 的反问尾用 aren't，不是 amn't |
 | You've never been to Istanbul, **haven't you**? | You've never been to Istanbul, **have you**? | never 含否定义，反问用肯定 |
 | That's a good idea, **isn't that**? | That's a good idea, **isn't it**? | that → 反问用 it |
 | There are good schools here, **isn't there**? | There are good schools here, **aren't there**? | there 作主语 → 反问也用 there（复数用 aren't）|''',
@@ -878,8 +839,10 @@ class GrammarContent {
         ),
         GrammarUnit(
           id: 'unit_8',
-          title: 'Unit 8: Additions & Responses (So, Too, Neither, Not Either, But)',
-          outcomes: '''• Show similarity using **so, too, neither, or not either**, and show difference using **but**（用 so/too/neither/not either 表示相似，用 but 表示不同）
+          title:
+              'Unit 8: Additions & Responses (So, Too, Neither, Not Either, But)',
+          outcomes:
+              '''• Show similarity using **so, too, neither, or not either**, and show difference using **but**（用 so/too/neither/not either 表示相似，用 but 表示不同）
 • Identify key details in an article on a scientific topic and in a conversation (识别科学文章和对话中的关键细节)
 • Discuss similarities and differences between two people (讨论两个人的异同)
 • Research a pair of twins and report findings (研究一对双胞胎并报告发现)
@@ -1097,12 +1060,14 @@ class GrammarContent {
     ),
     GrammarPart(
       id: 'part_4',
-      title: 'Part 4: 动名词、不定式 & 使役动词、短语动词 (Gerunds, Infinitives, Causatives & Phrasal Verbs)',
+      title:
+          'Part 4: 动名词、不定式 & 使役动词、短语动词 (Gerunds, Infinitives, Causatives & Phrasal Verbs)',
       units: [
         GrammarUnit(
           id: 'unit_9',
           title: 'Unit 9: Gerunds & Infinitives',
-          outcomes: '''• Discuss activities or make general statements using gerunds or infinitives (用动名词或不定式讨论活动、做一般性陈述)
+          outcomes:
+              '''• Discuss activities or make general statements using gerunds or infinitives (用动名词或不定式讨论活动、做一般性陈述)
 • Explain the purpose of an action using an infinitive (用不定式解释一个动作的目的)
 • Identify key details in a social science article and in a conversation (识别社会科学文章和对话中的关键细节)
 • Discuss food and fast-food restaurants (讨论食物和快餐店)
@@ -1236,7 +1201,8 @@ A: Why does he order fast food? B: **To save** time.
         GrammarUnit(
           id: 'unit_10',
           title: 'Unit 10: Make, Have, Let, Help & Get',
-          outcomes: '''• Describe how someone forces, causes, persuades, or allows someone else to do things (描述某人强迫、促使、说服或允许他人做某事)
+          outcomes:
+              '''• Describe how someone forces, causes, persuades, or allows someone else to do things (描述某人强迫、促使、说服或允许他人做某事)
 • Describe how someone makes things easier for someone else (描述某人如何让某事对他/她人更容易)
 • Identify key information in an opinion article and in a conversation (识别观点文章和对话中的关键信息)
 • Describe how someone has influenced one's life (描述某人如何影响了自己的生活)
@@ -1332,7 +1298,8 @@ A: Why does he order fast food? B: **To save** time.
         GrammarUnit(
           id: 'unit_11',
           title: 'Unit 11: Phrasal Verbs',
-          outcomes: '''• Use phrasal verbs correctly in conversation and writing (在口语和写作中正确使用短语动词)
+          outcomes:
+              '''• Use phrasal verbs correctly in conversation and writing (在口语和写作中正确使用短语动词)
 • Distinguish between separable, inseparable, and intransitive phrasal verbs (区分可分、不可分和不及物短语动词)
 • Identify key details in an article about telemarketing (识别关于电话销售文章中的关键细节)
 • Discuss junk mail and telephone sales tactics (讨论垃圾邮件和电话销售策略)
@@ -1469,8 +1436,10 @@ A: Why does he order fast food? B: **To save** time.
       units: [
         GrammarUnit(
           id: 'unit_12',
-          title: 'Unit 12: Adjective Clauses with Subject Relative Pronouns (who, which, that, whose)',
-          outcomes: '''• Identify or give additional information about people, places, or things using adjective clauses with correct subject relative pronouns (用正确的主语关系代词识别或补充人/物/地点的信息)
+          title:
+              'Unit 12: Adjective Clauses with Subject Relative Pronouns (who, which, that, whose)',
+          outcomes:
+              '''• Identify or give additional information about people, places, or things using adjective clauses with correct subject relative pronouns (用正确的主语关系代词识别或补充人/物/地点的信息)
 • Identify personality types in a psychology article and in a conversation (识别心理学文章和对话中的人格类型)
 • Take a personality quiz and discuss the results (做人格测试并讨论结果)
 • Write about the qualities of a good friend (描写好朋友的品质)''',
@@ -1596,8 +1565,10 @@ A: Why does he order fast food? B: **To save** time.
         ),
         GrammarUnit(
           id: 'unit_13',
-          title: 'Unit 13: Adjective Clauses with Object Relative Pronouns & Where/When',
-          outcomes: '''• Identify or give additional information about people, places, or things using adjective clauses with correct object relative pronouns and where/when (用正确的宾语关系代词及 where/when 识别或补充信息)
+          title:
+              'Unit 13: Adjective Clauses with Object Relative Pronouns & Where/When',
+          outcomes:
+              '''• Identify or give additional information about people, places, or things using adjective clauses with correct object relative pronouns and where/when (用正确的宾语关系代词及 where/when 识别或补充信息)
 • Identify key details in an online book review and in a conversation (识别在线书评和对话中的关键细节)
 • Describe your hometown or city (描述你的家乡或城市)
 • Write about a memorable place in a person's life (描写人一生中难忘的地方)''',
@@ -1709,7 +1680,8 @@ A: Why does he order fast food? B: **To save** time.
         GrammarUnit(
           id: 'unit_14',
           title: 'Unit 14: Modals & Similar Expressions',
-          outcomes: '''• Express ability, possibility, advice, necessity, prohibition, conclusions, or future possibility with a range of modals (用情态动词表达能力、可能性、建议、必要性、禁止、结论和将来可能性)
+          outcomes:
+              '''• Express ability, possibility, advice, necessity, prohibition, conclusions, or future possibility with a range of modals (用情态动词表达能力、可能性、建议、必要性、禁止、结论和将来可能性)
 • Identify key information in a social science article (识别社会科学文章中的关键信息)
 • Discuss social networking, giving opinions (讨论社交网络并表达观点)
 • Write a blog entry about one's plans for the near future (写一篇关于近期计划的博客)''',
@@ -1829,8 +1801,10 @@ A: Why does he order fast food? B: **To save** time.
         ),
         GrammarUnit(
           id: 'unit_15',
-          title: 'Unit 15: Advisability in the Past (Should Have, Could Have, Might Have)',
-          outcomes: '''• Express past advisability, regret, or criticism with past modals (用过去情态动词表达过去的可取做法、后悔或批评)
+          title:
+              'Unit 15: Advisability in the Past (Should Have, Could Have, Might Have)',
+          outcomes:
+              '''• Express past advisability, regret, or criticism with past modals (用过去情态动词表达过去的可取做法、后悔或批评)
 • Identify people's opinions in a psychology article (识别心理学文章中人们的观点)
 • Discuss past situations and decide what people should or should not have done (讨论过去的情况，判断别人应该或不应该做什么)
 • Write about a past problem and what one should or should not have done (描写一个过去的问题及该怎么做)''',
@@ -1923,8 +1897,10 @@ A: Why does he order fast food? B: **To save** time.
         ),
         GrammarUnit(
           id: 'unit_16',
-          title: 'Unit 16: Speculations About the Past (May Have, Might Have, Could Have, Must Have)',
-          outcomes: '''• Speculate about past events, expressing possible or probable conclusions (推测过去事件，表达可能或很可能得出的结论)
+          title:
+              'Unit 16: Speculations About the Past (May Have, Might Have, Could Have, Must Have)',
+          outcomes:
+              '''• Speculate about past events, expressing possible or probable conclusions (推测过去事件，表达可能或很可能得出的结论)
 • Draw conclusions based on the information in an article about archaeology (根据考古文章中的信息得出结论)
 • Identify key details in a conversation and draw conclusions (识别对话中的关键细节并得出结论)
 • Discuss ancient objects and historical facts, and speculate about them (讨论古代物品和历史事实并进行推测)
@@ -2083,7 +2059,7 @@ A: Why does he order fast food? B: **To save** time.
 | action | n. | 动作 |
 | focus | n. | 焦点，重点 |''',
         ),
-                GrammarUnit(
+        GrammarUnit(
           id: 'unit_18',
           title: 'Unit 18: Passive with Modals — 带情态动词的被动',
           outcomes: '''## Passive with Modals
@@ -2194,150 +2170,141 @@ A: Why does he order fast food? B: **To save** time.
       units: [
         GrammarUnit(
           id: 'unit_20',
-          title: 'Unit 20: First Conditional — 条件句 1',
-          outcomes: '''## First Conditional
-**If + 一般现在时，will + 动词原形**
-将来很有可能发生｜真实时态，不用 were
+          title: 'Unit 20: Present Real Conditional Sentences — 现在真实条件句',
+          outcomes: '''## Present Real Conditional Sentences
+**If / when + 一般现在时，主句 + 一般现在时**
+描述经常发生的事实、习惯、规则或自然结果。
 
-**Eg.** If it rains tomorrow, we will stay home.''',
-          chart: '''## First Conditional — 结构
+**Eg.** If people exercise regularly, they feel better.''',
+          chart: '''## Present Real Conditional — 结构
 
 | If 从句 | 结果从句 | 含义 |
 |---|---|---|
-| If + 一般现在时 | will + 动词原形 | 将来很有可能发生 |
+| If / when + 一般现在时 | 一般现在时 | 经常发生的真实结果 |
+
+**Eg.**
+> If people exercise regularly, they feel better.
+> If water reaches 0°C, it freezes.
+> When I have time, I call my family.''',
+          chineseGuide: '''## Present Real Conditional — 中文解析
+
+表示现在或平时真实、反复发生的条件和结果，不是在假设不可能的事。
+
+- if / when 从句和主句通常都用一般现在时。
+- 常用于规则、习惯、科学事实和一般建议。
+- 不用 would；也不用过去式 were。
+
+> If people exercise regularly, they feel better.
+> 如果人们经常锻炼，他们感觉会更好。''',
+          keyRules: '''## 核心规则
+
+- 结构：**If / when + 一般现在时，主句 + 一般现在时**
+- 用于事实、规律、习惯、说明和真实结果。
+- if 从句里不用 will；整个句子不使用 would。''',
+          commonMistakes: '''## 常见错误
+
+| ❌ 错误 | ✅ 正确 | 说明 |
+|---|---|---|
+| If people exercise, they **will feel** better. | If people exercise, they **feel** better. | 现在真实条件句主句也用一般现在时 |
+| If water **will reach** 0°C, it freezes. | If water **reaches** 0°C, it freezes. | if 从句不用 will |''',
+          vocabulary: '''| 词汇 | 词性 | 中文 |
+|---|---|---|---|
+| conditional | adj. | 条件的 |
+| real condition | n. | 真实条件 |
+| result | n. | 结果 |
+| regularly | adv. | 经常地 |''',
+        ),
+        GrammarUnit(
+          id: 'unit_21',
+          title: 'Unit 21: Future Real Conditional Sentences — 将来真实条件句',
+          outcomes: '''## Future Real Conditional Sentences
+**If + 一般现在时，will / can / may + 动词原形**
+描述将来可能发生的真实条件和结果。
+
+**Eg.** If it rains tomorrow, we will stay home.''',
+          chart: '''## Future Real Conditional — 结构
+
+| If 从句 | 结果从句 | 含义 |
+|---|---|---|
+| If + 一般现在时 | will / can / may + 动词原形 | 将来可能发生的真实结果 |
 
 **Eg.**
 > If it rains tomorrow, we will stay home.
-> If you study hard, you will pass the exam.
-> If she calls me, I will tell her.''',
-          chineseGuide: '''## First Conditional — 中文解析
+> If you study tonight, you can take the test tomorrow.
+> If she calls, I may tell her.''',
+          chineseGuide: '''## Future Real Conditional — 中文解析
 
-**If + 一般现在时，will + 动词原形**
-表示将来**很有可能发生**的事情。
+表示将来有可能发生的真实情况。
 
-- If 从句用一般现在时（不用将来时）
-- 这是**真实时态**，不用 were
-- 结果从句用 will + 动词原形
+- if 从句虽然说未来，仍使用一般现在时。
+- 结果从句可以用 will、can、may 等情态动词。
+- 不用 would，也不用过去式 were。
 
 > If it rains tomorrow, we will stay home.
 > 如果明天下雨，我们就待在家。''',
           keyRules: '''## 核心规则
 
-- If 从句：**一般现在时**
-- 结果从句：**will + 动词原形**
-- 含义：将来很有可能发生
-- 真实时态，不用 were''',
+- If 从句：**一般现在时**，不用 will。
+- 结果从句：**will / can / may + 动词原形**。
+- 含义：将来真实、可能发生的条件。''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| If it **will rain** tomorrow, we will stay home. | If it **rains** tomorrow, we will stay home. | if 从句用一般现在时，不用 will |
-| If I **were** free, I will come. | If I **am** free, I will come. | 真实条件句用 am，不用 were |''',
+| If it **will rain** tomorrow, we will stay home. | If it **rains** tomorrow, we will stay home. | if 从句不用 will |
+| If I **were** free tomorrow, I will come. | If I **am** free tomorrow, I will come. | 真实条件句不用 were |''',
           vocabulary: '''| 词汇 | 词性 | 中文 |
 |---|---|---|---|
-| conditional | adj. | 条件的 |
-| real condition | n. | 真实条件 |
-| likely | adj. | 可能的 |''',
+| future | n./adj. | 将来（的）|
+| likely | adj. | 可能的 |
+| result | n. | 结果 |''',
         ),
         GrammarUnit(
-          id: 'unit_21',
-          title: 'Unit 21: Second Conditional — 条件句 2',
-          outcomes: '''## Second Conditional
-**If + 一般过去时，would/could + 动词原形**
-与现在、将来事实相反（虚拟）
-be 动词一律用 were（考试标准写法）
+          id: 'unit_22',
+          title:
+              'Unit 22: Present & Future Unreal Conditional Sentences — 现在与将来非真实条件句',
+          outcomes: '''## Present & Future Unreal Conditional Sentences
+**If + 一般过去时，would / could + 动词原形**
+表达与现在或将来事实相反的假设。
 
-**Eg.** If I were you, I would wait.
-**Eg.** If it were warmer, we could go out.''',
-          chart: '''## Second Conditional — 结构
+**Eg.** If I were you, I would wait.''',
+          chart: '''## Present & Future Unreal Conditional — 结构
 
 | If 从句 | 结果从句 | 含义 |
 |---|---|---|
-| If + 一般过去时 | would/could + 动词原形 | 与现在/将来事实相反 |
+| If + 一般过去时 | would / could + 动词原形 | 与现在或将来事实相反 |
 
 **Eg.**
 > If I were you, I would wait.
 > If it were warmer, we could go out.
 > If she knew the answer, she would tell us.''',
-          chineseGuide: '''## Second Conditional — 中文解析
+          chineseGuide: '''## Present & Future Unreal Conditional — 中文解析
 
-**If + 一般过去时，would/could + 动词原形**
-表示与现在或将来事实**相反**（虚拟语气）。
+表示与现在或将来事实相反的假设。
 
-- be 动词一律用 **were**（考试标准写法）
-- If I **were** you, ...（不是 was）
-- If it **were** warmer, ...
+- if 从句用一般过去时；be 动词考试中统一使用 **were**。
+- 结果从句用 would / could + 动词原形。
+- 不表达过去遗憾；过去非真实条件句不属于这次考试范围。
 
 > If I were you, I would wait.
-> 如果我是你，我会等。（事实：我不是你）
-
-> If it were warmer, we could go out.
-> 如果天气暖和一点，我们就能出去了。（事实：天气不暖和）''',
+> 如果我是你，我会等。（事实：我不是你）''',
           keyRules: '''## 核心规则
 
-- If 从句：**一般过去时**
-- 结果从句：**would/could + 动词原形**
-- 含义：与现在/将来事实相反（虚拟）
-- be 动词一律用 **were**（标准写法）''',
+- If 从句：**一般过去时**。
+- 结果从句：**would / could + 动词原形**。
+- be 动词一律优先用 **were**。
+- if 从句不用 would。''',
           commonMistakes: '''## 常见错误
 
 | ❌ 错误 | ✅ 正确 | 说明 |
 |---|---|---|
-| If I **was** you, I would wait. | If I **were** you, I would wait. | 虚拟语气中一律用 were |
+| If I **was** you, I would wait. | If I **were** you, I would wait. | 虚拟语气中考试优先用 were |
 | If I **would have** time, I would help. | If I **had** time, I would help. | if 从句用过去时，不用 would |''',
           vocabulary: '''| 词汇 | 词性 | 中文 |
 |---|---|---|---|
 | unreal | adj. | 虚拟的，不真实的 |
 | hypothetical | adj. | 假设的 |
 | imagine | v. | 想象 |''',
-        ),
-        GrammarUnit(
-          id: 'unit_22',
-          title: 'Unit 22: Third Conditional — 条件句 3',
-          outcomes: '''## Third Conditional
-**If + had done，would/could + have done**
-与过去事实相反，假想、遗憾
-
-**Eg.** If I had studied harder, I would have passed.''',
-          chart: '''## Third Conditional — 结构
-
-| If 从句 | 结果从句 | 含义 |
-|---|---|---|
-| If + had done | would/could + have done | 与过去事实相反 |
-
-**Eg.**
-> If I had studied harder, I would have passed.
-> If she had left earlier, she wouldn't have missed the bus.
-> If we had known, we could have helped.''',
-          chineseGuide: '''## Third Conditional — 中文解析
-
-**If + had done，would/could + have done**
-表示与过去事实**相反**，表达假想或遗憾。
-
-> If I had studied harder, I would have passed.
-> 如果我当时更努力学习，我就考过了。
-> （事实：我没努力学，也没考过）
-
-> If she had left earlier, she wouldn't have missed the bus.
-> 如果她早点走，就不会错过公交车了。
-> （事实：她没早点走，错过了）''',
-          keyRules: '''## 核心规则
-
-- If 从句：**had + 过去分词**
-- 结果从句：**would/could + have + 过去分词**
-- 含义：与过去事实相反（假想、遗憾）
-- if 从句不用 would：❌ If I would have known...''',
-          commonMistakes: '''## 常见错误
-
-| ❌ 错误 | ✅ 正确 | 说明 |
-|---|---|---|
-| If I **would have known**, I would have told you. | If I **had known**, I would have told you. | if 从句用 had + 过去分词 |
-| If she had left earlier, she **wouldn't miss** the bus. | If she had left earlier, she **wouldn't have missed** the bus. | 结果从句用 would have + 过去分词 |''',
-          vocabulary: '''| 词汇 | 词性 | 中文 |
-|---|---|---|---|
-| regret | n./v. | 后悔 |
-| suppose | v. | 假设 |
-| outcome | n. | 结果 |''',
         ),
         GrammarUnit(
           id: 'unit_23',
@@ -2407,7 +2374,8 @@ be 动词一律用 were（考试标准写法）
         GrammarUnit(
           id: 'unit_24',
           title: 'Unit 24: Direct & Indirect Speech (Say, Tell, Ask)',
-          outcomes: '''• Report what others said, using direct or indirect speech (用直接或间接引语转述他人说的话)
+          outcomes:
+              '''• Report what others said, using direct or indirect speech (用直接或间接引语转述他人说的话)
 • Identify key information in a social science article (识别社会科学文章中的关键信息)
 • Discuss lying and telling the truth (讨论说谎与说实话)
 • Discuss and interpret literary quotes and international proverbs (讨论并诠释文学作品中的引语和国际谚语)
@@ -2524,8 +2492,10 @@ be 动词一律用 were（考试标准写法）
         ),
         GrammarUnit(
           id: 'unit_25',
-          title: 'Unit 25: Indirect Speech with Tense Changes & Time-Word Changes',
-          outcomes: '''• Report other people's statements using indirect speech with necessary tense and time-word changes (用时态和时间词变化转述他人的话)
+          title:
+              'Unit 25: Indirect Speech with Tense Changes & Time-Word Changes',
+          outcomes:
+              '''• Report other people's statements using indirect speech with necessary tense and time-word changes (用时态和时间词变化转述他人的话)
 • Match quotations with speakers (将引语与说话者匹配)
 • Identify specific information in a conversation (识别对话中的具体信息)
 • Discuss extreme weather events and report other people's statements (讨论极端天气并转述他人的话)
@@ -2609,8 +2579,10 @@ be 动词一律用 were（考试标准写法）
         ),
         GrammarUnit(
           id: 'unit_26',
-          title: 'Unit 26: Indirect Instructions, Commands, Advice, Requests & Invitations',
-          outcomes: '''• Report other people's instructions, commands, advice, requests, and invitations (转述他人的指示、命令、建议、请求和邀请)
+          title:
+              'Unit 26: Indirect Instructions, Commands, Advice, Requests & Invitations',
+          outcomes:
+              '''• Report other people's instructions, commands, advice, requests, and invitations (转述他人的指示、命令、建议、请求和邀请)
 • Identify specific information in an interview transcript (识别采访记录中的具体信息)
 • Identify medical advice reported in a conversation (识别对话中转述的医疗建议)
 • Discuss health issues and possible home remedies (讨论健康问题和家庭疗法)
@@ -2709,7 +2681,8 @@ be 动词一律用 were（考试标准写法）
         GrammarUnit(
           id: 'unit_27',
           title: 'Unit 27: Indirect Questions',
-          outcomes: '''• Report other people's questions using indirect speech (用间接引语转述他人的问题)
+          outcomes:
+              '''• Report other people's questions using indirect speech (用间接引语转述他人的问题)
 • Identify specific information in a business article (识别商业文章中的具体信息)
 • Role-play and discuss a job interview (角色扮演并讨论求职面试)
 • Complete a questionnaire about work values and report conversations (完成关于工作价值观的问卷并转述对话)
@@ -2812,7 +2785,8 @@ be 动词一律用 were（考试标准写法）
         GrammarUnit(
           id: 'unit_28',
           title: 'Unit 28: Embedded Questions',
-          outcomes: '''• Ask for information or express something you don't know, using embedded questions (用嵌入问句询问信息或表达不知道的事)
+          outcomes:
+              '''• Ask for information or express something you don't know, using embedded questions (用嵌入问句询问信息或表达不知道的事)
 • Extract key information from an interview transcript (从采访记录中提取关键信息)
 • Identify and discuss details in a call-in radio show (识别并讨论电台热线节目中的细节)
 • Discuss tipping around the world, giving opinions (讨论世界各地的给小费习惯，表达观点)

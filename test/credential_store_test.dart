@@ -42,24 +42,18 @@ void main() {
       '2. Migrate legacy SharedPreferences keys to secure storage',
       () async {
         SharedPreferences.setMockInitialValues({
-          'api_key_siliconflow': 'sk_legacy_silicon',
           'gemini_api_key': 'AIza_legacy_gemini',
         });
 
         await CredentialStore.instance.migrateFromSharedPreferences();
 
-        final siliconVal = await CredentialStore.instance.readKey(
-          CredentialStore.keySiliconFlow,
-        );
         final geminiVal = await CredentialStore.instance.readKey(
           CredentialStore.keyGemini,
         );
 
-        expect(siliconVal, 'sk_legacy_silicon');
         expect(geminiVal, 'AIza_legacy_gemini');
 
         final prefs = await SharedPreferences.getInstance();
-        expect(prefs.containsKey('api_key_siliconflow'), isFalse);
         expect(prefs.containsKey('gemini_api_key'), isFalse);
       },
     );

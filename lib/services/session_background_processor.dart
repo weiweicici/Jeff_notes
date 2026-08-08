@@ -289,39 +289,9 @@ class SessionBackgroundProcessor {
   }) async {
     Object? primaryError;
     final primary = ctx.translationService;
-    if (primary != null) {
-      try {
-        final result = await primary.summarize(
-          material,
-          strategy: PromptStrategy.recap,
-          mode: mode,
-          unit: ctx.unit,
-        );
-        if (_isValidGeneratedContent(result, mode: mode)) {
-          return result.trim();
-        }
-        primaryError = StateError(
-          mode == AppMode.lecture
-              ? 'incomplete_shorthand_structure'
-              : 'empty_or_invalid_response',
-        );
-      } catch (error) {
-        primaryError = error;
-      }
-      unawaited(
-        DiagnosticLogService.instance.record(
-          'ai',
-          '${diagnosticName}_primary_failed',
-          sessionId: ctx.sessionId,
-          fields: {'reason': _safeAiFailureCode(primaryError)},
-        ),
-      );
-      debugPrint(
-        '[SessionBGP] $diagnosticName primary failed: '
-        '${_safeAiFailureCode(primaryError)}',
-      );
-    }
-
+    // Gemini is the preferred model for the final study document. Groq is
+    // second for speed, and OpenRouter is wired into fallbackTranslationService
+    // as the paid third layer.
     final geminiResult = await ctx.orchestrator?.generateSummaryWithGemini(
       systemPrompt: PromptProvider.getSystemPrompt(
         PromptStrategy.recap,
@@ -354,6 +324,39 @@ class SessionBackgroundProcessor {
       );
     }
 
+    if (primary != null) {
+      try {
+        final result = await primary.summarize(
+          material,
+          strategy: PromptStrategy.recap,
+          mode: mode,
+          unit: ctx.unit,
+        );
+        if (_isValidGeneratedContent(result, mode: mode)) {
+          return result.trim();
+        }
+        primaryError = StateError(
+          mode == AppMode.lecture
+              ? 'incomplete_shorthand_structure'
+              : 'empty_or_invalid_response',
+        );
+      } catch (error) {
+        primaryError = error;
+      }
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'ai',
+          '${diagnosticName}_primary_failed',
+          sessionId: ctx.sessionId,
+          fields: {'reason': _safeAiFailureCode(primaryError)},
+        ),
+      );
+      debugPrint(
+        '[SessionBGP] $diagnosticName Groq failed: '
+        '${_safeAiFailureCode(primaryError)}',
+      );
+    }
+
     final fallback = ctx.fallbackTranslationService;
     if (fallback != null && !identical(fallback, primary)) {
       try {
@@ -369,7 +372,7 @@ class SessionBackgroundProcessor {
               'ai',
               '${diagnosticName}_recovered',
               sessionId: ctx.sessionId,
-              fields: {'provider': 'siliconflow'},
+              fields: {'provider': 'openrouter'},
             ),
           );
           return result.trim();
@@ -431,18 +434,7 @@ class SessionBackgroundProcessor {
     if (!_isUsableAiContent(content)) return false;
     if (mode != AppMode.lecture) return true;
     final value = content!;
-    final hasAdaptiveNotes =
-        value.contains('【Examples（案例）】') ||
-        value.contains('【Main Points（要点）】') ||
-        value.contains('【Process（流程）】') ||
-        value.contains('【Comparison（对比）】') ||
-        value.contains('【Cause & Effect（因果）】');
-    return value.contains('【30秒理解·可播放】') &&
-        value.contains('【Purpose（目的）】') &&
-        hasAdaptiveNotes &&
-        value.contains('【Conclusion（结论）】') &&
-        value.contains('【二听】') &&
-        value.contains('【符号】');
+    return value.contains('【全篇逻辑播报·可播放】') && value.contains('【答题重点与危险位置·可播放】');
   }
 
   bool _isRetryableAiFailure(Object error) {
@@ -581,15 +573,11 @@ class SessionBackgroundProcessor {
         '[SessionBGP] Shorthand generation unavailable for ${ctx.sessionId}',
       );
       sb
-        ..writeln('【30秒理解·可播放】')
-        ..writeln('AI速记整理未完成；请直接使用后方中英文全文，避免把未整理的6秒切片误当成完整笔记。')
+        ..writeln('【全篇逻辑播报·可播放】')
+        ..writeln('AI逻辑播报整理未完成，请直接使用后方中英文全文核对讲座内容。')
         ..writeln('━━━━━━━━━━━━')
-        ..writeln('【二听】')
-        ..writeln('?（待核对）最终速记生成失败，请根据全文核对讲座结构与关键细节。')
-        ..writeln('━━━━━━━━━━━━')
-        ..writeln('【符号】')
-        ..writeln('→ 导致/过程/结果｜↑ 提高｜↓ 减少｜＋ 包含｜/ 并列')
-        ..writeln('= 定义｜✓ 已确认/赞同｜✗ 否定｜? 二听核对｜w/o 没有');
+        ..writeln('【答题重点与危险位置·可播放】')
+        ..writeln('AI答题证据整理未完成，请根据全文核对英文原词、数字、否定、转折和限定范围。');
     }
 
     final chineseTranscript = TranscriptAssembler.chinese(transcripts);

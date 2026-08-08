@@ -52,7 +52,6 @@ class CredentialStore {
   static const String keyGroq = 'api_key_groq';
   static const String keyGemini = 'api_key_gemini';
   static const String keyOpenAI = 'api_key_openai';
-  static const String keySiliconFlow = 'api_key_siliconFlow';
   static const String keyOpenRouter = 'api_key_openrouter';
 
   /// Performs one-time migration of legacy API keys stored in SharedPreferences
@@ -75,10 +74,6 @@ class CredentialStore {
       'gemini_api_key': keyGemini,
       'api_key_openai': keyOpenAI,
       'openai_api_key': keyOpenAI,
-      'api_key_siliconFlow': keySiliconFlow,
-      'api_key_siliconflow': keySiliconFlow,
-      'siliconflow_api_key': keySiliconFlow,
-      'api_key_silicon_flow': keySiliconFlow,
       'api_key_openrouter': keyOpenRouter,
       'openrouter_api_key': keyOpenRouter,
     };
@@ -164,8 +159,6 @@ class CredentialStore {
   }
 
   String _normalizeKey(String key) {
-    if (key == 'api_key_siliconflow' || key == 'siliconflow_api_key')
-      return keySiliconFlow;
     if (key == 'groq_api_key') return keyGroq;
     if (key == 'gemini_api_key') return keyGemini;
     if (key == 'openai_api_key') return keyOpenAI;

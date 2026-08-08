@@ -14,9 +14,11 @@ class VocabExtractorService {
   }) async {
     if (fullText.trim().isEmpty) return [];
 
-    final geminiKey = await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
+    final geminiKey =
+        await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
 
-    final prompt = """You are an expert English linguist and academic exam coach. Analyze the following text and extract 4 to 6 key items consisting of:
+    final prompt =
+        """You are an expert English linguist and academic exam coach. Analyze the following text and extract 4 to 6 key items consisting of:
 1. High-frequency academic vocabulary words or collocations/phrases.
 2. 1 or 2 complex long sentences with deep grammar breakdown.
 
@@ -50,15 +52,30 @@ $fullText""";
         final url = Uri.parse(
           'https://generativelanguage.googleapis.com/v1beta/models/$_geminiModel:generateContent?key=$geminiKey',
         );
-        final response = await http.post(
-          url,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'system_instruction': {'parts': [{'text': 'You are an academic English flashcard generator. Output JSON array only.'}]},
-            'contents': [{'parts': [{'text': prompt}]}],
-            'generationConfig': {'temperature': 0.3},
-          }),
-        ).timeout(const Duration(seconds: 45));
+        final response = await http
+            .post(
+              url,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'system_instruction': {
+                  'parts': [
+                    {
+                      'text':
+                          'You are an academic English flashcard generator. Output JSON array only.',
+                    },
+                  ],
+                },
+                'contents': [
+                  {
+                    'parts': [
+                      {'text': prompt},
+                    ],
+                  },
+                ],
+                'generationConfig': {'temperature': 0.3},
+              }),
+            )
+            .timeout(const Duration(seconds: 45));
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -70,7 +87,10 @@ $fullText""";
               if (text != null) {
                 text = text.trim();
                 if (text.startsWith('```')) {
-                  text = text.replaceAll(RegExp(r'^```(json)?\n?'), '').replaceAll(RegExp(r'\n?```$'), '').trim();
+                  text = text
+                      .replaceAll(RegExp(r'^```(json)?\n?'), '')
+                      .replaceAll(RegExp(r'\n?```$'), '')
+                      .trim();
                 }
                 final jsonList = jsonDecode(text) as List;
                 return _parseVocabCards(jsonList, sourceTitle);
@@ -78,31 +98,50 @@ $fullText""";
             }
           }
         }
-        debugPrint('[VocabExtractor] Gemini failed (${response.statusCode}), falling back to Groq...');
+        debugPrint(
+          '[VocabExtractor] Gemini failed (${response.statusCode}), falling back to Groq...',
+        );
       } catch (e) {
-        debugPrint('[VocabExtractor] Gemini exception: $e, falling back to Groq...');
+        debugPrint(
+          '[VocabExtractor] Gemini exception: $e, falling back to Groq...',
+        );
       }
     }
 
-    // Fallback: Groq or SiliconFlow
-    final groqKey = await CredentialStore.instance.readKey(CredentialStore.keyGroq) ??
-                    await CredentialStore.instance.readKey(CredentialStore.keySiliconFlow) ?? '';
-    if (groqKey.isEmpty) {
-      throw Exception('请先在设置页面配置 API Key');
+    // Fallback: Groq, then the paid OpenRouter reserve.
+    final groqKey =
+        await CredentialStore.instance.readKey(CredentialStore.keyGroq) ?? '';
+    final openRouterKey =
+        await CredentialStore.instance.readKey(CredentialStore.keyOpenRouter) ??
+        '';
+    if (groqKey.isEmpty && openRouterKey.isEmpty) {
+      throw Exception('请先在设置页面配置 Groq 或 OpenRouter API Key');
     }
+    final useGroq = groqKey.isNotEmpty;
+    final apiKey = useGroq ? groqKey : openRouterKey;
+    final endpoint = useGroq
+        ? 'https://api.groq.com/openai/v1/chat/completions'
+        : 'https://openrouter.ai/api/v1/chat/completions';
+    final model = useGroq
+        ? 'openai/gpt-oss-120b'
+        : 'google/gemini-3.1-flash-lite';
 
     try {
       final response = await http
           .post(
-            Uri.parse('https://api.groq.com/openai/v1/chat/completions'),
+            Uri.parse(endpoint),
             headers: {
               'Authorization': 'Bearer $groqKey',
               'Content-Type': 'application/json',
             },
             body: jsonEncode({
-              'model': 'openai/gpt-oss-120b',
+              'model': model,
               'messages': [
-                {'role': 'system', 'content': 'You are an academic English flashcard generator. Output JSON array only.'},
+                {
+                  'role': 'system',
+                  'content':
+                      'You are an academic English flashcard generator. Output JSON array only.',
+                },
                 {'role': 'user', 'content': prompt},
               ],
               'temperature': 0.3,
@@ -115,10 +154,14 @@ $fullText""";
       }
 
       final data = jsonDecode(response.body);
-      var responseText = (data['choices'][0]['message']['content'] as String).trim();
+      var responseText = (data['choices'][0]['message']['content'] as String)
+          .trim();
 
       if (responseText.startsWith('```')) {
-        responseText = responseText.replaceAll(RegExp(r'^```(json)?\n?'), '').replaceAll(RegExp(r'\n?```$'), '').trim();
+        responseText = responseText
+            .replaceAll(RegExp(r'^```(json)?\n?'), '')
+            .replaceAll(RegExp(r'\n?```$'), '')
+            .trim();
       }
 
       final jsonList = jsonDecode(responseText) as List;
@@ -134,17 +177,19 @@ $fullText""";
     final now = DateTime.now();
     for (int i = 0; i < jsonList.length; i++) {
       final item = jsonList[i] as Map<String, dynamic>;
-      results.add(VocabCard(
-        id: '${now.millisecondsSinceEpoch}_$i',
-        wordOrPhrase: item['wordOrPhrase'] as String? ?? '',
-        phonetic: item['phonetic'] as String?,
-        definition: item['definition'] as String? ?? '',
-        exampleSentence: item['exampleSentence'] as String? ?? '',
-        exampleTranslation: item['exampleTranslation'] as String? ?? '',
-        grammarBreakdown: item['grammarBreakdown'] as String? ?? '',
-        sourceTitle: sourceTitle,
-        createdAt: now,
-      ));
+      results.add(
+        VocabCard(
+          id: '${now.millisecondsSinceEpoch}_$i',
+          wordOrPhrase: item['wordOrPhrase'] as String? ?? '',
+          phonetic: item['phonetic'] as String?,
+          definition: item['definition'] as String? ?? '',
+          exampleSentence: item['exampleSentence'] as String? ?? '',
+          exampleTranslation: item['exampleTranslation'] as String? ?? '',
+          grammarBreakdown: item['grammarBreakdown'] as String? ?? '',
+          sourceTitle: sourceTitle,
+          createdAt: now,
+        ),
+      );
     }
     return results;
   }

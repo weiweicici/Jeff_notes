@@ -29,24 +29,11 @@ class _RetryingSummaryService extends OpenAIService {
     callCount++;
     if (mode == AppMode.exam) return 'Exam review generated';
     if (callCount == 2) throw Exception('Summarize error 429');
-    return '【30秒理解·可播放】\n'
-        '这是一份成功重试后生成的紧凑速记。\n'
+    return '【全篇逻辑播报·可播放】\n'
+        '这篇讲座共有一个主要内容，说明主服务失败后重试成功。\n'
         '━━━━━━━━━━━━\n'
-        '【Purpose（目的）】\n'
-        'retry（重试）→ success（成功）\n'
-        '━━━━━━━━━━━━\n'
-        '【Main Points（要点）】\n'
-        '── retry path（重试路径）──\n'
-        'primary failure（主服务失败）→ retry success（重试成功）\n'
-        '━━━━━━━━━━━━\n'
-        '【Conclusion（结论）】\n'
-        'failover works（故障转移有效）\n'
-        '━━━━━━━━━━━━\n'
-        '【二听】\n'
-        '✓（已确认）no critical gaps（无关键缺口）\n'
-        '━━━━━━━━━━━━\n'
-        '【符号】\n'
-        '→ 导致/过程/结果';
+        '【答题重点与危险位置·可播放】\n'
+        '可能的填空词是重试（retry）。需要注意，第一次失败不代表最终失败。';
   }
 }
 
@@ -321,7 +308,8 @@ void main() {
         );
         expect(shorthand.existsSync(), isTrue);
         final shorthandText = await shorthand.readAsString();
-        expect(shorthandText, startsWith('【30秒理解·可播放】'));
+        expect(shorthandText, startsWith('【全篇逻辑播报·可播放】'));
+        expect(shorthandText, contains('【答题重点与危险位置·可播放】'));
         expect(shorthandText, contains('【中文全文】'));
         expect(shorthandText, contains('这节课解释了一个重要概念。'));
         expect(shorthandText, contains('【英文全文】'));
@@ -364,8 +352,9 @@ void main() {
       final shorthand = File('${tempDir.path}/Jeff_速记_shorthand_retry_test.md');
       final content = await shorthand.readAsString();
       expect(service.callCount, 3);
-      expect(content, contains('成功重试后生成的紧凑速记'));
-      expect(content, isNot(contains('AI速记整理未完成')));
+      expect(content, contains('说明主服务失败后重试成功'));
+      expect(content, contains('重试（retry）'));
+      expect(content, isNot(contains('AI逻辑播报整理未完成')));
       expect(content, isNot(contains('\n\n')));
     });
 

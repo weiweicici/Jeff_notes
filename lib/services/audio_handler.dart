@@ -20,9 +20,14 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       session.devicesChangedEventStream.listen((_) async {
         if (player.playing && !(await _isHeadphonesConnected())) {
           debugPrint(
-            '[AudioHandler] Route changed to Speaker — stopping player immediately!',
+            '[AudioHandler] Route changed to Speaker — pausing safely and retaining Now Playing.',
           );
-          await player.stop();
+          if (onUnsafeRouteDetected != null) {
+            await onUnsafeRouteDetected!();
+          } else {
+            await player.pause();
+          }
+          publishRemotePlaybackIntent(false);
         }
       });
     });
@@ -32,9 +37,14 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
       if (!playing) return;
       if (!(await _isHeadphonesConnected())) {
         debugPrint(
-          '[AudioHandler] playingStream — no headphones, stopping immediately.',
+          '[AudioHandler] playingStream — no headphones, pausing immediately.',
         );
-        await player.stop();
+        if (onUnsafeRouteDetected != null) {
+          await onUnsafeRouteDetected!();
+        } else {
+          await player.pause();
+        }
+        publishRemotePlaybackIntent(false);
       }
     });
   }
@@ -62,6 +72,7 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     }
     if (onPlayRequested != null) {
       await onPlayRequested!();
+      publishRemotePlaybackIntent(true);
       return;
     }
     await player.play();
@@ -71,6 +82,7 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   Future<void> pause() async {
     if (onPauseRequested != null) {
       await onPauseRequested!();
+      publishRemotePlaybackIntent(false);
       return;
     }
     await player.pause();
@@ -78,6 +90,25 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
 
   @override
   Future<void> seek(Duration position) => player.seek(position);
+
+  /// Uses the full audio item's real position instead of the sentence-sized
+  /// Now Playing metadata. During dictation the metadata duration describes
+  /// only the current sentence, while the player holds one complete MP3.
+  Future<void> _seekRelativeToPlayer(Duration offset) async {
+    var target = player.position + offset;
+    if (target < Duration.zero) target = Duration.zero;
+    final duration = player.duration;
+    if (duration != null && target > duration) target = duration;
+    await player.seek(target);
+  }
+
+  @override
+  Future<void> rewind() =>
+      _seekRelativeToPlayer(-AudioService.config.rewindInterval);
+
+  @override
+  Future<void> fastForward() =>
+      _seekRelativeToPlayer(AudioService.config.fastForwardInterval);
 
   @override
   Future<void> stop() => player.stop();
@@ -89,6 +120,7 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
   VoidCallback? onSkipPrevious;
   Future<void> Function()? onPlayRequested;
   Future<void> Function()? onPauseRequested;
+  Future<void> Function()? onUnsafeRouteDetected;
 
   @override
   Future<void> skipToNext() async {
@@ -121,19 +153,70 @@ class MyAudioHandler extends BaseAudioHandler with QueueHandler, SeekHandler {
     );
   }
 
+  /// Claims iOS Now Playing as soon as the user starts a TTS document.
+  /// `playing=true` with `loading` is the standard media state for content
+  /// that will begin automatically as soon as buffering/synthesis completes.
+  void publishPreparingPlayback({
+    required String title,
+    required String artist,
+  }) {
+    setPlaybackMetadata(title: title, artist: artist);
+    playbackState.add(
+      playbackState.value.copyWith(
+        controls: const [
+          MediaControl.rewind,
+          MediaControl.skipToPrevious,
+          MediaControl.pause,
+          MediaControl.skipToNext,
+          MediaControl.fastForward,
+        ],
+        systemActions: const {
+          MediaAction.rewind,
+          MediaAction.skipToNext,
+          MediaAction.skipToPrevious,
+          MediaAction.fastForward,
+        },
+        processingState: AudioProcessingState.loading,
+        playing: true,
+        updatePosition: Duration.zero,
+        bufferedPosition: Duration.zero,
+      ),
+    );
+  }
+
+  void publishRemotePlaybackIntent(bool shouldPlay) {
+    final state = playbackState.value;
+    playbackState.add(
+      state.copyWith(
+        controls: [
+          MediaControl.rewind,
+          MediaControl.skipToPrevious,
+          shouldPlay ? MediaControl.pause : MediaControl.play,
+          MediaControl.skipToNext,
+          MediaControl.fastForward,
+        ],
+        playing: shouldPlay,
+      ),
+    );
+  }
+
   PlaybackState _transformEvent(PlaybackEvent event) {
     return PlaybackState(
       controls: [
+        MediaControl.rewind,
         MediaControl.skipToPrevious,
         if (player.playing) MediaControl.pause else MediaControl.play,
         MediaControl.skipToNext,
+        MediaControl.fastForward,
       ],
       systemActions: const {
+        MediaAction.rewind,
         MediaAction.seek,
         MediaAction.skipToNext,
         MediaAction.skipToPrevious,
+        MediaAction.fastForward,
       },
-      androidCompactActionIndices: const [0, 1, 2],
+      androidCompactActionIndices: const [1, 2, 3],
       processingState: const {
         ProcessingState.idle: AudioProcessingState.idle,
         ProcessingState.loading: AudioProcessingState.loading,

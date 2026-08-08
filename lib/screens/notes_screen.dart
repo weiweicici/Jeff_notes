@@ -461,7 +461,7 @@ class _NotesScreenState extends State<NotesScreen> {
                             TtsPlayerBar(
                               chineseText: chineseForTts,
                               englishText: englishForTts,
-                              siliconFlowKey: provider.siliconFlowKey,
+                              openRouterKey: provider.openRouterKey,
                             ),
                           ],
                           const SizedBox(height: 12),
@@ -631,6 +631,83 @@ class _NotesScreenState extends State<NotesScreen> {
       ),
       body: Column(
         children: [
+          if (provider.isProcessingRecording ||
+              provider.processingErrorMessage != null)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+              padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+              decoration: BoxDecoration(
+                color:
+                    (provider.processingErrorMessage == null
+                            ? Colors.blueAccent
+                            : Colors.redAccent)
+                        .withOpacity(isDark ? 0.16 : 0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color:
+                      (provider.processingErrorMessage == null
+                              ? Colors.blueAccent
+                              : Colors.redAccent)
+                          .withOpacity(isDark ? 0.4 : 0.24),
+                ),
+              ),
+              child: Row(
+                children: [
+                  SizedBox(
+                    width: 22,
+                    height: 22,
+                    child: provider.processingErrorMessage == null
+                        ? const CircularProgressIndicator(strokeWidth: 2.5)
+                        : const Icon(
+                            Icons.error_outline,
+                            color: Colors.redAccent,
+                            size: 22,
+                          ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          provider.processingErrorMessage == null
+                              ? '讲座处理中 · 第 ${provider.processingStep}/${RecordingProvider.processingStepCount} 步'
+                              : '讲座处理没有完整完成',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        Text(
+                          provider.processingErrorMessage ??
+                              provider.statusMessage ??
+                              '正在处理录音内容',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: isDark ? Colors.white70 : Colors.black54,
+                          ),
+                        ),
+                        if (provider.processingErrorMessage == null) ...[
+                          const SizedBox(height: 8),
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(99),
+                            child: LinearProgressIndicator(
+                              value: provider.processingProgress,
+                              minHeight: 5,
+                              backgroundColor: Colors.blueAccent.withOpacity(
+                                0.12,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (provider.lastReadyNotePath != null)
             Material(
               color: Colors.transparent,
@@ -1016,12 +1093,10 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   late bool _tempEnableLectureDiscovery;
   late TextEditingController _groqController;
   late TextEditingController _openRouterController;
-  late TextEditingController _siliconFlowController;
   late TextEditingController _geminiController;
 
   bool _obscureGroq = true;
   bool _obscureOpenRouter = true;
-  bool _obscureSiliconFlow = true;
   bool _obscureGemini = true;
 
   @override
@@ -1036,7 +1111,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     _tempEnableLectureDiscovery = p.enableLectureDiscovery;
     _groqController = TextEditingController(text: p.groqKey);
     _openRouterController = TextEditingController(text: p.openRouterKey);
-    _siliconFlowController = TextEditingController(text: p.siliconFlowKey);
     _geminiController = TextEditingController(text: p.geminiKey);
   }
 
@@ -1044,7 +1118,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   void dispose() {
     _groqController.dispose();
     _openRouterController.dispose();
-    _siliconFlowController.dispose();
     _geminiController.dispose();
     super.dispose();
   }
@@ -1052,7 +1125,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   void _save() {
     widget.provider.updateSettings(
       groqKey: _groqController.text,
-      siliconFlowKey: _siliconFlowController.text,
       openRouterKey: _openRouterController.text,
       geminiKey: _geminiController.text,
       mode: _tempMode,
@@ -1239,30 +1311,6 @@ class _SettingsDialogState extends State<_SettingsDialog> {
                   ),
                   onPressed: () =>
                       setState(() => _obscureOpenRouter = !_obscureOpenRouter),
-                ),
-              ),
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _siliconFlowController,
-              obscureText: _obscureSiliconFlow,
-              decoration: InputDecoration(
-                labelText: 'SiliconFlow API Key',
-                helperText: 'Optional: for Qwen summaries & backup translation',
-                helperStyle: TextStyle(
-                  fontSize: 10,
-                  color: isDark ? Colors.white38 : Colors.black38,
-                ),
-                suffixIcon: IconButton(
-                  icon: Icon(
-                    _obscureSiliconFlow
-                        ? Icons.visibility_off
-                        : Icons.visibility,
-                    size: 20,
-                  ),
-                  onPressed: () => setState(
-                    () => _obscureSiliconFlow = !_obscureSiliconFlow,
-                  ),
                 ),
               ),
             ),

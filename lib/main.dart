@@ -35,6 +35,8 @@ void main() async {
       androidNotificationChannelId: 'com.zhenfeng.jeffnotes.channel.audio',
       androidNotificationChannelName: 'Jeff Notes Playback',
       androidNotificationOngoing: true,
+      fastForwardInterval: Duration(seconds: 5),
+      rewindInterval: Duration(seconds: 5),
     ),
   );
 

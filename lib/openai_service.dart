@@ -74,20 +74,12 @@ class OpenAIService {
         ..fields['model'] = whisperModel.trim()
         ..fields['response_format'] = 'json';
 
-      // 硅基流动 API 特殊处理
-      if (baseUrl.contains("siliconflow")) {
-        debugPrint("硅基流动 STT 请求: URL=$url");
-        // 硅基流动使用 Authorization 头，格式为 Bearer
-        request.headers['Authorization'] = 'Bearer ${apiKey.trim()}';
-        // 注意：硅基流动部署的 SenseVoiceSmall 模型不支持 language 和 prompt 参数，发送会导致 API Error 400
-      } else {
-        request.headers['Authorization'] = 'Bearer ${apiKey.trim()}';
-        request.fields['language'] = 'en';
-        if (previousText != null &&
-            previousText.isNotEmpty &&
-            previousText != "...") {
-          request.fields['prompt'] = previousText;
-        }
+      request.headers['Authorization'] = 'Bearer ${apiKey.trim()}';
+      request.fields['language'] = 'en';
+      if (previousText != null &&
+          previousText.isNotEmpty &&
+          previousText != "...") {
+        request.fields['prompt'] = previousText;
       }
 
       request.files.add(
@@ -102,11 +94,6 @@ class OpenAIService {
           .send(request)
           .timeout(const Duration(seconds: 30));
       final response = await http.Response.fromStream(streamedResponse);
-
-      // 硅基流动 API 详细调试信息
-      if (baseUrl.contains("siliconflow")) {
-        debugPrint("硅基流动 STT 响应状态码: ${response.statusCode}");
-      }
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);

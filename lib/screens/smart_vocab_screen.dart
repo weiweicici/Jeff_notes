@@ -10,17 +10,14 @@ class SmartVocabScreen extends StatefulWidget {
   final List<VocabCard>? initialCards;
   final String? sourceTitle;
 
-  const SmartVocabScreen({
-    super.key,
-    this.initialCards,
-    this.sourceTitle,
-  });
+  const SmartVocabScreen({super.key, this.initialCards, this.sourceTitle});
 
   @override
   State<SmartVocabScreen> createState() => _SmartVocabScreenState();
 }
 
-class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerProviderStateMixin {
+class _SmartVocabScreenState extends State<SmartVocabScreen>
+    with SingleTickerProviderStateMixin {
   int _tabIndex = 0; // 0: 待复习, 1: 全部, 2: 已掌握
   int _cardIndex = 0;
   bool _showBack = false;
@@ -63,16 +60,15 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
     try {
       final tts = TtsService();
       final provider = context.read<RecordingProvider>();
-      await tts.speakEnglish(
-        text,
-        geminiKey: provider.geminiKey,
-        siliconFlowKey: provider.siliconFlowKey,
-      );
+      await tts.speakEnglish(text, openRouterKey: provider.openRouterKey);
     } catch (e) {
       if (context.mounted && e.toString().contains('NoHeadphones')) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('⚠️ 未检测到耳机 (${e.toString().replaceAll("Exception: ", "")})', style: const TextStyle(fontSize: 13)),
+            content: Text(
+              '⚠️ 未检测到耳机 (${e.toString().replaceAll("Exception: ", "")})',
+              style: const TextStyle(fontSize: 13),
+            ),
             backgroundColor: Colors.orange,
             duration: const Duration(seconds: 5),
           ),
@@ -106,7 +102,9 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
         return Scaffold(
           appBar: AppBar(
             title: Text(
-              widget.sourceTitle != null ? '提炼卡片: ${widget.sourceTitle}' : '📚 智能学术生词本',
+              widget.sourceTitle != null
+                  ? '提炼卡片: ${widget.sourceTitle}'
+                  : '📚 智能学术生词本',
               style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
             actions: [
@@ -121,7 +119,10 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
             children: [
               // 顶部分段 Selector
               Container(
-                margin: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+                margin: const EdgeInsets.symmetric(
+                  horizontal: 20,
+                  vertical: 10,
+                ),
                 padding: const EdgeInsets.all(4),
                 decoration: BoxDecoration(
                   color: isDark ? const Color(0xFF1E1E2C) : Colors.grey[200],
@@ -129,9 +130,17 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
                 ),
                 child: Row(
                   children: [
-                    _buildTabItem(0, '📖 待复习 (${allCards.where((c) => !c.isMastered).length})', isDark),
+                    _buildTabItem(
+                      0,
+                      '📖 待复习 (${allCards.where((c) => !c.isMastered).length})',
+                      isDark,
+                    ),
                     _buildTabItem(1, '🗂️ 全部 (${allCards.length})', isDark),
-                    _buildTabItem(2, '✅ 已掌握 (${allCards.where((c) => c.isMastered).length})', isDark),
+                    _buildTabItem(
+                      2,
+                      '✅ 已掌握 (${allCards.where((c) => c.isMastered).length})',
+                      isDark,
+                    ),
                   ],
                 ),
               ),
@@ -142,16 +151,28 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
                         child: Column(
                           mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            const Icon(Icons.style_outlined, size: 64, color: Colors.grey),
+                            const Icon(
+                              Icons.style_outlined,
+                              size: 64,
+                              color: Colors.grey,
+                            ),
                             const SizedBox(height: 16),
                             Text(
                               '暂无符合条件的生词卡片',
-                              style: TextStyle(fontSize: 16, color: isDark ? Colors.grey[400] : Colors.grey[600]),
+                              style: TextStyle(
+                                fontSize: 16,
+                                color: isDark
+                                    ? Colors.grey[400]
+                                    : Colors.grey[600],
+                              ),
                             ),
                             const SizedBox(height: 8),
                             const Text(
                               '在笔记或作文页面点击“✨ 提炼生词与长难句”即可生成！',
-                              style: TextStyle(fontSize: 12, color: Colors.grey),
+                              style: TextStyle(
+                                fontSize: 12,
+                                color: Colors.grey,
+                              ),
                             ),
                           ],
                         ),
@@ -160,17 +181,28 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
                         children: [
                           // 进度条
                           Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 8),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 24,
+                              vertical: 8,
+                            ),
                             child: Row(
                               children: [
                                 Text(
                                   '卡片 ${_cardIndex + 1} / ${displayCards.length}',
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold,
+                                  ),
                                 ),
                                 const Spacer(),
                                 Text(
                                   '点击卡片可翻转 🔄',
-                                  style: TextStyle(fontSize: 11, color: isDark ? Colors.white54 : Colors.black54),
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    color: isDark
+                                        ? Colors.white54
+                                        : Colors.black54,
+                                  ),
                                 ),
                               ],
                             ),
@@ -187,7 +219,8 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
                                   builder: (context, child) {
                                     final angle = _flipAnimation.value * pi;
                                     final isBack = angle >= pi / 2;
-                                    final currentCard = displayCards[_cardIndex];
+                                    final currentCard =
+                                        displayCards[_cardIndex];
 
                                     return Transform(
                                       transform: Matrix4.identity()
@@ -196,11 +229,18 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
                                       alignment: Alignment.center,
                                       child: isBack
                                           ? Transform(
-                                              transform: Matrix4.identity()..rotateY(pi),
+                                              transform: Matrix4.identity()
+                                                ..rotateY(pi),
                                               alignment: Alignment.center,
-                                              child: _buildCardBack(currentCard, isDark),
+                                              child: _buildCardBack(
+                                                currentCard,
+                                                isDark,
+                                              ),
                                             )
-                                          : _buildCardFront(currentCard, isDark),
+                                          : _buildCardFront(
+                                              currentCard,
+                                              isDark,
+                                            ),
                                     );
                                   },
                                 ),
@@ -218,7 +258,10 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
                                   icon: const Icon(Icons.arrow_back_rounded),
                                   label: const Text('上一张'),
                                   style: ElevatedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
                                   ),
                                   onPressed: _cardIndex > 0
                                       ? () {
@@ -235,39 +278,59 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
                                     displayCards[_cardIndex].isMastered
                                         ? Icons.check_circle_rounded
                                         : Icons.check_circle_outline_rounded,
-                                    color: displayCards[_cardIndex].isMastered ? Colors.green : null,
+                                    color: displayCards[_cardIndex].isMastered
+                                        ? Colors.green
+                                        : null,
                                   ),
-                                  label: Text(displayCards[_cardIndex].isMastered ? '已标记掌握' : '标记已掌握'),
+                                  label: Text(
+                                    displayCards[_cardIndex].isMastered
+                                        ? '已标记掌握'
+                                        : '标记已掌握',
+                                  ),
                                   style: ElevatedButton.styleFrom(
-                                    backgroundColor: displayCards[_cardIndex].isMastered
+                                    backgroundColor:
+                                        displayCards[_cardIndex].isMastered
                                         ? Colors.green.withOpacity(0.2)
                                         : Colors.blueAccent.withOpacity(0.1),
-                                    foregroundColor: displayCards[_cardIndex].isMastered ? Colors.green : Colors.blueAccent,
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    foregroundColor:
+                                        displayCards[_cardIndex].isMastered
+                                        ? Colors.green
+                                        : Colors.blueAccent,
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
                                   ),
                                   onPressed: () {
                                     final c = displayCards[_cardIndex];
-                                    service.saveCard(VocabCard(
-                                      id: c.id,
-                                      wordOrPhrase: c.wordOrPhrase,
-                                      phonetic: c.phonetic,
-                                      definition: c.definition,
-                                      exampleSentence: c.exampleSentence,
-                                      exampleTranslation: c.exampleTranslation,
-                                      grammarBreakdown: c.grammarBreakdown,
-                                      sourceTitle: c.sourceTitle,
-                                      createdAt: c.createdAt,
-                                      isMastered: !c.isMastered,
-                                    ));
+                                    service.saveCard(
+                                      VocabCard(
+                                        id: c.id,
+                                        wordOrPhrase: c.wordOrPhrase,
+                                        phonetic: c.phonetic,
+                                        definition: c.definition,
+                                        exampleSentence: c.exampleSentence,
+                                        exampleTranslation:
+                                            c.exampleTranslation,
+                                        grammarBreakdown: c.grammarBreakdown,
+                                        sourceTitle: c.sourceTitle,
+                                        createdAt: c.createdAt,
+                                        isMastered: !c.isMastered,
+                                      ),
+                                    );
                                   },
                                 ),
                                 ElevatedButton.icon(
                                   icon: const Icon(Icons.arrow_forward_rounded),
                                   label: const Text('下一张'),
                                   style: ElevatedButton.styleFrom(
-                                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                                    padding: const EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
+                                    ),
                                   ),
-                                  onPressed: _cardIndex < displayCards.length - 1
+                                  onPressed:
+                                      _cardIndex < displayCards.length - 1
                                       ? () {
                                           setState(() {
                                             _cardIndex++;
@@ -335,7 +398,9 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
         color: isDark ? const Color(0xFF1E1E2C) : Colors.white,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(
-          color: isDark ? Colors.blueAccent.withOpacity(0.3) : Colors.blueAccent.withOpacity(0.2),
+          color: isDark
+              ? Colors.blueAccent.withOpacity(0.3)
+              : Colors.blueAccent.withOpacity(0.2),
           width: 1.5,
         ),
         boxShadow: [
@@ -343,7 +408,7 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
             color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
             blurRadius: 16,
             offset: const Offset(0, 6),
-          )
+          ),
         ],
       ),
       child: Column(
@@ -357,20 +422,31 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
             ),
             child: Text(
               card.sourceTitle.isNotEmpty ? card.sourceTitle : '学术考点',
-              style: const TextStyle(fontSize: 10, color: Colors.blueAccent, fontWeight: FontWeight.bold),
+              style: const TextStyle(
+                fontSize: 10,
+                color: Colors.blueAccent,
+                fontWeight: FontWeight.bold,
+              ),
             ),
           ),
           const SizedBox(height: 20),
           Text(
             card.wordOrPhrase,
-            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, height: 1.3),
+            style: const TextStyle(
+              fontSize: 22,
+              fontWeight: FontWeight.bold,
+              height: 1.3,
+            ),
             textAlign: TextAlign.center,
           ),
           if (card.phonetic != null && card.phonetic!.isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
               card.phonetic!,
-              style: TextStyle(fontSize: 14, color: isDark ? Colors.cyanAccent : Colors.teal),
+              style: TextStyle(
+                fontSize: 14,
+                color: isDark ? Colors.cyanAccent : Colors.teal,
+              ),
             ),
           ],
           const SizedBox(height: 24),
@@ -386,7 +462,10 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
           const SizedBox(height: 20),
           Text(
             '💡 点击卡片查看释义与长难句剖析',
-            style: TextStyle(fontSize: 12, color: isDark ? Colors.white38 : Colors.black38),
+            style: TextStyle(
+              fontSize: 12,
+              color: isDark ? Colors.white38 : Colors.black38,
+            ),
           ),
         ],
       ),
@@ -401,7 +480,9 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
         color: isDark ? const Color(0xFF1E1E2C) : Colors.white,
         borderRadius: BorderRadius.circular(24),
         border: Border.all(
-          color: isDark ? Colors.tealAccent.withOpacity(0.3) : Colors.teal.withOpacity(0.3),
+          color: isDark
+              ? Colors.tealAccent.withOpacity(0.3)
+              : Colors.teal.withOpacity(0.3),
           width: 1.5,
         ),
         boxShadow: [
@@ -409,7 +490,7 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
             color: Colors.black.withOpacity(isDark ? 0.3 : 0.08),
             blurRadius: 16,
             offset: const Offset(0, 6),
-          )
+          ),
         ],
       ),
       child: SingleChildScrollView(
@@ -429,28 +510,57 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
                   ),
                 ),
                 IconButton(
-                  icon: const Icon(Icons.volume_up_rounded, color: Colors.blueAccent),
-                  onPressed: () => _playTTS(card.exampleSentence.isNotEmpty ? card.exampleSentence : card.wordOrPhrase, context),
+                  icon: const Icon(
+                    Icons.volume_up_rounded,
+                    color: Colors.blueAccent,
+                  ),
+                  onPressed: () => _playTTS(
+                    card.exampleSentence.isNotEmpty
+                        ? card.exampleSentence
+                        : card.wordOrPhrase,
+                    context,
+                  ),
                 ),
               ],
             ),
             const Divider(height: 24),
             if (card.exampleSentence.isNotEmpty) ...[
-              const Text('📝 原文例句:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.grey)),
+              const Text(
+                '📝 原文例句:',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.grey,
+                ),
+              ),
               const SizedBox(height: 4),
               Text(
                 card.exampleSentence,
-                style: const TextStyle(fontSize: 14, height: 1.4, fontWeight: FontWeight.w500),
+                style: const TextStyle(
+                  fontSize: 14,
+                  height: 1.4,
+                  fontWeight: FontWeight.w500,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
                 card.exampleTranslation,
-                style: TextStyle(fontSize: 13, color: isDark ? Colors.white70 : Colors.black87),
+                style: TextStyle(
+                  fontSize: 13,
+                  color: isDark ? Colors.white70 : Colors.black87,
+                ),
               ),
               const SizedBox(height: 16),
             ],
             if (card.grammarBreakdown.isNotEmpty) ...[
-              const Text('🧐 语法剖析 & 考点:', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.amber)),
+              const Text(
+                '🧐 语法剖析 & 考点:',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.amber,
+                ),
+              ),
               const SizedBox(height: 4),
               Container(
                 padding: const EdgeInsets.all(12),
@@ -461,7 +571,13 @@ class _SmartVocabScreenState extends State<SmartVocabScreen> with SingleTickerPr
                 ),
                 child: Text(
                   card.grammarBreakdown,
-                  style: TextStyle(fontSize: 12, height: 1.5, color: isDark ? Colors.white.withOpacity(0.9) : Colors.black87),
+                  style: TextStyle(
+                    fontSize: 12,
+                    height: 1.5,
+                    color: isDark
+                        ? Colors.white.withOpacity(0.9)
+                        : Colors.black87,
+                  ),
                 ),
               ),
             ],

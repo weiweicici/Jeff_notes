@@ -75,6 +75,19 @@ import UIKit
             }
         })
 
+        WatchTransferService.shared.activate()
+        let watchSyncChannel = FlutterMethodChannel(
+            name: "com.zhenfeng.jeffnotes/watch_sync",
+            binaryMessenger: controller.binaryMessenger
+        )
+        watchSyncChannel.setMethodCallHandler { call, result in
+            guard call.method == "queueTtsPackage" else {
+                result(FlutterMethodNotImplemented)
+                return
+            }
+            result(WatchTransferService.shared.queuePackage(arguments: call.arguments))
+        }
+
         return super.application(application, didFinishLaunchingWithOptions: launchOptions)
     }
 
