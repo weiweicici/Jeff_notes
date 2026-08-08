@@ -1072,3 +1072,26 @@ The updated `_deleteEntry` logic in `HistoryScreen` and `NoteDetailScreen` execu
 - 新增 `_buildTopicSearchField()`（Autocomplete + `fieldViewBuilder`，支持中英文输入，placeholder 如「头盔、helmet、subsidy school lunches」）、`_selectSearchedTopic()`（命中后自动选定分类、预设并默认 Comparison 类型）；新增 `_customFocusNode` 与 `presetTopicCount`。
 - 附带大量深浅色主题化（`grey[400]/[600]`、`0xFF28283C` 卡片、`blueAccent` 高亮）与 `_syncSavedEssay` 非阻塞保存。
 
+### 15.22 Follow-up：Listening 速记块重命名 · 组合写作 · 生成文档听写 · Essay 搜索移除
+
+> 本节覆盖 2026-08-07 第一批改动（未提交 commit）。本轮对**讲座速记标记、写作生成链路、听写对象**做了结构性调整，并撤回了上一轮的预设话题搜索。
+
+**Listening 速记块重命名** — `lib/services/session_background_processor.dart`（+25）
+
+- `【30秒理解·可播放】`/`【二听】`/`【符号】` 三块更名为 `【全篇逻辑播报·可播放】` 与 `【答题重点与危险位置·可播放】`,lecture 校验从 8 项窄化为仅在两个「·可播放」标题都存在时才判定合格;失败降级文案同步改（提示用后方中英文全文核对逻辑与答题证据）。
+
+**组合写作（Combined Grammar Writing）** — `lib/services/grammar_service.dart`（+164）、`lib/screens/grammar_writing_screen.dart`（+250 累计）、`lib/prompt_provider.dart`（+230）、`lib/services/grammar_repository.dart`（+44）
+
+- `grammar_service.dart` 新增命名参数化的 `generateCombinedSample({...})` 与 `buildCombinedWritingUserMessage()`：按所选多个语法部件汇总需求（`PromptProvider.getWritingRequirement(id)`）一次生成组合范文；AI 调用改用部分参数命名、兼容 Gemini Flutter/原生两种 `system_instruction` 传参。
+- `grammar_writing_screen.dart` 由「选单部件分数次生成」改为组合写作模式，产出后直达 `_openGeneratedWriting(result)` 编辑页；相关 UI 重构为 +191/−59。
+- `prompt_provider.dart` 重写 `getCombinedWritingPrompt`（删除 `_writingAnnotationHint`），提示词规模净增约 119 行。
+
+**生成文档听写** — `lib/services/tts_service.dart`（+35）、`lib/screens/note_detail_screen.dart`（+38）、`lib/widgets/tts_player_bar.dart`（+8）
+
+- 新增 `startGeneratedDocumentDictation()`：对 AI 生成的文档（作文/范文）听写，默认 `repeatCount=3`、`pauseBetweenSentences=3s`、`loopEnabled=true`（无限重复播放）。
+- `note_detail_screen.dart` 新增 `extractListeningShorthandNarration(fullText)`（`@visibleForTesting`）：从 exam 全文中提取两个 TTS-first 速记块（`【全篇逻辑播报·可播放】`/`【答题重点与危险位置·可播放】`）的正文作为听写源；`Jeff_*` 类文档据此触发生成文档听写。
+
+**Essay 预设话题搜索移除** — `lib/screens/essay_config_screen.dart`（净 −302）
+
+- 回退上批话题搜索：`PresetTopicSearchResult`、`searchPresetTopics()`、`_buildTopicSearchField()`、`_selectSearchedTopic()` 全部删除；补回 `test/essay_config_screen_test.dart`、`test/grammar_writing_screen_test.dart`、`test/grammar_writing_prompt_test.dart`。场景校验微调：`final_exam_notes_pipeline_test.dart`（+16）、`session_isolation_deep_test.dart`（+29）随速记块重命名更新。
+
