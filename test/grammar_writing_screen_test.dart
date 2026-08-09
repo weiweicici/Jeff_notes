@@ -5,9 +5,13 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/data/grammar_content.dart';
 import 'package:jeff_notes/screens/grammar_writing_screen.dart';
 import 'package:jeff_notes/services/grammar_repository.dart';
+import 'package:jeff_notes/services/grammar_writing_draft_service.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   setUp(() {
+    SharedPreferences.setMockInitialValues({});
+    GrammarWritingDraftService.instance.resetForTesting();
     GrammarRepository.setCachedPartsForTesting(GrammarContent.parts);
   });
 
@@ -45,6 +49,62 @@ void main() {
     expect(find.text('选择语法（可选）'), findsOneWidget);
     expect(find.text('选择章节（Part）'), findsNothing);
   });
+
+  testWidgets('watch topic is copied into combined writing input', (
+    tester,
+  ) async {
+    await tester.pumpWidget(
+      const MaterialApp(
+        home: GrammarWritingScreen(initialTopic: 'shopping garage sale'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    final field = tester.widget<TextField>(
+      find.byKey(const ValueKey('combinedWritingTopic')),
+    );
+    expect(field.controller?.text, 'shopping garage sale');
+  });
+
+  testWidgets(
+    'phone combined grammar choices persist for a later watch launch',
+    (tester) async {
+      await tester.pumpWidget(const MaterialApp(home: GrammarWritingScreen()));
+      await tester.pumpAndSettle();
+
+      final partCheckbox = find.byKey(
+        const ValueKey('combinedPartCheckbox_part_1'),
+      );
+      await tester.ensureVisible(partCheckbox);
+      await tester.tap(partCheckbox);
+      await tester.pumpAndSettle();
+      final activityTheme = find.text('活动/日常');
+      await tester.ensureVisible(activityTheme);
+      await tester.tap(activityTheme);
+      await tester.pumpAndSettle();
+
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: GrammarWritingScreen(initialTopic: 'teacher topic'),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(tester.widget<Checkbox>(partCheckbox).value, isTrue);
+      expect(
+        tester
+            .widget<ChoiceChip>(find.widgetWithText(ChoiceChip, '活动/日常'))
+            .selected,
+        isTrue,
+      );
+      final field = tester.widget<TextField>(
+        find.byKey(const ValueKey('combinedWritingTopic')),
+      );
+      expect(field.controller?.text, 'teacher topic');
+    },
+  );
 
   testWidgets('quick preset can generate without a typed topic', (
     tester,

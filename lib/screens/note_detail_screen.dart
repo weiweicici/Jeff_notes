@@ -14,6 +14,7 @@ import '../widgets/tap_page_turn_region.dart';
 import '../widgets/timed_expansion_controller.dart';
 import '../services/supabase_config.dart';
 import '../services/tts_service.dart';
+import '../services/watch_sync_service.dart';
 import '../services/vocab_service.dart';
 import '../services/vocab_extractor_service.dart';
 import 'smart_vocab_screen.dart';
@@ -123,6 +124,7 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
   final _textController = TextEditingController();
   final _scrollController = ScrollController();
   String? _lastLoadedContent;
+  String? _lastWatchSyncedContent;
   String? _chineseOnlyText;
   String? _englishOnlyText;
   bool _showRendered = true;
@@ -889,6 +891,15 @@ class _NoteDetailScreenState extends State<NoteDetailScreen> {
             _chineseOnlyText = _extractChineseOnly(currentContent);
             _englishOnlyText = _extractEnglishOnly(currentContent);
             _lastLoadedContent = currentContent;
+            if (_lastWatchSyncedContent != currentContent) {
+              _lastWatchSyncedContent = currentContent;
+              unawaited(
+                WatchSyncService.instance.queueMarkdownDocument(
+                  title: widget.file.uri.pathSegments.last,
+                  markdown: currentContent,
+                ),
+              );
+            }
             _scheduleEnglishAutoPlay(currentContent);
             _scheduleListeningChineseAutoPlay(currentContent);
           }

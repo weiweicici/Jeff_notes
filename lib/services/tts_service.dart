@@ -195,6 +195,8 @@ class TtsService extends ChangeNotifier {
   int get dictationRepeatCount => _dictationRepeatCount;
   int get dictationCycleIndex => _dictationCycleIndex;
   bool get isEnglishDictationPaused => _dictationPauseGate.isPaused;
+  bool get isEnglishDictationAudiblyPlaying =>
+      _isEnglishDictationPlaying && !_dictationPauseGate.isPaused;
   bool get isEnglishDictationExtraReplay => _isEnglishDictationExtraReplay;
   bool get isChineseDictationPlaying =>
       _isEnglishDictationPlaying &&
@@ -318,7 +320,84 @@ class TtsService extends ChangeNotifier {
       _isNativeEnglishPlaying;
   bool get isSynthesizing => _isChineseSynthesizing || _isEnglishSynthesizing;
 
-  TtsService._internal();
+  TtsService._internal() {
+    WatchSyncService.instance.setCommandHandler(_handleWatchRemoteCommand);
+  }
+
+  Future<void> _handleWatchRemoteCommand(String command) async {
+    switch (command) {
+      case 'previousSentence':
+        requestPreviousEnglishDictationSentence();
+        break;
+      case 'nextSentence':
+        requestNextEnglishDictationSentence();
+        break;
+      case 'togglePlayPause':
+        await toggleActivePlayback();
+        break;
+      case 'rewind5':
+        await _seekActiveAudioBy(const Duration(seconds: -5));
+        break;
+      case 'forward5':
+        await _seekActiveAudioBy(const Duration(seconds: 5));
+        break;
+      case 'toggleLoop':
+        await toggleLoopMode();
+        break;
+      default:
+        if (command.startsWith('setSpeed:')) {
+          final speed = double.tryParse(command.substring('setSpeed:'.length));
+          if (speed == null || !const [0.75, 1.0, 1.25, 1.5].contains(speed)) {
+            throw ArgumentError.value(command, 'command', 'Invalid speed');
+          }
+          if (_currentAudioType == ActiveAudioType.chinese) {
+            await setChineseSpeed(speed);
+          } else {
+            await setEnglishSpeed(speed);
+          }
+        } else {
+          throw UnsupportedError('Unknown Watch command: $command');
+        }
+        break;
+    }
+  }
+
+  /// One source of truth for the phone UI, Watch remote and system controls.
+  /// A dictation remains "active" while paused, so `_audioPlayer.playing` and
+  /// `isPlaying` alone cannot decide whether the next tap means pause/resume.
+  Future<void> toggleActivePlayback() async {
+    if (_isEnglishDictationPlaying) {
+      if (_dictationPauseGate.isPaused) {
+        if (_currentAudioType == ActiveAudioType.chinese) {
+          await playChinese();
+        } else {
+          await playEnglish();
+        }
+      } else if (_currentAudioType == ActiveAudioType.chinese) {
+        await pauseChinese();
+      } else {
+        await pauseEnglish();
+      }
+      return;
+    }
+
+    if (isPlaying) {
+      await pauseAll();
+    } else if (_currentAudioType == ActiveAudioType.chinese) {
+      await playChinese();
+    } else {
+      await playEnglish();
+    }
+  }
+
+  Future<void> _seekActiveAudioBy(Duration delta) async {
+    final duration = currentDuration;
+    var target = currentPosition + delta;
+    if (target < Duration.zero) target = Duration.zero;
+    if (duration != null && target > duration) target = duration;
+    await _audioPlayer.seek(target);
+    notifyListeners();
+  }
 
   Future<void> init() async {
     if (_isInitialized) return;

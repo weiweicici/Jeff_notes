@@ -47,6 +47,7 @@ class ShadowDraftService {
     'segmentSummaries': List<String>.of(context.segmentSummaries),
     'rawAudioPaths': List<String>.of(context.rawAudioPaths),
     'stitchedAudioPaths': List<String>.of(context.stitchedAudioPaths),
+    'pendingAudioNotes': Map<String, String?>.of(context.pendingAudioNotes),
     'finalReviewContent': context.finalReviewContent,
     'shorthandReviewContent': context.shorthandReviewContent,
     'identifiedLectureContext': context.identifiedLectureContext,
@@ -122,6 +123,17 @@ class ShadowDraftService {
       if (!_isStringList(data['segmentSummaries']) ||
           !_isStringList(data['rawAudioPaths']) ||
           !_isStringList(data['stitchedAudioPaths'])) {
+        return false;
+      }
+
+      final pendingAudioNotes = data['pendingAudioNotes'];
+      if (pendingAudioNotes != null &&
+          (pendingAudioNotes is! Map ||
+              pendingAudioNotes.entries.any(
+                (entry) =>
+                    entry.key is! String ||
+                    (entry.value != null && entry.value is! String),
+              ))) {
         return false;
       }
 
@@ -240,6 +252,13 @@ class ShadowDraftService {
         context.stitchedAudioPaths.addAll(
           (data['stitchedAudioPaths'] as List).cast<String>(),
         );
+      }
+      final pendingAudioNotes = data['pendingAudioNotes'];
+      if (pendingAudioNotes is Map) {
+        for (final entry in pendingAudioNotes.entries) {
+          context.pendingAudioNotes[entry.key.toString()] = entry.value
+              ?.toString();
+        }
       }
 
       context.finalReviewContent = data['finalReviewContent'] as String?;

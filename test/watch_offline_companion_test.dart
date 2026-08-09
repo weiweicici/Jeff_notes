@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('Apple Watch offline companion contract', () {
+  group('Apple Watch phone remote companion contract', () {
     final watchDirectory = Directory('ios/JeffNotesWatch');
 
     test('watch target has no AI, TTS, credential, or network client', () {
@@ -26,8 +26,9 @@ void main() {
       ]) {
         expect(source, isNot(contains(forbidden)), reason: forbidden);
       }
-      expect(source, contains('AVAudioPlayer(contentsOf: document.audioURL)'));
+      expect(source, isNot(contains('AVAudioPlayer')));
       expect(source, contains('WatchConnectivity'));
+      expect(source, contains('sendRemoteCommand'));
     });
 
     test(
@@ -47,27 +48,166 @@ void main() {
 
         expect(positions, everyElement(greaterThanOrEqualTo(0)));
         expect(List<int>.from(positions)..sort(), positions);
-        expect(source, contains('SentenceRepeatMode.allCases'));
-        expect(source, contains('playback.loopEnabled.toggle()'));
-        expect(source, contains('[0.75, 1.0, 1.25, 1.5]'));
+        expect(source, contains('控制手机 TTS'));
       },
     );
 
-    test('phone queues only finished local package files', () {
+    test(
+      'watch exposes phone loop and speed controls below the transport row',
+      () {
+        final view = File(
+          'ios/JeffNotesWatch/ContentView.swift',
+        ).readAsStringSync();
+        final controller = File(
+          'ios/JeffNotesWatch/WatchPlaybackController.swift',
+        ).readAsStringSync();
+        final tts = File('lib/services/tts_service.dart').readAsStringSync();
+
+        expect(view, contains('playback.toggleLoop()'));
+        expect(view, contains('playback.cycleSpeed()'));
+        expect(view, contains('repeat.circle.fill'));
+        expect(controller, contains('[0.75, 1.0, 1.25, 1.5]'));
+        expect(controller, contains('send("toggleLoop")'));
+        expect(controller, contains('send("setSpeed:\\(speed)")'));
+        expect(tts, contains("case 'toggleLoop':"));
+        expect(tts, contains("command.startsWith('setSpeed:')"));
+      },
+    );
+
+    test(
+      'phone queues markdown and optional sentence metadata, never audio',
+      () {
+        final bridge = File(
+          'ios/Runner/WatchTransferService.swift',
+        ).readAsStringSync();
+        final sync = File(
+          'lib/services/watch_sync_service.dart',
+        ).readAsStringSync();
+
+        for (final kind in ['boundaries', 'markdown', 'manifest']) {
+          expect(bridge, contains('("$kind",'));
+        }
+        expect(bridge, isNot(contains('("audio",')));
+        expect(bridge, isNot(contains('guard session.isWatchAppInstalled')));
+        expect(sync, contains("'audio_file': 'audio.mp3'"));
+        expect(sync, contains("'markdown_file': 'document.md'"));
+        expect(sync, contains("'repeat_count'"));
+        expect(sync, contains("'loop_enabled'"));
+        expect(sync, contains('queueMarkdownDocument'));
+      },
+    );
+
+    test(
+      'phone retains the command channel and acknowledges real handling',
+      () {
+        final appDelegate = File(
+          'ios/Runner/AppDelegate.swift',
+        ).readAsStringSync();
+        final bridge = File(
+          'ios/Runner/WatchTransferService.swift',
+        ).readAsStringSync();
+        final sync = File(
+          'lib/services/watch_sync_service.dart',
+        ).readAsStringSync();
+
+        expect(appDelegate, contains('private var watchSyncChannel:'));
+        expect(appDelegate, contains('watchSyncChannel = channel'));
+        expect(appDelegate, isNot(contains('[weak watchSyncChannel]')));
+        expect(bridge, contains('replyHandler(["ok": accepted])'));
+        expect(sync, contains('await handler(command);'));
+        expect(sync, contains('return true;'));
+      },
+    );
+
+    test('watch can submit a grammar topic without any AI client', () {
+      final view = File(
+        'ios/JeffNotesWatch/ContentView.swift',
+      ).readAsStringSync();
+      final receiver = File(
+        'ios/JeffNotesWatch/WatchDocumentStore.swift',
+      ).readAsStringSync();
+      final sync = File(
+        'lib/services/watch_sync_service.dart',
+      ).readAsStringSync();
+
+      expect(view, contains('WatchGrammarWritingView'));
+      expect(view, contains('输入或听写老师给出的题目'));
+      expect(view, contains('生成文章'));
+      expect(view, contains('全部文档'));
+      expect(receiver, contains('sendGrammarWritingRequest'));
+      expect(receiver, contains('"generateGrammarWriting"'));
+      expect(receiver, contains('session.transferUserInfo(message)'));
+      expect(sync, contains("command == 'generateGrammarWriting'"));
+      expect(sync, contains('WatchGrammarWritingRequest('));
+      expect(sync, contains("command == 'requestGrammarWritingConfig'"));
+      expect(view, contains('手机当前选择'));
+      expect(view, contains('AI自动4–6种'));
+      expect(view, contains('手表重新选择'));
+      expect(view, contains('WatchThemeSelectionView'));
+      expect(view, contains('WatchGrammarSelectionView'));
+    });
+
+    test('watch home has three independent module entrances', () {
+      final view = File(
+        'ios/JeffNotesWatch/ContentView.swift',
+      ).readAsStringSync();
+
+      expect(view, contains('struct WatchHomeView'));
+      expect(view, contains('title: "全部文档"'));
+      expect(view, contains('title: "语法写作"'));
+      expect(view, contains('title: "听力录音"'));
+      expect(view, contains('WatchListeningView'));
+      expect(view, contains('停止并生成'));
+      expect(view, contains('latestEnglish'));
+      expect(view, contains('latestChinese'));
+    });
+
+    test('phone owns recording while watch only sends remote commands', () {
+      final provider = File('lib/recording_provider.dart').readAsStringSync();
+      final sync = File(
+        'lib/services/watch_sync_service.dart',
+      ).readAsStringSync();
+      final bridge = File(
+        'ios/Runner/WatchTransferService.swift',
+      ).readAsStringSync();
+
+      expect(provider, contains('enterRecordingStandby'));
+      expect(provider, contains('_startProcessingKeepalive'));
+      expect(provider, contains('registerPendingAudio'));
+      expect(provider, contains('resumeInterruptedSessions'));
+      expect(sync, contains("'startListeningRecording'"));
+      expect(sync, contains("'stopListeningRecording'"));
+      expect(sync, contains('updateRecordingState'));
+      expect(bridge, contains('updateApplicationContext(envelope)'));
+    });
+
+    test('recording commands are queued, idempotent, and acknowledged', () {
+      final view = File(
+        'ios/JeffNotesWatch/ContentView.swift',
+      ).readAsStringSync();
+      final receiver = File(
+        'ios/JeffNotesWatch/WatchDocumentStore.swift',
+      ).readAsStringSync();
       final bridge = File(
         'ios/Runner/WatchTransferService.swift',
       ).readAsStringSync();
       final sync = File(
         'lib/services/watch_sync_service.dart',
       ).readAsStringSync();
+      final main = File('lib/main.dart').readAsStringSync();
 
-      for (final kind in ['audio', 'boundaries', 'markdown', 'manifest']) {
-        expect(bridge, contains('("$kind",'));
-      }
-      expect(sync, contains("'audio_file': 'audio.mp3'"));
-      expect(sync, contains("'markdown_file': 'document.md'"));
-      expect(sync, contains("'repeat_count'"));
-      expect(sync, contains("'loop_enabled'"));
+      expect(receiver, contains('sendRecordingCommand'));
+      expect(receiver, contains('"commandId": UUID().uuidString'));
+      expect(receiver, contains('session.transferUserInfo(message)'));
+      expect(bridge, contains('message["commandId"] is String'));
+      expect(bridge, contains('pendingCommands.append(message)'));
+      expect(sync, contains('_handledRecordingCommandIds'));
+      expect(sync, contains("'recording_command_completed'"));
+      expect(main, contains('final armed = await provider.enterRecordingStandby()'));
+      expect(view, contains('手机已收到命令'));
+      expect(view, contains('命令已排队，等待手机连接'));
+      expect(view, isNot(contains('Button(action: {})')));
+      expect(view, isNot(contains('onLongPressGesture(minimumDuration: 0.8)')));
     });
 
     test('watch app is embedded inside the iPhone app bundle', () {

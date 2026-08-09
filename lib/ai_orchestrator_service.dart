@@ -1,18 +1,90 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'api_scheduler.dart';
 import 'text_sanitizer.dart';
 import 'terminology_interceptor.dart';
 import 'openai_service.dart';
+import 'services/diagnostic_log_service.dart';
 
 /// [Architect: Pipeline Result Container]
 class PipelineResult {
   final String noteId;
   final String content;
   PipelineResult(this.noteId, this.content);
+}
+
+/// A provider failure is different from an actually silent recording. The
+/// caller keeps the pending WAV when this is thrown so recovery can retry it.
+class SttUnavailableException implements Exception {
+  final String reason;
+  const SttUnavailableException([
+    this.reason = 'speech recognition unavailable',
+  ]);
+
+  @override
+  String toString() => 'SttUnavailableException: $reason';
+}
+
+/// Checks 16-bit PCM WAV signal strength without sending audio anywhere.
+/// A conservative threshold prevents audible lecture speech from being
+/// discarded merely because an STT provider returned an empty response.
+Future<bool> wavContainsAudibleSignal(
+  String filePath, {
+  double rmsThresholdDb = -48.0,
+}) async {
+  try {
+    final bytes = await File(filePath).readAsBytes();
+    if (bytes.length < 46) return false;
+
+    final data = ByteData.sublistView(bytes);
+    int dataStart = 44;
+    int dataLength = bytes.length - dataStart;
+    if (String.fromCharCodes(bytes.take(4)) == 'RIFF' &&
+        String.fromCharCodes(bytes.skip(8).take(4)) == 'WAVE') {
+      var offset = 12;
+      while (offset + 8 <= bytes.length) {
+        final chunkId = String.fromCharCodes(bytes.skip(offset).take(4));
+        final chunkLength = data.getUint32(offset + 4, Endian.little);
+        final chunkStart = offset + 8;
+        if (chunkId == 'data') {
+          dataStart = chunkStart;
+          dataLength = math.min(chunkLength, bytes.length - chunkStart);
+          break;
+        }
+        offset = chunkStart + chunkLength + (chunkLength.isOdd ? 1 : 0);
+      }
+    }
+
+    if (dataLength < 2 || dataStart + dataLength > bytes.length) return false;
+    var sumSquares = 0.0;
+    var peak = 0;
+    var samples = 0;
+    final end = dataStart + dataLength - 1;
+    // Sampling every fourth value is sufficient and keeps long recovery files cheap.
+    for (var offset = dataStart; offset < end; offset += 8) {
+      final value = data.getInt16(offset, Endian.little).abs();
+      peak = math.max(peak, value);
+      final normalized = value / 32768.0;
+      sumSquares += normalized * normalized;
+      samples++;
+    }
+    if (samples == 0 || peak < 80) return false;
+    final rms = math.sqrt(sumSquares / samples);
+    if (rms <= 0) return false;
+    final rmsDb = 20 * math.log(rms) / math.ln10;
+    return rmsDb >= rmsThresholdDb;
+  } catch (_) {
+    // Unknown-but-substantial audio should be retried, never discarded as silence.
+    try {
+      return await File(filePath).length() > 3200;
+    } catch (_) {
+      return false;
+    }
+  }
 }
 
 /// [Architect: Pipeline Assembly]
@@ -237,6 +309,12 @@ class AIOrchestratorService {
               if (lower.contains("no speech") ||
                   lower.contains("silence") ||
                   lower.contains("background noise")) {
+                unawaited(
+                  DiagnosticLogService.instance.record(
+                    'stt',
+                    'gemini_reported_silence',
+                  ),
+                );
                 return "";
               }
               return cleaned;
@@ -244,13 +322,34 @@ class AIOrchestratorService {
           }
         }
       } else {
+        unawaited(
+          DiagnosticLogService.instance.record(
+            'stt',
+            'gemini_http_failed',
+            fields: {'status': response.statusCode},
+          ),
+        );
         debugPrint(
           '[Orchestrator Gemini STT] Failed status ${response.statusCode}: ${response.body}',
         );
       }
+    } on TimeoutException {
+      unawaited(DiagnosticLogService.instance.record('stt', 'gemini_timeout'));
+      debugPrint('[Orchestrator Gemini STT] Timeout');
+      return null;
     } catch (e) {
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'stt',
+          'gemini_error',
+          fields: {'errorType': e.runtimeType},
+        ),
+      );
       debugPrint('[Orchestrator Gemini STT] Error: $e');
     }
+    unawaited(
+      DiagnosticLogService.instance.record('stt', 'gemini_empty_response'),
+    );
     return null;
   }
 
@@ -280,34 +379,76 @@ class AIOrchestratorService {
 
       // 1. STT 阶段（快车道）：Groq 主服务 → Gemini 2.5 Flash 自动降级兜底
       String? rawEnglish;
+      Object? groqFailure;
       try {
         rawEnglish = await ApiScheduler().enqueue(
           () => sttService.transcribe(filePath, previousText: context),
           priority: 0,
           sessionId: sessionId,
+          maxAttempts: 2,
+          retryBaseDelay: const Duration(milliseconds: 700),
         );
       } catch (sttErr) {
+        groqFailure = sttErr;
+        final statusMatch = RegExp(
+          r'\b([45][0-9]{2})\b',
+        ).firstMatch(sttErr.toString());
+        unawaited(
+          DiagnosticLogService.instance.record(
+            'stt',
+            'groq_failed',
+            sessionId: sessionId,
+            fields: {
+              'status': statusMatch?.group(1) ?? 'transport',
+              'errorType': sttErr.runtimeType,
+            },
+          ),
+        );
         debugPrint(
           "[Orchestrator STT] Main Groq STT failed: $sttErr. Trying Gemini 2.5 Flash fallback...",
         );
-        onStatus?.call("STT failover to Gemini...");
-        rawEnglish = await _transcribeGemini(filePath);
       }
 
       if (_isDisposed) return;
 
-      // 如果 Groq 返回空/未识别，且配置了 Gemini Key，用 Gemini Flash 尝试兜底转写
+      // Groq 失败或返回空时只调用一次 Gemini，避免同一音频被重复上传。
+      String? geminiResult;
       if (rawEnglish == null || rawEnglish.trim().isEmpty) {
         if (_geminiApiKey.isNotEmpty) {
-          onStatus?.call("Checking STT with Gemini...");
-          final geminiSTT = await _transcribeGemini(filePath);
-          if (geminiSTT != null && geminiSTT.trim().isNotEmpty) {
-            rawEnglish = geminiSTT;
+          onStatus?.call("正在使用 Gemini 复核语音...");
+          geminiResult = await _transcribeGemini(filePath);
+          if (geminiResult != null && geminiResult.trim().isNotEmpty) {
+            rawEnglish = geminiResult;
           }
         }
       }
 
       if (rawEnglish == null || rawEnglish.trim().isEmpty) {
+        final audible = await wavContainsAudibleSignal(filePath);
+        // A clear waveform plus an empty/failed provider response is not silence.
+        // Throwing keeps the original pending slice in the recovery draft.
+        if (audible) {
+          var audioBytes = 0;
+          try {
+            audioBytes = await File(filePath).length();
+          } catch (_) {}
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'stt',
+              'audible_audio_unrecognized',
+              sessionId: sessionId,
+              fields: {
+                'audioBytes': audioBytes,
+                'approxSeconds': (audioBytes / 32000).toStringAsFixed(1),
+                'geminiConfigured': _geminiApiKey.isNotEmpty,
+              },
+            ),
+          );
+          final providerState = groqFailure != null
+              ? 'Groq failed and fallback produced no transcript'
+              : 'provider returned an empty transcript for audible audio';
+          throw SttUnavailableException(providerState);
+        }
         onStatus?.call("Silence detected");
         _addFastEnglish(PipelineResult(noteId, "[Silence]"));
         return;
@@ -351,6 +492,9 @@ class AIOrchestratorService {
           "Buffering... (${_translationBuffer.length}/$batchSize)",
         );
       }
+    } on SttUnavailableException {
+      onStatus?.call("识别服务暂时不可用，录音已保留");
+      rethrow;
     } catch (e, st) {
       debugPrint("[Orchestrator Error $noteId] $e\n$st");
       onStatus?.call("Pipeline Error");

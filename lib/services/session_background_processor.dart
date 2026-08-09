@@ -87,6 +87,11 @@ class SessionBackgroundProcessor {
           '[SessionBGP] Pipeline drain timeout/error for ${ctx.sessionId}: $e',
         );
       }
+      if (ctx.pendingAudioNotes.isNotEmpty) {
+        finalizationIncomplete = true;
+        finalizationWarning ??=
+            'Speech recognition was temporarily unavailable; saved available transcript and kept audio for recovery.';
+      }
 
       // Flush only after every STT producer has settled.
       payload.onStatus('Flushing buffer...');

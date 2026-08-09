@@ -296,7 +296,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     bool isDark,
   ) {
     final isSynthesizing = tts.isChineseSynthesizing;
-    final isPlaying = tts.isChinesePlaying || tts.isChineseDictationPlaying;
+    final isPlaying = tts.isChineseDictationPlaying
+        ? tts.isEnglishDictationAudiblyPlaying
+        : tts.isChinesePlaying;
     final currentSpeed = tts.chineseSpeed;
     final sentenceCount = TtsService.splitChineseSentences(
       widget.chineseText,
@@ -627,7 +629,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                   foregroundColor: Colors.white,
                 ),
                 onPressed: () async {
-                  if (isPlaying) {
+                  if (tts.isChineseDictationPlaying) {
+                    await tts.toggleActivePlayback();
+                  } else if (isPlaying) {
                     await tts.pauseChinese();
                   } else {
                     try {
@@ -939,7 +943,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
     bool isDark,
   ) {
     final isSynthesizing = tts.isEnglishSynthesizing;
-    final isPlaying = tts.isEnglishPlaying;
+    final isPlaying = tts.isEnglishDictationPlaying
+        ? tts.isEnglishDictationAudiblyPlaying
+        : tts.isEnglishPlaying;
     final currentSpeed = tts.englishSpeed;
     final sentenceCount = TtsService.splitEnglishSentences(
       widget.englishText,
@@ -1194,7 +1200,9 @@ class _TtsPlayerBarState extends State<TtsPlayerBar> {
                   foregroundColor: Colors.white,
                 ),
                 onPressed: () async {
-                  if (isPlaying) {
+                  if (tts.isEnglishDictationPlaying) {
+                    await tts.toggleActivePlayback();
+                  } else if (isPlaying) {
                     await tts.pauseEnglish();
                   } else {
                     try {

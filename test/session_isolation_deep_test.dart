@@ -404,5 +404,41 @@ void main() {
         expect(warning, contains('recovery draft'));
       },
     );
+
+    test(
+      '10. Pending STT audio keeps recovery draft after a usable export',
+      () async {
+        final context = RecordingSessionContext.create(
+          mode: AppMode.lecture,
+          unit: PathwaysUnit.unit1,
+          baseDirectory: tempDir.path,
+          customSessionId: 'pending_stt_recovery_test',
+        );
+        context.addNote(
+          InsightNote(
+            summary: '',
+            transcript: '[等待重新识别]',
+            timestamp: DateTime.now(),
+          ),
+        );
+        context.registerPendingAudio('${tempDir.path}/audible_pending.wav');
+        expect(await context.saveShadowDraft(), isTrue);
+
+        String? warning;
+        await SessionBackgroundProcessor.instance.submit(
+          HandoverPayload(
+            context: context,
+            enableFinalRecap: false,
+            onDone: (_) {},
+            onStatus: (_) {},
+            onError: (message) => warning = message,
+          ),
+        );
+
+        expect(await File(context.exportPath).exists(), isTrue);
+        expect(await File(context.shadowDraftPath).exists(), isTrue);
+        expect(warning, contains('Speech recognition'));
+      },
+    );
   });
 }

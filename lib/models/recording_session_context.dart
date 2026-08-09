@@ -23,6 +23,12 @@ class RecordingSessionContext {
   final List<String> segmentSummaries = [];
   final List<String> rawAudioPaths = [];
   final List<String> stitchedAudioPaths = [];
+
+  /// Audio slices are registered here before any STT work starts. The value
+  /// becomes the placeholder note id once one is created. Keeping this map in
+  /// the shadow draft lets a relaunched app resume exactly the unfinished
+  /// slices without duplicating completed transcript rows.
+  final Map<String, String?> pendingAudioNotes = {};
   Uint8List lastAudioTail = Uint8List(0);
   String? lastTranscript;
   final List<String> segmentTranscriptBuffer = [];
@@ -136,11 +142,26 @@ class RecordingSessionContext {
   }
 
   void addRawAudioPath(String path) {
-    rawAudioPaths.add(path);
+    if (!rawAudioPaths.contains(path)) rawAudioPaths.add(path);
   }
 
   void addStitchedAudioPath(String path) {
-    stitchedAudioPaths.add(path);
+    if (!stitchedAudioPaths.contains(path)) stitchedAudioPaths.add(path);
+  }
+
+  void registerPendingAudio(String path) {
+    pendingAudioNotes.putIfAbsent(path, () => null);
+    _saveShadowDraft();
+  }
+
+  void bindPendingAudioToNote(String path, String noteId) {
+    pendingAudioNotes[path] = noteId;
+    _saveShadowDraft();
+  }
+
+  void completePendingAudio(String path) {
+    pendingAudioNotes.remove(path);
+    _saveShadowDraft();
   }
 
   void runPipeline(Future<void> Function() operation) {

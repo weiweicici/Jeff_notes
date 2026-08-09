@@ -21,6 +21,7 @@ import 'models/recording_session_context.dart';
 import 'services/tts_service.dart';
 import 'services/credential_store.dart';
 import 'services/session_background_processor.dart';
+import 'services/shadow_draft_service.dart';
 import 'services/diagnostic_log_service.dart';
 import 'adapters/audio_recorder_adapter.dart';
 
@@ -165,10 +166,22 @@ class RecordingProvider extends ChangeNotifier {
   };
 
   Timer? _sliceTimer;
+  bool _isRotatingSlice = false;
   bool _isRecording = false;
   bool _isPaused = false; // 暂停录音标志（仅在 _isRecording=true 时有意义）
   bool _isPending = false;
+  bool _isRecordingStandby = false;
+  String? _standbyAudioPath;
+  bool _isProcessingKeepalive = false;
+  bool _isRecoveryRunning = false;
+  String? _processingKeepalivePath;
+  DateTime? _recordingStartedAt;
   static const int kTailSize = 25600;
+  static const RecordConfig _recordConfig = RecordConfig(
+    encoder: AudioEncoder.wav,
+    sampleRate: 16000,
+    numChannels: 1,
+  );
 
   final List<InsightNote> _allNotes = [];
   String? _statusMessage;
@@ -189,9 +202,9 @@ class RecordingProvider extends ChangeNotifier {
   final List<String> _segmentSummaries = [];
 
   /// Rolling notes update after at least about one minute of valid speech.
-  /// This adapts to the user-selectable 5-8 second STT slice duration.
+  /// This adapts to the user-selectable 5-10 second STT slice duration.
   int get _slicesPerRollingUpdate =>
-      ((60 + _sliceDuration - 1) ~/ _sliceDuration).clamp(8, 15);
+      ((60 + _sliceDuration - 1) ~/ _sliceDuration).clamp(4, 15);
   String? _identifiedLectureContext;
   bool _hasRecoveredCache = false;
   String _openRouterKey = '';
@@ -206,6 +219,8 @@ class RecordingProvider extends ChangeNotifier {
   bool get isRecording => _isRecording;
   bool get isPaused => _isPaused;
   bool get isPending => _isPending;
+  bool get isRecordingStandby => _isRecordingStandby;
+  DateTime? get recordingStartedAt => _recordingStartedAt;
   AIProvider get selectedProvider => _selectedProvider;
   int get sliceDuration => _sliceDuration;
   bool get isDarkMode => _isDarkMode;
@@ -244,6 +259,24 @@ class RecordingProvider extends ChangeNotifier {
   String? get lastReadySessionId => _lastReadySessionId;
   String? get identifiedLectureContext => _identifiedLectureContext;
   bool get hasRecoveredCache => _hasRecoveredCache;
+
+  String get latestLiveEnglish {
+    final source = _activeContext?.notes ?? _allNotes;
+    for (final note in source.reversed) {
+      final value = note.transcript.trim();
+      if (_isValidTranscript(value) && !value.startsWith('[')) return value;
+    }
+    return '';
+  }
+
+  String get latestLiveChinese {
+    final source = _activeContext?.notes ?? _allNotes;
+    for (final note in source.reversed) {
+      final value = note.translatedContent?.trim() ?? '';
+      if (value.isNotEmpty && !value.startsWith('[')) return value;
+    }
+    return '';
+  }
 
   // 添加缺失的getter方法
   Stream<SessionReadyEvent> get sessionReadyStream =>
@@ -340,7 +373,126 @@ class RecordingProvider extends ChangeNotifier {
     await _loadSettings();
     await _initializeAudioSession();
     await _checkRecoveryCache();
+    if (Platform.isIOS) {
+      unawaited(resumeInterruptedSessions());
+    }
     notifyListeners();
+  }
+
+  Future<void> resumeInterruptedSessions() async {
+    if (_isRecoveryRunning ||
+        _isProcessingRecording ||
+        !_recordingServicesReady ||
+        _isRecording ||
+        _isRecordingStandby) {
+      return;
+    }
+    _isRecoveryRunning = true;
+    try {
+      await _resumeInterruptedSessionsOnce();
+    } finally {
+      _isRecoveryRunning = false;
+    }
+  }
+
+  Future<void> _resumeInterruptedSessionsOnce() async {
+    final directory = await getApplicationDocumentsDirectory();
+    final drafts =
+        directory
+            .listSync()
+            .whereType<File>()
+            .where(
+              (file) => RegExp(r'/shadow_draft_.+\.json$').hasMatch(file.path),
+            )
+            .toList()
+          ..sort(
+            (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
+          );
+
+    var newestRecoverableDraftCanClaimOrphans = true;
+    for (final draft in drafts) {
+      if (_isRecording || _isRecordingStandby) return;
+      final context = await ShadowDraftService.instance.readDraft(draft.path);
+      if (context == null || context.isCompleted) continue;
+
+      // A process can be terminated before the recorder returns its current
+      // path to Dart. Recover any session WAV created after this draft began.
+      if (newestRecoverableDraftCanClaimOrphans) {
+        newestRecoverableDraftCanClaimOrphans = false;
+        final knownAudio = context.rawAudioPaths.toSet();
+        final orphanedSlices = directory.listSync().whereType<File>().where((
+          file,
+        ) {
+          final name = file.uri.pathSegments.last;
+          if (!name.startsWith('rec_') ||
+              !name.endsWith('.wav') ||
+              name.contains('_stitched')) {
+            return false;
+          }
+          return !knownAudio.contains(file.path) &&
+              !file.lastModifiedSync().isBefore(context.createdAt);
+        });
+        for (final file in orphanedSlices) {
+          context.registerPendingAudio(file.path);
+        }
+      }
+
+      _configureSessionContext(context);
+      _activeContext = context;
+      _processingSessionId = context.sessionId;
+      _isProcessingRecording = true;
+      _processingStep = 1;
+      _processingErrorMessage = null;
+      _statusMessage = '发现未完成录音，正在自动继续处理';
+      notifyListeners();
+
+      for (final path in context.pendingAudioNotes.keys.toList()) {
+        if (await File(path).exists()) {
+          context.runPipeline(() => _processAudio(path, context));
+        }
+      }
+      context.sealPipelines();
+      await context.saveShadowDraft();
+      if (await _audioRecorder.hasPermission()) {
+        await TtsService().releaseForRecording();
+        await _startProcessingKeepalive();
+      }
+
+      SessionReadyEvent? readyEvent;
+      String? processingError;
+      await SessionBackgroundProcessor.instance.submit(
+        HandoverPayload(
+          context: context,
+          enableFinalRecap:
+              _enableFinalRecap ||
+              context.mode == AppMode.exam ||
+              context.mode == AppMode.lecture,
+          onDone: (event) => readyEvent = event,
+          onStatus: (message) =>
+              _updateBackgroundProcessingStatus(context.sessionId, message),
+          onError: (error) => processingError = error,
+        ),
+      );
+      await _releaseProcessingAudio();
+      _activeContext = null;
+      if (readyEvent != null) {
+        _lastExportedPath = readyEvent!.exportPath;
+        _isProcessingRecording = false;
+        _processingStep = RecordingProvider.processingStepCount;
+        _statusMessage = processingError == null
+            ? '中断的录音已经恢复并保存'
+            : '已保存可用内容，并保留恢复草稿';
+        _processingErrorMessage = processingError;
+        _processingSessionId = null;
+        _sessionReadyController.add(readyEvent!);
+      } else {
+        _isProcessingRecording = false;
+        _statusMessage = '恢复处理未完成，草稿和录音仍然保留';
+        _processingErrorMessage = processingError ?? '恢复处理暂未完成，下次启动会再次继续';
+        _processingSessionId = null;
+      }
+      notifyListeners();
+    }
   }
 
   /// Returns clean Chinese + English full transcript for TTS playback.
@@ -419,7 +571,7 @@ class RecordingProvider extends ChangeNotifier {
   }) async {
     final prefs = await SharedPreferences.getInstance();
     if (duration != null) {
-      final clamped = duration.clamp(5, 8);
+      final clamped = duration.clamp(5, 10);
       await prefs.setInt('slice_duration', clamped);
       _sliceDuration = clamped;
     }
@@ -484,7 +636,7 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
-    _sliceDuration = (prefs.getInt('slice_duration') ?? 5).clamp(5, 8);
+    _sliceDuration = (prefs.getInt('slice_duration') ?? 5).clamp(5, 10);
     _isDarkMode = prefs.getBool('is_dark_mode') ?? false;
     _enableFinalRecap = prefs.getBool('enableFinalRecap') ?? false;
     _enableLectureDiscovery = prefs.getBool('enableLectureDiscovery') ?? false;
@@ -612,6 +764,116 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
+  bool get _recordingServicesReady {
+    _updateService();
+    if (_aiService != null && _fastAiService != null) return true;
+    _statusMessage = 'Please configure your API Keys in Settings first';
+    notifyListeners();
+    return false;
+  }
+
+  void _configureSessionContext(RecordingSessionContext context) {
+    final client = context.sessionHttpClient;
+    final stt = OpenAIService(
+      apiKey: groqKey,
+      baseUrl: 'https://api.groq.com/openai/v1',
+      defaultModel: 'openai/gpt-oss-120b',
+      whisperModel: 'whisper-large-v3',
+      httpClient: client,
+    );
+    final trans = OpenAIService(
+      apiKey: groqKey,
+      baseUrl: 'https://api.groq.com/openai/v1',
+      defaultModel: 'openai/gpt-oss-120b',
+      whisperModel: 'whisper-large-v3',
+      httpClient: client,
+    );
+    final routerKey = openRouterKey.trim();
+    final fallbackTrans = routerKey.isEmpty
+        ? null
+        : OpenAIService(
+            apiKey: routerKey,
+            baseUrl: 'https://openrouter.ai/api/v1',
+            defaultModel: 'google/gemini-2.5-flash-lite',
+            httpClient: client,
+          );
+    context.sttService = stt;
+    context.translationService = trans;
+    context.fallbackTranslationService = fallbackTrans;
+    context.onChanged = () {
+      if (_activeContext == context) notifyListeners();
+    };
+    final orchestrator = AIOrchestratorService(
+      sttService: stt,
+      translationService: trans,
+      translationFallbackService: fallbackTrans,
+      sessionId: context.sessionId,
+      geminiApiKey: geminiKey,
+      httpClient: client,
+    );
+    context.bindOrchestrator(orchestrator);
+    _orchestrator = orchestrator;
+  }
+
+  Future<void> toggleRecordingStandby() async {
+    if (_isPending || _isRecording || _isProcessingRecording) return;
+    _isPending = true;
+    notifyListeners();
+    try {
+      if (_isRecordingStandby) {
+        await leaveRecordingStandby();
+      } else {
+        await enterRecordingStandby();
+      }
+    } finally {
+      _isPending = false;
+      notifyListeners();
+    }
+  }
+
+  /// Keeps a real foreground-started microphone session alive so the Watch can
+  /// reliably begin the lecture after the phone locks. Standby audio is never
+  /// sent to STT and is deleted when the actual session starts or is disarmed.
+  Future<bool> enterRecordingStandby() async {
+    if (_isRecordingStandby) return true;
+    if (_isRecording || _isProcessingRecording) return false;
+    if (!await _audioRecorder.hasPermission() || !_recordingServicesReady) {
+      return false;
+    }
+    await TtsService().releaseForRecording();
+    await _initializeAudioSession();
+    final path = await _getTempPath(prefix: 'standby');
+    try {
+      await _audioRecorder.start(_recordConfig, path: path);
+      _standbyAudioPath = path;
+      _isRecordingStandby = true;
+      _statusMessage = '录音待命已开启，可以锁屏并从手表开始';
+      notifyListeners();
+      return true;
+    } catch (error) {
+      _statusMessage = '录音待命失败：$error';
+      TtsService().allowPlaybackAfterRecording();
+      notifyListeners();
+      return false;
+    }
+  }
+
+  Future<void> leaveRecordingStandby() async {
+    if (!_isRecordingStandby) return;
+    final recordedPath = await _audioRecorder.stop();
+    _isRecordingStandby = false;
+    _statusMessage = null;
+    final paths = <String?>[recordedPath, _standbyAudioPath];
+    _standbyAudioPath = null;
+    for (final path in paths.whereType<String>().toSet()) {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    }
+    await _resetAudioSessionAfterRecording();
+    TtsService().allowPlaybackAfterRecording();
+    notifyListeners();
+  }
+
   Future<void> toggleRecording() async {
     if (_isPending) return;
     _isPending = true;
@@ -633,11 +895,16 @@ class RecordingProvider extends ChangeNotifier {
       DiagnosticLogService.instance.record('recording', 'start_requested'),
     );
     if (await _audioRecorder.hasPermission()) {
-      _updateService();
-      if (_aiService == null || _fastAiService == null) {
-        _statusMessage = "Please configure your API Keys in Settings first";
-        notifyListeners();
-        return;
+      if (!_recordingServicesReady) return;
+      if (_isRecordingStandby) {
+        final standbyPath = await _audioRecorder.stop();
+        _isRecordingStandby = false;
+        final paths = <String?>[standbyPath, _standbyAudioPath];
+        _standbyAudioPath = null;
+        for (final path in paths.whereType<String>().toSet()) {
+          final file = File(path);
+          if (await file.exists()) await file.delete();
+        }
       }
       await TtsService().releaseForRecording();
 
@@ -649,49 +916,9 @@ class RecordingProvider extends ChangeNotifier {
         baseDirectory: docsDir.path,
       );
 
-      final client = context.sessionHttpClient;
-      final stt = OpenAIService(
-        apiKey: groqKey,
-        baseUrl: "https://api.groq.com/openai/v1",
-        defaultModel: "openai/gpt-oss-120b",
-        whisperModel: "whisper-large-v3",
-        httpClient: client,
-      );
-      final trans = OpenAIService(
-        apiKey: groqKey,
-        baseUrl: "https://api.groq.com/openai/v1",
-        defaultModel: "openai/gpt-oss-120b",
-        whisperModel: "whisper-large-v3",
-        httpClient: client,
-      );
-      final routerKey = openRouterKey.trim();
-      final fallbackTrans = routerKey.isEmpty
-          ? null
-          : OpenAIService(
-              apiKey: routerKey,
-              baseUrl: 'https://openrouter.ai/api/v1',
-              defaultModel: 'google/gemini-2.5-flash-lite',
-              httpClient: client,
-            );
-      context.sttService = stt;
-      context.translationService = trans;
-      context.fallbackTranslationService = fallbackTrans;
-      context.onChanged = () {
-        if (_activeContext == context) notifyListeners();
-      };
-
-      final orchestrator = AIOrchestratorService(
-        sttService: stt,
-        translationService: trans,
-        translationFallbackService: fallbackTrans,
-        sessionId: context.sessionId,
-        geminiApiKey: geminiKey,
-        httpClient: client,
-      );
-
-      context.bindOrchestrator(orchestrator);
+      _configureSessionContext(context);
       _activeContext = context;
-      _orchestrator = orchestrator;
+      await context.saveShadowDraft();
       unawaited(
         DiagnosticLogService.instance.record(
           'recording',
@@ -703,6 +930,7 @@ class RecordingProvider extends ChangeNotifier {
 
       _isRecording = true;
       _isPaused = false;
+      _recordingStartedAt = DateTime.now();
       _sessionAudioPaths.clear();
       _allNotes.clear();
       _segmentSummaries.clear();
@@ -713,17 +941,11 @@ class RecordingProvider extends ChangeNotifier {
 
       try {
         final path = await _getTempPath();
-        await _audioRecorder.start(
-          const RecordConfig(
-            encoder: AudioEncoder.wav,
-            sampleRate: 16000,
-            numChannels: 1,
-          ),
-          path: path,
-        );
+        await _audioRecorder.start(_recordConfig, path: path);
         _startSmartSliceTimer(context);
       } catch (_) {
         _isRecording = false;
+        _recordingStartedAt = null;
         _activeContext = null;
         context.dispose();
         TtsService().allowPlaybackAfterRecording();
@@ -733,11 +955,92 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> _queueAudioSlice(
+    String path,
+    RecordingSessionContext context,
+  ) async {
+    if (path.isEmpty || context.isDisposed) return;
+    context.registerPendingAudio(path);
+    await context.saveShadowDraft();
+    context.runPipeline(() => _processAudio(path, context));
+  }
+
+  Future<void> _startProcessingKeepalive() async {
+    if (_isProcessingKeepalive) return;
+    try {
+      final path = await _getTempPath(prefix: 'processing_keepalive');
+      await _audioRecorder.start(_recordConfig, path: path);
+      _processingKeepalivePath = path;
+      _isProcessingKeepalive = true;
+    } catch (error) {
+      debugPrint('[Recording Keepalive] Could not start: $error');
+    }
+  }
+
+  Future<void> _stopProcessingKeepalive() async {
+    if (!_isProcessingKeepalive) return;
+    String? stoppedPath;
+    try {
+      stoppedPath = await _audioRecorder.stop();
+    } catch (error) {
+      debugPrint('[Recording Keepalive] Could not stop cleanly: $error');
+    }
+    _isProcessingKeepalive = false;
+    final paths = <String?>[stoppedPath, _processingKeepalivePath];
+    _processingKeepalivePath = null;
+    for (final path in paths.whereType<String>().toSet()) {
+      try {
+        final file = File(path);
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _releaseProcessingAudio() async {
+    await _stopProcessingKeepalive();
+    await _resetAudioSessionAfterRecording();
+    TtsService().allowPlaybackAfterRecording();
+  }
+
+  void _handleSessionReady(
+    RecordingSessionContext context,
+    SessionReadyEvent event,
+  ) {
+    if (_processingSessionId != context.sessionId) return;
+    _lastExportedPath = event.exportPath;
+    _isProcessingRecording = false;
+    _processingStep = RecordingProvider.processingStepCount;
+    _statusMessage = '总结与录音已保存';
+    _processingSessionId = null;
+    notifyListeners();
+    unawaited(
+      _releaseProcessingAudio().then((_) {
+        _sessionReadyController.add(event);
+        notifyListeners();
+      }),
+    );
+  }
+
+  void _handleSessionProcessingError(
+    RecordingSessionContext context,
+    String error,
+  ) {
+    if (_processingSessionId != context.sessionId) return;
+    _isProcessingRecording = false;
+    _statusMessage = '处理未完整完成，已保留可恢复内容';
+    _processingErrorMessage = '处理未完整完成，录音草稿已经保留；下次启动会自动继续';
+    _processingSessionId = null;
+    notifyListeners();
+    unawaited(_releaseProcessingAudio());
+  }
+
   void _startSmartSliceTimer(RecordingSessionContext context) {
     _sliceTimer?.cancel();
     _sliceTimer = Timer.periodic(Duration(seconds: _sliceDuration), (
       timer,
     ) async {
+      if (_isRotatingSlice) return;
+      _isRotatingSlice = true;
       try {
         if (!_isRecording || _isPaused || _activeContext != context) {
           timer.cancel();
@@ -745,33 +1048,31 @@ class RecordingProvider extends ChangeNotifier {
         }
         final path = await _audioRecorder.stop();
         if (path != null) {
-          context.runPipeline(() => _processAudio(path, context));
+          await _queueAudioSlice(path, context);
         }
 
         await Future.delayed(const Duration(milliseconds: 100));
         if (_isRecording && !_isPaused && _activeContext == context) {
           final nextPath = await _getTempPath();
-          await _audioRecorder.start(
-            const RecordConfig(
-              encoder: AudioEncoder.wav,
-              sampleRate: 16000,
-              numChannels: 1,
-            ),
-            path: nextPath,
-          );
+          await _audioRecorder.start(_recordConfig, path: nextPath);
         }
       } catch (e) {
         debugPrint("Slice timer error: $e");
+      } finally {
+        _isRotatingSlice = false;
       }
     });
   }
 
   Future<void> stopRecording() async {
     _isRecording = false;
+    _recordingStartedAt = null;
     _sliceTimer?.cancel();
 
+    RecordingSessionContext? stoppedContext;
     try {
       final context = _activeContext;
+      stoppedContext = context;
       if (context != null) {
         _processingSessionId = context.sessionId;
         _isProcessingRecording = true;
@@ -787,14 +1088,106 @@ class RecordingProvider extends ChangeNotifier {
           sessionId: context?.sessionId,
         ),
       );
-      final path = await _audioRecorder.stop();
+      // A Watch stop tap can land while the 5-second recorder rotation owns
+      // AudioRecorder.stop(). Never issue a second concurrent stop call.
+      final rotationDeadline = DateTime.now().add(const Duration(seconds: 8));
+      while (_isRotatingSlice && DateTime.now().isBefore(rotationDeadline)) {
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
+      final rotationSettled = !_isRotatingSlice;
+      unawaited(
+        DiagnosticLogService.instance.record(
+          'recording',
+          rotationSettled ? 'slice_rotation_settled' : 'slice_rotation_timeout',
+          sessionId: context?.sessionId,
+        ),
+      );
+
+      String? path;
+      var recorderStopSettled = false;
+      if (rotationSettled) {
+        try {
+          path = await _audioRecorder.stop().timeout(
+            const Duration(seconds: 5),
+          );
+          recorderStopSettled = true;
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'recording',
+              'recorder_stopped',
+              sessionId: context?.sessionId,
+              fields: {'hasFinalSlice': path != null},
+            ),
+          );
+        } catch (error) {
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'recording',
+              'recorder_stop_failed',
+              sessionId: context?.sessionId,
+              fields: {'errorType': error.runtimeType},
+            ),
+          );
+          debugPrint('[Recording Stop] Recorder did not stop cleanly: $error');
+        }
+      }
+
       if (path != null && context != null) {
-        context.runPipeline(() => _processAudio(path, context));
+        try {
+          await _queueAudioSlice(
+            path,
+            context,
+          ).timeout(const Duration(seconds: 5));
+        } catch (error) {
+          // registerPendingAudio happens before the save. Even if this times
+          // out, the WAV remains recoverable on the next launch.
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'recording',
+              'final_slice_queue_failed',
+              sessionId: context.sessionId,
+              fields: {'errorType': error.runtimeType},
+            ),
+          );
+        }
+      }
+      try {
+        await context?.saveShadowDraft().timeout(const Duration(seconds: 5));
+      } catch (error) {
+        unawaited(
+          DiagnosticLogService.instance.record(
+            'recording',
+            'final_draft_save_failed',
+            sessionId: context?.sessionId,
+            fields: {'errorType': error.runtimeType},
+          ),
+        );
       }
       context?.sealPipelines();
       _activeContext = null;
 
       if (context != null) {
+        // The saved lecture ends at the Watch stop tap. This separate discarded
+        // capture only keeps iOS background execution alive until the original
+        // finalization pipeline has safely written the MD and WAV files.
+        // Keepalive is helpful but must never prevent handover. If recorder
+        // shutdown was uncertain, starting it again could race the late stop.
+        if (recorderStopSettled) {
+          try {
+            await _startProcessingKeepalive().timeout(
+              const Duration(seconds: 4),
+            );
+          } catch (error) {
+            unawaited(
+              DiagnosticLogService.instance.record(
+                'recording',
+                'keepalive_start_failed',
+                sessionId: context.sessionId,
+                fields: {'errorType': error.runtimeType},
+              ),
+            );
+          }
+        }
         final payload = HandoverPayload(
           context: context,
           // Exam/Lecture always produce complete first-listening documents.
@@ -811,15 +1204,7 @@ class RecordingProvider extends ChangeNotifier {
                 fields: {'mode': event.mode.name},
               ),
             );
-            _lastExportedPath = event.exportPath;
-            if (_processingSessionId == context.sessionId) {
-              _isProcessingRecording = false;
-              _processingStep = RecordingProvider.processingStepCount;
-              _statusMessage = '总结与录音已保存';
-              _processingSessionId = null;
-            }
-            _sessionReadyController.add(event);
-            notifyListeners();
+            _handleSessionReady(context, event);
           },
           onStatus: (msg) {
             _updateBackgroundProcessingStatus(context.sessionId, msg);
@@ -834,24 +1219,28 @@ class RecordingProvider extends ChangeNotifier {
               ),
             );
             debugPrint('[Handover Error] $err');
-            if (_processingSessionId == context.sessionId) {
-              _isProcessingRecording = false;
-              _statusMessage = '处理未完整完成，已保留可恢复内容';
-              _processingErrorMessage = '处理未完整完成，录音草稿已经保留，可以稍后恢复';
-              _processingSessionId = null;
-              notifyListeners();
-            }
+            _handleSessionProcessingError(context, err);
           },
         );
 
         // Submit to SessionBackgroundProcessor — returns immediately (<200ms)
         unawaited(SessionBackgroundProcessor.instance.submit(payload));
+        unawaited(
+          DiagnosticLogService.instance.record(
+            'recording',
+            'handover_submitted',
+            sessionId: context.sessionId,
+            fields: {'keepalive': _isProcessingKeepalive},
+          ),
+        );
       }
     } finally {
       _activeContext = null;
       _resetForNextSession();
-      await _resetAudioSessionAfterRecording();
-      TtsService().allowPlaybackAfterRecording();
+      if (stoppedContext == null) {
+        await _resetAudioSessionAfterRecording();
+        TtsService().allowPlaybackAfterRecording();
+      }
     }
   }
 
@@ -919,7 +1308,7 @@ class RecordingProvider extends ChangeNotifier {
     final path = await _audioRecorder.stop();
     if (path != null && _activeContext != null) {
       final context = _activeContext!;
-      context.runPipeline(() => _processAudio(path, context));
+      await _queueAudioSlice(path, context);
     }
     _statusMessage = "⏸ Paused";
     notifyListeners();
@@ -931,14 +1320,7 @@ class RecordingProvider extends ChangeNotifier {
     _isPaused = false;
     _statusMessage = null;
     final nextPath = await _getTempPath();
-    await _audioRecorder.start(
-      const RecordConfig(
-        encoder: AudioEncoder.wav,
-        sampleRate: 16000,
-        numChannels: 1,
-      ),
-      path: nextPath,
-    );
+    await _audioRecorder.start(_recordConfig, path: nextPath);
     if (_activeContext != null) {
       _startSmartSliceTimer(_activeContext!);
     }
@@ -954,9 +1336,9 @@ class RecordingProvider extends ChangeNotifier {
     }
   }
 
-  Future<String> _getTempPath() async {
+  Future<String> _getTempPath({String prefix = 'rec'}) async {
     final directory = await getApplicationDocumentsDirectory();
-    return '${directory.path}/rec_${DateTime.now().millisecondsSinceEpoch}.wav';
+    return '${directory.path}/${prefix}_${DateTime.now().millisecondsSinceEpoch}.wav';
   }
 
   /// 有效性判断：过滤静音/填充词
@@ -974,6 +1356,7 @@ class RecordingProvider extends ChangeNotifier {
   ) async {
     if (context.isDisposed || context.orchestrator == null || path.isEmpty)
       return;
+    context.registerPendingAudio(path);
     try {
       final stitchResult = await compute(
         _backgroundStitchTask,
@@ -989,14 +1372,25 @@ class RecordingProvider extends ChangeNotifier {
       context.addRawAudioPath(path);
       context.addStitchedAudioPath(processedPath);
 
-      final currentNote = InsightNote(
-        summary: '',
-        transcript: '...',
-        timestamp: DateTime.now(),
-        isProcessing: true,
-      );
-      final noteId = currentNote.id;
-      context.addNote(currentNote);
+      final pendingNoteId = context.pendingAudioNotes[path];
+      final pendingNoteIndex = pendingNoteId == null
+          ? -1
+          : context.notes.indexWhere((note) => note.id == pendingNoteId);
+      late final String noteId;
+      if (pendingNoteIndex >= 0) {
+        noteId = context.notes[pendingNoteIndex].id;
+        context.notes[pendingNoteIndex].isProcessing = true;
+      } else {
+        final currentNote = InsightNote(
+          summary: '',
+          transcript: '...',
+          timestamp: DateTime.now(),
+          isProcessing: true,
+        );
+        noteId = currentNote.id;
+        context.addNote(currentNote);
+        context.bindPendingAudioToNote(path, noteId);
+      }
       if (context == _activeContext) {
         notifyListeners();
       }
@@ -1073,7 +1467,27 @@ class RecordingProvider extends ChangeNotifier {
           }
         }
       }
+      context.completePendingAudio(path);
+      await context.saveShadowDraft();
     } catch (e) {
+      if (e is SttUnavailableException) {
+        final pendingNoteId = context.pendingAudioNotes[path];
+        final pendingNoteIndex = pendingNoteId == null
+            ? -1
+            : context.notes.indexWhere((note) => note.id == pendingNoteId);
+        if (pendingNoteIndex >= 0) {
+          final note = context.notes[pendingNoteIndex];
+          note.isProcessing = false;
+          if (note.transcript == '...') {
+            note.transcript = '[等待重新识别]';
+          }
+        }
+        await context.saveShadowDraft();
+        if (context == _activeContext) {
+          _statusMessage = '识别服务暂时不可用，录音已保留；恢复连接后可重试';
+          notifyListeners();
+        }
+      }
       unawaited(
         DiagnosticLogService.instance.record(
           'recording',
@@ -1083,6 +1497,7 @@ class RecordingProvider extends ChangeNotifier {
         ),
       );
       debugPrint("Pipeline Error: $e");
+      if (e is SttUnavailableException) rethrow;
     }
   }
 

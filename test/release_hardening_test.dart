@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/adapters/audio_recorder_adapter.dart';
 import 'package:jeff_notes/services/reading_content_parser.dart';
@@ -64,6 +66,16 @@ Question 1
       expect(await adapter.stop(), '/tmp/audio.wav');
       await adapter.dispose();
       expect(adapter.isDisposed, isTrue);
+    });
+
+    test('STT slice choices support fast captions and longer chunks', () {
+      final provider = File('lib/recording_provider.dart').readAsStringSync();
+      final settings = File('lib/screens/notes_screen.dart').readAsStringSync();
+
+      expect(provider, contains('int _sliceDuration = 5;'));
+      expect(provider, contains('duration.clamp(5, 10)'));
+      expect(provider, contains("'slice_duration') ?? 5"));
+      expect(settings, contains('items: [5, 6, 8, 10]'));
     });
   });
 }

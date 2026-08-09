@@ -23,6 +23,8 @@
 		<string>audio</string>
 	</array>
 	<key>WKCompanionAppBundleIdentifier</key>
-	<string>com.zhenfeng.jeffNotes</string>
+	<string>com.zhenfeng.jeffNotes.M799WC54K8</string>
+	<key>WKApplication</key>
+	<true/>
 </dict>
 </plist>

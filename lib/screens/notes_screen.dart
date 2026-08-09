@@ -531,11 +531,21 @@ class _NotesScreenState extends State<NotesScreen> {
                     letterSpacing: -1,
                   ),
                 ),
-                if (provider.isRecording)
+                if (provider.isRecording || provider.isRecordingStandby)
                   Row(
                     children: [
                       // 录音状态标签：暂停中显示橙色 PAUSED，录音中显示蓝色 TRACKING
-                      if (provider.isPaused)
+                      if (provider.isRecordingStandby)
+                        const Text(
+                          'STANDBY',
+                          style: TextStyle(
+                            fontSize: 8,
+                            color: Colors.greenAccent,
+                            fontWeight: FontWeight.w900,
+                            letterSpacing: 1.5,
+                          ),
+                        )
+                      else if (provider.isPaused)
                         const Text(
                           'PAUSED',
                           style: TextStyle(
@@ -574,6 +584,30 @@ class _NotesScreenState extends State<NotesScreen> {
           ],
         ),
         actions: [
+          if (!provider.isRecording && !provider.isProcessingRecording)
+            Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: IconButton.filled(
+                onPressed: provider.isPending
+                    ? null
+                    : () async {
+                        HapticFeedback.lightImpact();
+                        await provider.toggleRecordingStandby();
+                      },
+                icon: Icon(
+                  provider.isRecordingStandby
+                      ? Icons.power_settings_new
+                      : Icons.shield_outlined,
+                  color: Colors.white,
+                ),
+                style: IconButton.styleFrom(
+                  backgroundColor: provider.isRecordingStandby
+                      ? Colors.green.shade700
+                      : recordingControlColor,
+                ),
+                tooltip: provider.isRecordingStandby ? '退出录音待命' : '进入录音待命',
+              ),
+            ),
           // 暂停/继续按鈕：仅在录音中显示
           if (provider.isRecording)
             Padding(
@@ -598,10 +632,12 @@ class _NotesScreenState extends State<NotesScreen> {
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton.filled(
-              onPressed: () async {
-                HapticFeedback.mediumImpact();
-                await provider.toggleRecording();
-              },
+              onPressed: provider.isProcessingRecording || provider.isPending
+                  ? null
+                  : () async {
+                      HapticFeedback.mediumImpact();
+                      await provider.toggleRecording();
+                    },
               icon: Icon(
                 provider.isRecording ? Icons.stop_circle : Icons.mic,
                 color: Colors.white,
@@ -631,6 +667,32 @@ class _NotesScreenState extends State<NotesScreen> {
       ),
       body: Column(
         children: [
+          if (provider.isRecordingStandby)
+            Container(
+              width: double.infinity,
+              margin: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: BoxDecoration(
+                color: Colors.green.withOpacity(isDark ? 0.18 : 0.09),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: Colors.green.withOpacity(0.35)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.watch, color: Colors.green),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      '录音待命已开启 · 现在可以锁屏并从 Apple Watch 开始',
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
           if (provider.isProcessingRecording ||
               provider.processingErrorMessage != null)
             Container(
@@ -1105,7 +1167,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     final p = widget.provider;
     _tempMode = p.appMode;
     _tempUnit = p.currentUnit;
-    _tempDuration = p.sliceDuration.clamp(5, 8);
+    _tempDuration = p.sliceDuration.clamp(5, 10);
     _tempIsDarkMode = p.isDarkMode;
     _tempEnableFinalRecap = p.enableFinalRecap;
     _tempEnableLectureDiscovery = p.enableLectureDiscovery;
@@ -1181,7 +1243,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             DropdownButtonFormField<int>(
               value: _tempDuration,
               decoration: const InputDecoration(labelText: 'STT Frequency'),
-              items: [5, 6, 7, 8]
+              items: [5, 6, 8, 10]
                   .map(
                     (d) =>
                         DropdownMenuItem(value: d, child: Text('$d seconds')),

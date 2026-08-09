@@ -8,9 +8,11 @@ import 'dart:io';
 import '../models.dart';
 import '../services/grammar_service.dart';
 import '../services/grammar_repository.dart';
+import '../services/grammar_writing_draft_service.dart';
 import '../services/supabase_config.dart';
 import '../services/upload_cache.dart';
 import '../services/file_sync_agent.dart';
+import '../services/watch_sync_service.dart';
 import 'history_screen.dart';
 import 'note_detail_screen.dart';
 
@@ -37,7 +39,16 @@ String buildGrammarArchiveFilename({
 
 class GrammarWritingScreen extends StatefulWidget {
   final GrammarUnit? unit;
-  const GrammarWritingScreen({super.key, this.unit});
+  final String? initialTopic;
+  final bool autoGenerate;
+  final GrammarWritingLaunchOptions? launchOptions;
+  const GrammarWritingScreen({
+    super.key,
+    this.unit,
+    this.initialTopic,
+    this.autoGenerate = false,
+    this.launchOptions,
+  });
   @override
   State<GrammarWritingScreen> createState() => _GrammarWritingScreenState();
 }
@@ -57,6 +68,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
   String _result = '';
   bool _combinedMode = true;
   bool _requireAllSelectedGrammar = false;
+  bool _autoGenerationStarted = false;
 
   int get _combinedCoverageSelectionCount => _selectedCombinedUnits.isNotEmpty
       ? _selectedCombinedUnits.length
@@ -103,6 +115,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
   @override
   void initState() {
     super.initState();
+    _combinedTopicController.text = widget.initialTopic?.trim() ?? '';
     if (widget.unit != null) {
       _selectedUnits = {widget.unit!};
       _selectedCombinedUnits.add(widget.unit!);
@@ -129,17 +142,144 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
     setState(() => _loadingParts = true);
     try {
       final parts = await GrammarRepository.loadParts();
-      if (mounted)
+      var draft = widget.unit == null
+          ? await GrammarWritingDraftService.instance.load()
+          : const GrammarWritingDraft();
+      final launch = widget.launchOptions;
+      if (launch != null) {
+        switch (launch.selectionMode) {
+          case GrammarWritingSelectionMode.phone:
+            if (launch.contentType != null) {
+              draft = draft.copyWith(contentType: launch.contentType);
+            }
+            break;
+          case GrammarWritingSelectionMode.automatic:
+            draft = GrammarWritingDraft(
+              contentType: launch.contentType,
+              updatedAtMilliseconds: DateTime.now().millisecondsSinceEpoch,
+            );
+            break;
+          case GrammarWritingSelectionMode.custom:
+            draft = GrammarWritingDraft(
+              selectedPartIds: launch.selectedPartIds,
+              selectedUnitIds: launch.selectedUnitIds,
+              contentType: launch.contentType,
+              requireAllSelectedGrammar: launch.requireAllSelectedGrammar,
+              updatedAtMilliseconds: DateTime.now().millisecondsSinceEpoch,
+            );
+            break;
+        }
+      }
+      if (mounted) {
         setState(() {
           _parts = parts;
+          if (widget.unit == null) {
+            _applyCombinedDraft(parts, draft);
+          } else {
+            final matchingUnit = parts
+                .expand((part) => part.units)
+                .where((unit) => unit.id == widget.unit!.id)
+                .firstOrNull;
+            if (matchingUnit != null) {
+              _selectedUnits = {matchingUnit};
+              _selectedCombinedUnits
+                ..clear()
+                ..add(matchingUnit);
+              _selectedPart = _partContaining(matchingUnit);
+            }
+          }
           if (_selectedPart == null && parts.isNotEmpty) {
             _selectedPart = parts.first;
           }
           _loadingParts = false;
         });
+      }
+      if (widget.unit == null) {
+        if (launch != null) {
+          await GrammarWritingDraftService.instance.save(_currentCombinedDraft());
+        }
+        await _pushCombinedDraftToWatch();
+      }
     } catch (_) {
       if (mounted) setState(() => _loadingParts = false);
     }
+    if (mounted && widget.autoGenerate && !_autoGenerationStarted) {
+      _autoGenerationStarted = true;
+      unawaited(_generate());
+    }
+  }
+
+  void _applyCombinedDraft(
+    List<GrammarPart> parts,
+    GrammarWritingDraft draft,
+  ) {
+    final partById = {for (final part in parts) part.id: part};
+    final unitById = {
+      for (final part in parts)
+        for (final unit in part.units) unit.id: unit,
+    };
+    _selectedCombinedParts
+      ..clear()
+      ..addAll(
+        draft.selectedPartIds
+            .map((id) => partById[id])
+            .whereType<GrammarPart>(),
+      );
+    _selectedCombinedUnits
+      ..clear()
+      ..addAll(
+        draft.selectedUnitIds
+            .map((id) => unitById[id])
+            .whereType<GrammarUnit>(),
+      );
+    _selectedTheme = draft.contentType;
+    _requireAllSelectedGrammar = draft.requireAllSelectedGrammar;
+    if (!_showsRequireAllGrammarOption) {
+      _requireAllSelectedGrammar = false;
+    }
+  }
+
+  GrammarWritingDraft _currentCombinedDraft() => GrammarWritingDraft(
+        selectedPartIds: _selectedCombinedParts.map((part) => part.id).toSet(),
+        selectedUnitIds: _selectedCombinedUnits.map((unit) => unit.id).toSet(),
+        contentType: _selectedTheme,
+        requireAllSelectedGrammar: _requireAllSelectedGrammar,
+        updatedAtMilliseconds: DateTime.now().millisecondsSinceEpoch,
+      );
+
+  Future<void> _persistCombinedDraft() async {
+    if (!_combinedMode) return;
+    final draft = _currentCombinedDraft();
+    await GrammarWritingDraftService.instance.save(draft);
+    await _pushCombinedDraftToWatch(draft: draft);
+  }
+
+  Future<void> _pushCombinedDraftToWatch({GrammarWritingDraft? draft}) async {
+    final parts = _parts;
+    if (parts == null) return;
+    await WatchSyncService.instance.updateGrammarWritingConfig(
+      (draft ?? _currentCombinedDraft()).toWatchPayload(parts),
+    );
+  }
+
+  Future<void> _reportWatchState(String state, String message) async {
+    final requestId = widget.launchOptions?.requestId;
+    if (requestId == null || requestId.isEmpty) return;
+    await WatchSyncService.instance.updateGrammarWritingState(
+      requestId: requestId,
+      state: state,
+      message: message,
+    );
+  }
+
+  void _updateCombinedSelection(VoidCallback update) {
+    setState(() {
+      update();
+      if (!_showsRequireAllGrammarOption) {
+        _requireAllSelectedGrammar = false;
+      }
+    });
+    unawaited(_persistCombinedDraft());
   }
 
   bool get _canGenerate {
@@ -150,10 +290,12 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
 
   Future<void> _generate() async {
     if (!_canGenerate) return;
+    if (_combinedMode) await _persistCombinedDraft();
     setState(() {
       _isLoading = true;
       _result = '';
     });
+    unawaited(_reportWatchState('generating', 'AI 正在生成文章'));
     try {
       if (_combinedMode) {
         final units = _selectedCombinedUnits.toList();
@@ -186,6 +328,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
         }
       }
     } catch (e) {
+      unawaited(_reportWatchState('error', '生成失败，请在手机查看原因'));
       if (mounted) {
         setState(() {
           _isLoading = false;
@@ -201,8 +344,22 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
       _isLoading = false;
     });
 
+    await _reportWatchState('saving', '文章已生成，正在保存 MD');
     final file = await _saveToArchive();
-    if (!mounted || file == null) return;
+    if (!mounted || file == null) {
+      unawaited(_reportWatchState('error', '文章生成成功，但保存 MD 失败'));
+      return;
+    }
+
+    await _reportWatchState('syncing', 'MD 已保存，正在发送到手表');
+    final queued = await WatchSyncService.instance.queueMarkdownDocument(
+      title: file.uri.pathSegments.last,
+      markdown: result,
+    );
+    await _reportWatchState(
+      queued ? 'completed' : 'syncing',
+      queued ? '已发送，文档到达后会自动打开' : '手机已保存，等待手表连接',
+    );
 
     Navigator.pushReplacement(
       context,
@@ -310,8 +467,15 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
               Text(theme.label),
             ],
           ),
-          onSelected: (value) =>
-              setState(() => _selectedTheme = value ? theme.value : null),
+          onSelected: (value) {
+            if (_combinedMode) {
+              _updateCombinedSelection(
+                () => _selectedTheme = value ? theme.value : null,
+              );
+            } else {
+              setState(() => _selectedTheme = value ? theme.value : null);
+            }
+          },
           selectedColor: Colors.green.withValues(alpha: 0.2),
           backgroundColor: isDark ? Colors.grey[800] : Colors.grey[100],
           labelStyle: TextStyle(
@@ -483,8 +647,9 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
                   key: const ValueKey('requireAllSelectedGrammarSwitch'),
                   contentPadding: EdgeInsets.zero,
                   value: _requireAllSelectedGrammar,
-                  onChanged: (value) =>
-                      setState(() => _requireAllSelectedGrammar = value),
+                  onChanged: (value) => _updateCombinedSelection(
+                    () => _requireAllSelectedGrammar = value,
+                  ),
                   title: Text(
                     _selectedCombinedUnits.isNotEmpty
                         ? '老师指定：全部 $_combinedCoverageSelectionCount 个具体语法都必须覆盖'
@@ -511,7 +676,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
                     leading: Checkbox(
                       key: ValueKey('combinedPartCheckbox_${p.id}'),
                       value: partSelected,
-                      onChanged: (value) => setState(() {
+                      onChanged: (value) => _updateCombinedSelection(() {
                         if (value == true) {
                           _selectedCombinedParts.add(p);
                         } else {
@@ -536,7 +701,7 @@ class _GrammarWritingScreenState extends State<GrammarWritingScreen> {
                           style: const TextStyle(fontSize: 13),
                         ),
                         value: checked,
-                        onChanged: (v) => setState(() {
+                        onChanged: (v) => _updateCombinedSelection(() {
                           if (v == true) {
                             _selectedCombinedUnits.add(u);
                           } else {

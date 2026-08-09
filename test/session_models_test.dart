@@ -99,6 +99,11 @@ void main() {
         );
         ctx.shorthandReviewContent = 'Shorthand Content';
         ctx.identifiedLectureContext = 'Academic Discussion';
+        ctx.registerPendingAudio('${tempDir.path}/slice.wav');
+        ctx.bindPendingAudioToNote(
+          '${tempDir.path}/slice.wav',
+          ctx.notes.first.id,
+        );
 
         // Atomic save
         final saveSuccess = await ShadowDraftService.instance.saveDraft(ctx);
@@ -120,6 +125,10 @@ void main() {
         expect(recoveredCtx.notes.first.transcript, 'Atomic draft test');
         expect(recoveredCtx.shorthandReviewContent, 'Shorthand Content');
         expect(recoveredCtx.identifiedLectureContext, 'Academic Discussion');
+        expect(
+          recoveredCtx.pendingAudioNotes['${tempDir.path}/slice.wav'],
+          ctx.notes.first.id,
+        );
 
         // Delete draft
         final deleteSuccess = await ShadowDraftService.instance.deleteDraft(

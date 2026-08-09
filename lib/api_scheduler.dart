@@ -47,6 +47,8 @@ class ApiScheduler {
     Future<T> Function() task, {
     int priority = 1,
     String? sessionId,
+    int maxAttempts = 3,
+    Duration retryBaseDelay = const Duration(seconds: 10),
   }) async {
     // [FIX 9] 拒绝在 sealed 会话上添加新任务
     if (sessionId != null && _sealedSessions.contains(sessionId)) {
@@ -123,10 +125,15 @@ class ApiScheduler {
       }
     }
 
-    final rawFuture = _executeWithRetry(task).timeout(
-      const Duration(seconds: 60),
-      onTimeout: () => throw TimeoutException("Execution Timeout"),
-    );
+    final rawFuture =
+        _executeWithRetry(
+          task,
+          maxAttempts: maxAttempts,
+          retryBaseDelay: retryBaseDelay,
+        ).timeout(
+          const Duration(seconds: 60),
+          onTimeout: () => throw TimeoutException("Execution Timeout"),
+        );
 
     trackedFuture = rawFuture.then(
       (v) {
@@ -234,9 +241,15 @@ class ApiScheduler {
     );
   }
 
-  Future<T> _executeWithRetry<T>(Future<T> Function() task) async {
+  Future<T> _executeWithRetry<T>(
+    Future<T> Function() task, {
+    int maxAttempts = 3,
+    Duration retryBaseDelay = const Duration(seconds: 10),
+  }) async {
     int attempt = 0;
-    const int maxAttempts = 3;
+    if (maxAttempts < 1) {
+      throw ArgumentError.value(maxAttempts, 'maxAttempts', 'must be >= 1');
+    }
     while (true) {
       try {
         return await task();
@@ -246,14 +259,16 @@ class ApiScheduler {
         if (errorStr.contains("429") ||
             errorStr.contains("too many requests")) {
           if (attempt >= maxAttempts) rethrow;
-          final waitTime = 10 * attempt;
-          debugPrint("Rate limit hit, waiting ${waitTime}s before retry...");
-          await Future.delayed(Duration(seconds: waitTime));
+          final waitTime = retryBaseDelay * attempt;
+          debugPrint(
+            "Rate limit hit, waiting ${waitTime.inMilliseconds}ms before retry...",
+          );
+          await Future.delayed(waitTime);
           continue;
         }
         if (errorStr.contains("500") || errorStr.contains("503")) {
           if (attempt >= maxAttempts) rethrow;
-          await Future.delayed(Duration(seconds: 2 * attempt));
+          await Future.delayed(retryBaseDelay * attempt);
           continue;
         }
         rethrow;
