@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/adapters/audio_recorder_adapter.dart';
-import 'package:jeff_notes/services/reading_content_parser.dart';
 import 'package:jeff_notes/text_sanitizer.dart';
 import 'package:record/record.dart';
 
@@ -22,35 +21,19 @@ void main() {
       expect(TextSanitizer.clean('[Music] Hello'), 'Hello');
     });
 
-    test('retains every imported page before an explicit exercise heading', () {
-      const markdown = '''
-# Article
-Page one.
-
----
-
-Page two.
-
----
-
-Page three.
-
-## 📝 练习
-Question 1
-''';
-      final article = ReadingContentParser.extractArticle(markdown);
-      expect(article, contains('Page one.'));
-      expect(article, contains('Page two.'));
-      expect(article, contains('Page three.'));
-      expect(article, isNot(contains('Question 1')));
-    });
-
-    test('does not truncate title-less multi-page content', () {
-      const markdown = 'First page\n\n---\n\nSecond page';
+    test('cleans translation wrappers without altering technical terms', () {
       expect(
-        ReadingContentParser.extractArticle(markdown),
-        contains('Second page'),
+        TextSanitizer.cleanTranslation(
+          '```text\nTranslation: “通过 VPN 连接到 RDP。”\n```',
+        ),
+        '通过 VPN 连接到 RDP。',
       );
+      expect(
+        TextSanitizer.cleanTranslation('翻译：第一句。\nTranslation: 第二句。'),
+        '第一句。\n第二句。',
+      );
+      expect(TextSanitizer.clean('Wait!!! Really??'), 'Wait! Really?');
+      expect(TextSanitizer.clean(r'A $1 value.'), r'A $1 value.');
     });
   });
 

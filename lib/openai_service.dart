@@ -6,12 +6,17 @@ import 'package:http_parser/http_parser.dart';
 import 'dart:async';
 import 'models.dart';
 import 'prompt_provider.dart';
+import 'services/api_rate_limit_service.dart';
+import 'text_sanitizer.dart';
 
 class OpenAIService {
   final String apiKey;
   final String baseUrl;
   final String defaultModel;
   final String whisperModel;
+  final String provider;
+  final ApiRateLimitService rateLimitService;
+  final Duration translationTimeout;
 
   final http.Client _client;
   final bool _ownsClient;
@@ -22,9 +27,13 @@ class OpenAIService {
     required this.baseUrl,
     required this.defaultModel,
     this.whisperModel = 'whisper-large-v3',
+    this.provider = 'groq',
+    this.translationTimeout = const Duration(seconds: 30),
+    ApiRateLimitService? rateLimitService,
     http.Client? httpClient,
   }) : _client = httpClient ?? http.Client(),
-       _ownsClient = httpClient == null;
+       _ownsClient = httpClient == null,
+       rateLimitService = rateLimitService ?? ApiRateLimitService.instance;
 
   void dispose() {
     _isDisposed = true;
@@ -57,8 +66,42 @@ class OpenAIService {
     return cleaned;
   }
 
+  String get _rateLimitProvider {
+    final host = Uri.tryParse(baseUrl)?.host.toLowerCase() ?? '';
+    if (host.endsWith('openrouter.ai')) return 'openrouter';
+    if (host.endsWith('groq.com')) return 'groq';
+    return provider;
+  }
+
+  /// `Future.timeout` merely abandons its waiter. AbortableRequest closes the
+  /// actual per-request transport without closing the session's shared client.
+  Future<http.Response> _postJson(
+    Uri url, {
+    required Map<String, String> headers,
+    required String body,
+    required Duration timeout,
+  }) async {
+    final abort = Completer<void>();
+    final timer = Timer(timeout, () {
+      if (!abort.isCompleted) abort.complete();
+    });
+    final request =
+        http.AbortableRequest('POST', url, abortTrigger: abort.future)
+          ..headers.addAll(headers)
+          ..body = body;
+    try {
+      final streamed = await _client.send(request);
+      return await http.Response.fromStream(streamed);
+    } on http.RequestAbortedException {
+      throw TimeoutException('HTTP request timed out');
+    } finally {
+      timer.cancel();
+    }
+  }
+
   Future<String?> transcribe(String filePath, {String? previousText}) async {
     if (_isDisposed) return null;
+    await rateLimitService.ensureAvailable(provider, whisperModel);
     try {
       final file = File(filePath);
       if (!await file.exists()) return null;
@@ -100,6 +143,20 @@ class OpenAIService {
         return data['text'] ?? "";
       } else {
         debugPrint("[STT ERROR ${response.statusCode}]");
+        if (response.statusCode == 429) {
+          final retryAt = await rateLimitService.register429(
+            provider: provider,
+            model: whisperModel,
+            serverDelay: ApiRateLimitService.parseRetryAfter(
+              response.headers['retry-after'],
+            ),
+          );
+          throw ApiRateLimitException(
+            provider: provider,
+            model: whisperModel,
+            retryAt: retryAt,
+          );
+        }
         throw Exception("API Error ${response.statusCode}");
       }
     } on SocketException {
@@ -117,6 +174,9 @@ class OpenAIService {
     List<Map<String, String>>? history,
   }) async {
     if (_isDisposed) throw Exception("Service disposed");
+    final model = (modelOverride ?? defaultModel).trim();
+    final rateLimitProvider = _rateLimitProvider;
+    await rateLimitService.ensureAvailable(rateLimitProvider, model);
     try {
       final url = Uri.parse("$baseUrl/chat/completions");
 
@@ -131,7 +191,8 @@ class OpenAIService {
               '1. Translate ONLY what is in the input. '
               '2. If the input ends without punctuation (like . ? !), it is an unfinished clause. Translate it in a natural "hanging/unfinished" tone to ensure it seamlessly connects to the next chunk. Do NOT append final periods. '
               '3. Keep proper nouns in their original form. For uncertain terms, keep the English with a Chinese translation in parentheses. '
-              '4. Output ONLY the translated Chinese text. No notes, no explanations, no markup.',
+              '4. Output ONLY the translated Chinese text for the current input. '
+              'Do not output labels such as Translation: or 翻译：, explanations, or markdown.',
         },
       ];
 
@@ -144,35 +205,51 @@ class OpenAIService {
               'role': 'user',
               'content': '[Previous Context] English: $en',
             });
-            messages.add({
-              'role': 'assistant',
-              'content': '[Previous Context] Translation: $zh',
-            });
+            messages.add({'role': 'assistant', 'content': zh});
           }
         }
       }
 
       messages.add({'role': 'user', 'content': text});
 
-      final response = await _client
-          .post(
-            url,
-            headers: {
-              'Authorization': 'Bearer ${apiKey.trim()}',
-              'Content-Type': 'application/json',
-            },
-            body: jsonEncode({
-              'model': (modelOverride ?? defaultModel).trim(),
-              'messages': messages,
-              'temperature': 0.1,
-            }),
-          )
-          .timeout(const Duration(seconds: 30));
+      final response = await _postJson(
+        url,
+        headers: {
+          'Authorization': 'Bearer ${apiKey.trim()}',
+          'Content-Type': 'application/json',
+        },
+        body: jsonEncode({
+          'model': model,
+          'messages': messages,
+          'temperature': 0.1,
+        }),
+        timeout: translationTimeout,
+      );
 
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
-        return _sanitizeResponse(data['choices'][0]['message']['content']);
+        final translated = TextSanitizer.cleanTranslation(
+          data['choices'][0]['message']['content'],
+        );
+        if (translated.isEmpty) {
+          throw StateError('Translation response was empty after sanitization');
+        }
+        return translated;
       } else {
+        if (response.statusCode == 429) {
+          final retryAt = await rateLimitService.register429(
+            provider: rateLimitProvider,
+            model: model,
+            serverDelay: ApiRateLimitService.parseRetryAfter(
+              response.headers['retry-after'],
+            ),
+          );
+          throw ApiRateLimitException(
+            provider: rateLimitProvider,
+            model: model,
+            retryAt: retryAt,
+          );
+        }
         // [Architect: Diagnostic UI] 翻译报错回显
         final errorMsg = "[Translation Error ${response.statusCode}]";
         debugPrint(errorMsg);

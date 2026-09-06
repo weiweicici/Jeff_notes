@@ -3,15 +3,11 @@ import 'package:provider/provider.dart';
 import '../recording_provider.dart';
 import 'notes_screen.dart';
 import 'essay_config_screen.dart';
-import 'reading_screen.dart';
-import 'grammar_screen.dart';
 import 'history_screen.dart';
 import 'smart_vocab_screen.dart';
 
 class AcademicHubScreen extends StatelessWidget {
   const AcademicHubScreen({super.key});
-
-
 
   @override
   Widget build(BuildContext context) {
@@ -25,8 +21,16 @@ class AcademicHubScreen extends StatelessWidget {
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: isDark
-                ? [const Color(0xFF0F0F1A), const Color(0xFF161626), const Color(0xFF1E1C2C)]
-                : [const Color(0xFFF7F8FC), const Color(0xFFEEF1F7), const Color(0xFFE5E9F3)],
+                ? [
+                    const Color(0xFF0F0F1A),
+                    const Color(0xFF161626),
+                    const Color(0xFF1E1C2C),
+                  ]
+                : [
+                    const Color(0xFFF7F8FC),
+                    const Color(0xFFEEF1F7),
+                    const Color(0xFFE5E9F3),
+                  ],
           ),
         ),
         child: SafeArea(
@@ -34,7 +38,10 @@ class AcademicHubScreen extends StatelessWidget {
             physics: const BouncingScrollPhysics(),
             slivers: [
               SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 24.0, vertical: 20.0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 24.0,
+                  vertical: 20.0,
+                ),
                 sliver: SliverList(
                   delegate: SliverChildListDelegate([
                     // Title Bar
@@ -59,7 +66,9 @@ class AcademicHubScreen extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.w500,
-                                color: isDark ? Colors.grey[400] : Colors.grey[600],
+                                color: isDark
+                                    ? Colors.grey[400]
+                                    : Colors.grey[600],
                               ),
                             ),
                           ],
@@ -75,17 +84,33 @@ class AcademicHubScreen extends StatelessWidget {
                               onPressed: () {
                                 Navigator.push(
                                   context,
-                                  MaterialPageRoute(builder: (context) => const HistoryScreen(initialModuleFilter: 'reading')),
+                                  MaterialPageRoute(
+                                    builder: (context) => const HistoryScreen(),
+                                  ),
                                 );
                               },
                             ),
                             IconButton(
                               icon: Icon(
-                                provider.isDarkMode ? Icons.wb_sunny_rounded : Icons.nightlight_round,
-                                color: isDark ? Colors.amberAccent : Colors.deepPurple,
+                                Icons.settings_outlined,
+                                color: isDark ? Colors.white70 : Colors.black87,
+                              ),
+                              tooltip: "设置",
+                              onPressed: () => showAppSettingsDialog(context),
+                            ),
+                            IconButton(
+                              icon: Icon(
+                                provider.isDarkMode
+                                    ? Icons.wb_sunny_rounded
+                                    : Icons.nightlight_round,
+                                color: isDark
+                                    ? Colors.amberAccent
+                                    : Colors.deepPurple,
                               ),
                               onPressed: () {
-                                provider.updateSettings(isDarkMode: !provider.isDarkMode);
+                                provider.updateSettings(
+                                  isDarkMode: !provider.isDarkMode,
+                                );
                               },
                             ),
                           ],
@@ -93,7 +118,7 @@ class AcademicHubScreen extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 40),
-                    
+
                     // 1. 学术听力同传
                     _buildHubCard(
                       context: context,
@@ -133,53 +158,15 @@ class AcademicHubScreen extends StatelessWidget {
                       onTap: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => const EssayConfigScreen()),
+                          MaterialPageRoute(
+                            builder: (context) => const EssayConfigScreen(),
+                          ),
                         );
                       },
                     ),
                     const SizedBox(height: 16),
 
-                    // 3. 阅读精读剖析
-                    _buildHubCard(
-                      context: context,
-                      title: "📖 阅读精读剖析",
-                      subtitle: "截图 OCR × AI 出题",
-                      icon: Icons.menu_book_rounded,
-                      isActive: true,
-                      tagText: "进阶",
-                      gradientColors: isDark
-                          ? [const Color(0xFF1B4D3E), const Color(0xFF27AE60)]
-                          : [const Color(0xFFE8F5E9), const Color(0xFFC8E6C9)],
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const ReadingScreen()),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 16),
-
-                    // 4. Focus 语法精讲
-                    _buildHubCard(
-                      context: context,
-                      title: "🔤 Focus 语法精讲",
-                      subtitle: "Focus 4 体系 × AI 练习",
-                      icon: Icons.text_fields_rounded,
-                      isActive: true,
-                      tagText: "基础",
-                      gradientColors: isDark
-                          ? [const Color(0xFF4A235A), const Color(0xFF8E44AD)]
-                          : [const Color(0xFFF4ECF7), const Color(0xFFE8DAEF)],
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(builder: (context) => const GrammarScreen()),
-                        );
-                      },
-                    ),
-                    const SizedBox(height: 16),
-
-                    // 5. 智能学术词库
+                    // 3. 智能学术词库
                     _buildHubCard(
                       context: context,
                       title: "📚 智能学术词库",
@@ -193,13 +180,15 @@ class AcademicHubScreen extends StatelessWidget {
                       onTap: () {
                         Navigator.push(
                           context,
-                          MaterialPageRoute(builder: (context) => const SmartVocabScreen()),
+                          MaterialPageRoute(
+                            builder: (context) => const SmartVocabScreen(),
+                          ),
                         );
                       },
                     ),
                   ]),
                 ),
-              )
+              ),
             ],
           ),
         ),
@@ -234,7 +223,7 @@ class AcademicHubScreen extends StatelessWidget {
             color: Colors.black.withOpacity(isDark ? 0.3 : 0.05),
             blurRadius: 15,
             offset: const Offset(0, 8),
-          )
+          ),
         ],
         border: Border.all(
           color: isDark ? Colors.white10 : Colors.black.withOpacity(0.04),
@@ -268,7 +257,7 @@ class AcademicHubScreen extends StatelessWidget {
                         color: gradientColors.last.withOpacity(0.3),
                         blurRadius: 8,
                         offset: const Offset(0, 4),
-                      )
+                      ),
                     ],
                   ),
                   child: Icon(
@@ -297,7 +286,10 @@ class AcademicHubScreen extends StatelessWidget {
                           ),
                           // Badge status
                           Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 4,
+                            ),
                             decoration: BoxDecoration(
                               color: isActive
                                   ? Colors.green.withOpacity(0.15)
@@ -309,7 +301,9 @@ class AcademicHubScreen extends StatelessWidget {
                               style: TextStyle(
                                 fontSize: 10,
                                 fontWeight: FontWeight.bold,
-                                color: isActive ? Colors.greenAccent : Colors.orangeAccent,
+                                color: isActive
+                                    ? Colors.greenAccent
+                                    : Colors.orangeAccent,
                                 letterSpacing: 0.5,
                               ),
                             ),

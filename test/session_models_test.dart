@@ -130,6 +130,24 @@ void main() {
           ctx.notes.first.id,
         );
 
+        // Reading a draft hydrates an in-memory context only. It must not
+        // enqueue a partial snapshot or mutate the source file.
+        await ShadowDraftService.instance.waitForPendingWrites(
+          ctx.shadowDraftPath,
+        );
+        final draftFile = File(ctx.shadowDraftPath);
+        final beforeBytes = await draftFile.readAsBytes();
+        final beforeModified = (await draftFile.stat()).modified;
+        final secondRecovered = await ShadowDraftService.instance.readDraft(
+          ctx.shadowDraftPath,
+        );
+        expect(secondRecovered, isNotNull);
+        await ShadowDraftService.instance.waitForPendingWrites(
+          ctx.shadowDraftPath,
+        );
+        expect(await draftFile.readAsBytes(), beforeBytes);
+        expect((await draftFile.stat()).modified, beforeModified);
+
         // Delete draft
         final deleteSuccess = await ShadowDraftService.instance.deleteDraft(
           ctx.shadowDraftPath,
@@ -208,7 +226,99 @@ void main() {
     );
 
     test(
-      '7. Rejects unknown schema versions and malformed recoverable fields',
+      '7. Restored drafts rebase stale iOS container paths to their current Documents directory',
+      () async {
+        final currentDirectory = Directory('${tempDir.path}/Documents');
+        await currentDirectory.create();
+        final draftPath = '${currentDirectory.path}/shadow_draft_rebased.json';
+        const oldContainer =
+            '/var/mobile/Containers/Data/Application/OLD-CONTAINER/Documents';
+        const exportName = 'Jeff_FreeTalk_rebased.md';
+        const audioName = 'rec_123.wav';
+        const stitchedName = 'rec_123_stitched.wav';
+        final draft = <String, dynamic>{
+          'schemaVersion': ShadowDraftService.currentSchemaVersion,
+          'sessionId': 'rebased',
+          'mode': AppMode.freeTalk.index,
+          'unit': PathwaysUnit.none.index,
+          'createdAt': DateTime.now().toIso8601String(),
+          'exportPath': '$oldContainer/$exportName',
+          'notes': <Map<String, dynamic>>[],
+          'segmentSummaries': <String>[],
+          'rawAudioPaths': <String>['$oldContainer/$audioName'],
+          'stitchedAudioPaths': <String>['$oldContainer/$stitchedName'],
+          'pendingAudioNotes': <String, String?>{
+            '$oldContainer/$audioName': null,
+          },
+          'finalReviewContent': null,
+          'shorthandReviewContent': null,
+          'identifiedLectureContext': null,
+          'isCompleted': false,
+        };
+        await File(draftPath).writeAsString(jsonEncode(draft));
+
+        final restored = await ShadowDraftService.instance.readDraft(draftPath);
+
+        expect(restored, isNotNull);
+        expect(restored!.exportPath, '${currentDirectory.path}/$exportName');
+        expect(restored.rawAudioPaths, ['${currentDirectory.path}/$audioName']);
+        expect(restored.stitchedAudioPaths, [
+          '${currentDirectory.path}/$stitchedName',
+        ]);
+        expect(restored.pendingAudioNotes, {
+          '${currentDirectory.path}/$audioName': null,
+        });
+      },
+    );
+
+    test(
+      'capture order stays stable when a later STT slice finishes first',
+      () async {
+        final context = RecordingSessionContext.create(
+          mode: AppMode.lecture,
+          unit: PathwaysUnit.none,
+          baseDirectory: tempDir.path,
+          customSessionId: 'capture-order',
+        );
+        final firstPath = '${tempDir.path}/first.wav';
+        final secondPath = '${tempDir.path}/second.wav';
+        context.registerPendingAudio(firstPath);
+        context.registerPendingAudio(secondPath);
+
+        final second = InsightNote(
+          id: 'second',
+          summary: '',
+          transcript: '...',
+          timestamp: DateTime.now(),
+        );
+        context.bindPendingAudioToNote(secondPath, second.id);
+        context.addAudioNote(secondPath, second);
+        final first = InsightNote(
+          id: 'first',
+          summary: '',
+          transcript: '...',
+          timestamp: DateTime.now(),
+        );
+        context.bindPendingAudioToNote(firstPath, first.id);
+        context.addAudioNote(firstPath, first);
+
+        expect(context.notes.map((note) => note.id), ['first', 'second']);
+        context.completeTranscriptForAudio(secondPath, 'Second transcript.');
+        expect(context.lastTranscript, isNull);
+        context.completeTranscriptForAudio(firstPath, 'First transcript.');
+        expect(context.lastTranscript, 'Second transcript.');
+
+        await context.saveShadowDraft();
+        final recovered = await ShadowDraftService.instance.readDraft(
+          context.shadowDraftPath,
+        );
+        expect(recovered!.pendingAudioSequences[firstPath], 1);
+        expect(recovered.pendingAudioSequences[secondPath], 2);
+      },
+    );
+
+    test(
+      '8. Rejects unknown schema versions and malformed recoverable fields',
       () async {
         final ctx = RecordingSessionContext.create(
           mode: AppMode.lecture,
@@ -258,7 +368,7 @@ void main() {
     );
 
     test(
-      '8. Serializes overlapping saves and keeps the latest snapshot',
+      '9. Serializes overlapping saves and keeps the latest snapshot',
       () async {
         final ctx = RecordingSessionContext.create(
           mode: AppMode.exam,
@@ -291,7 +401,7 @@ void main() {
     );
 
     test(
-      '9. Pipeline drain waits for admitted work and rejects late work',
+      '10. Pipeline drain waits for admitted work and rejects late work',
       () async {
         final ctx = RecordingSessionContext.create(
           mode: AppMode.lecture,

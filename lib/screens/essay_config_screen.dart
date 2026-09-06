@@ -15,6 +15,7 @@ import '../utils/pdf_service.dart';
 import '../services/supabase_config.dart';
 import 'note_detail_screen.dart';
 import '../services/upload_cache.dart';
+import '../services/cloud_identity_guard.dart';
 import '../services/file_sync_agent.dart';
 import 'history_screen.dart';
 
@@ -465,15 +466,26 @@ class _EssayConfigScreenState extends State<EssayConfigScreen> {
     try {
       final bytes = await file.readAsBytes();
       final hash = md5.convert(bytes).toString();
-      await SupabaseConfig.client.from('archives').insert({
-        'file_hash': hash,
-        'module': 'essay',
-        'title': filename,
-        'content_md': utf8.decode(bytes),
-        'file_size': bytes.length,
-        'user_id': SupabaseConfig.currentUserId,
-      });
-      await UploadCache.mark(hash);
+      final userId = SupabaseConfig.currentUserId;
+      if (!CloudIdentityGuard.stillCurrent(userId)) return;
+      await UploadCache.runSingleFlight(
+        hash,
+        userId: userId,
+        operation: () async {
+          if (!CloudIdentityGuard.stillCurrent(userId)) {
+            throw StateError('Authentication identity changed during sync');
+          }
+          await SupabaseConfig.client.from('archives').insert({
+            'file_hash': hash,
+            'module': 'essay',
+            'title': filename,
+            'content_md': utf8.decode(bytes),
+            'file_size': bytes.length,
+            'user_id': userId,
+          });
+          return true;
+        },
+      );
       debugPrint('[Essay Supabase Upload OK] $filename');
     } catch (uploadErr) {
       debugPrint('[Essay Supabase Upload Error] $uploadErr');

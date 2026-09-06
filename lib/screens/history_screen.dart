@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'note_detail_screen.dart';
 import '../services/supabase_config.dart';
 import '../services/upload_cache.dart';
+import '../services/cloud_identity_guard.dart';
 
 class _HistoryEntry {
   final String? id;
@@ -47,6 +48,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
   bool _isLoading = true;
   String _error = '';
   late String _selectedFilter;
+  int _loadGeneration = 0;
 
   @override
   void initState() {
@@ -59,24 +61,21 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (entry.module != null && entry.module!.isNotEmpty) {
       final m = entry.module!.toLowerCase();
       if (m == 'listening' || m == 'discussion' || m == 'notes') return 'notes';
-      if (m == 'reading') return 'reading';
       if (m == 'essay') return 'essay';
       if (m == 'freetalk') return 'freetalk';
-      if (m == 'grammar') return 'grammar';
       if (m == 'exam') return 'notes';
     }
 
     final t = entry.title.toLowerCase();
-    if (t.contains('reading')) return 'reading';
     if (t.contains('essay')) return 'essay';
     if (t.contains('freetalk')) return 'freetalk';
-    if (t.contains('grammar')) return 'grammar';
     if (t.contains('速记') || t.contains('exam')) return 'notes';
     if (t.contains('discussion') ||
         t.contains('note') ||
         t.contains('lecture') ||
-        t.contains('listening'))
+        t.contains('listening')) {
       return 'notes';
+    }
     return 'other';
   }
 
@@ -85,10 +84,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
     if (name.contains('essay')) return 'essay';
     if (name.contains('discussion')) return 'discussion';
     if (name.contains('freetalk')) return 'freetalk';
-    if (name.contains('reading')) return 'reading';
     if (name.contains('速记')) return 'listening';
     if (name.contains('exam')) return 'listening';
-    if (name.contains('grammar')) return 'grammar';
     return 'listening';
   }
 
@@ -98,6 +95,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Future<void> _loadEntries() async {
+    final loadGeneration = ++_loadGeneration;
+    final capturedUserId = CloudIdentityGuard.capture();
     try {
       final directory = await getApplicationDocumentsDirectory();
       final entities = await directory
@@ -121,23 +120,27 @@ class _HistoryScreenState extends State<HistoryScreen> {
             ),
           )
           .toList();
+      final localOnlyEntries = List<_HistoryEntry>.of(merged);
 
       try {
-        var userId = '';
-        try {
-          userId = SupabaseConfig.currentUserId;
-        } catch (_) {}
+        if (capturedUserId == null) {
+          throw StateError('Cloud history skipped without valid identity');
+        }
+        if (!CloudIdentityGuard.stillCurrent(capturedUserId)) {
+          throw StateError('Cloud history identity changed');
+        }
         var query = SupabaseConfig.client
             .from('archives')
-            .select('id,title,content_md,created_at,module');
-        if (userId.isNotEmpty) {
-          query = query.eq('user_id', userId);
-        }
+            .select('id,title,content_md,created_at,module')
+            .eq('user_id', capturedUserId);
         final data = await query
             .or(
               'module.eq.listening,module.eq.freetalk,module.eq.discussion,module.eq.essay,module.eq.exam,module.eq.grammar,module.eq.reading',
             )
             .order('created_at', ascending: false);
+        if (!CloudIdentityGuard.stillCurrent(capturedUserId)) {
+          throw StateError('Cloud history identity changed');
+        }
 
         for (final row in List<Map<String, dynamic>>.from(data as List)) {
           final id = row['id']?.toString();
@@ -172,11 +175,14 @@ class _HistoryScreenState extends State<HistoryScreen> {
         }
       } catch (e) {
         debugPrint("Load Cloud Error: $e");
+        merged
+          ..clear()
+          ..addAll(localOnlyEntries);
       }
 
       merged.sort((a, b) => b.modified.compareTo(a.modified));
 
-      if (mounted) {
+      if (mounted && loadGeneration == _loadGeneration) {
         setState(() {
           _entries = merged;
           _isLoading = false;
@@ -185,7 +191,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
       }
     } catch (e) {
       debugPrint("Load History Error: $e");
-      if (mounted) {
+      if (mounted && loadGeneration == _loadGeneration) {
         setState(() {
           _isLoading = false;
           _error = e.toString();
@@ -195,20 +201,16 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   IconData _iconFor(String name) {
-    if (name.contains('Grammar')) return Icons.abc_rounded;
     if (name.contains('Essay')) return Icons.edit_note_rounded;
     if (name.contains('Discussion')) return Icons.forum_outlined;
     if (name.contains('FreeTalk')) return Icons.chat_bubble_outline_rounded;
-    if (name.contains('Reading')) return Icons.menu_book_rounded;
     return Icons.school_outlined;
   }
 
   Color _colorFor(String name) {
-    if (name.contains('Grammar')) return Colors.orange;
     if (name.contains('Essay')) return Colors.deepPurpleAccent;
     if (name.contains('Discussion')) return Colors.deepPurpleAccent;
     if (name.contains('FreeTalk')) return Colors.teal;
-    if (name.contains('Reading')) return Colors.green;
     return Colors.blueAccent;
   }
 
@@ -225,10 +227,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
   Widget _buildFilterChips() {
     final filters = [
       {'id': 'all', 'label': '🌐 全部文档'},
-      {'id': 'reading', 'label': '📖 精读阅读'},
       {'id': 'essay', 'label': '📝 短文写作'},
       {'id': 'freetalk', 'label': '🗣️ 自由对话'},
-      {'id': 'grammar', 'label': '📚 语法练习'},
       {'id': 'notes', 'label': '🎙️ 课堂笔记'},
     ];
 
@@ -239,7 +239,7 @@ class _HistoryScreenState extends State<HistoryScreen> {
         scrollDirection: Axis.horizontal,
         padding: const EdgeInsets.symmetric(horizontal: 14),
         itemCount: filters.length,
-        separatorBuilder: (_, __) => const SizedBox(width: 8),
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
         itemBuilder: (context, index) {
           final f = filters[index];
           final id = f['id']!;
@@ -276,7 +276,10 @@ class _HistoryScreenState extends State<HistoryScreen> {
       await fileToOpen.writeAsString(entry.cloudContent!);
       // [BUG-12 Fix] 标记云端下载的内容 Hash 为已上传，防止 FileSyncAgent 当作新文件重复 insert
       final hash = md5.convert(utf8.encode(entry.cloudContent!)).toString();
-      await UploadCache.mark(hash);
+      final userId = SupabaseConfig.currentUserIdOrNull;
+      if (userId != null && userId.isNotEmpty) {
+        await UploadCache.mark(hash, userId: userId);
+      }
     }
 
     if (fileToOpen != null && mounted) {
@@ -342,8 +345,8 @@ class _HistoryScreenState extends State<HistoryScreen> {
       if (entry.id != null && entry.id!.isNotEmpty) {
         try {
           // 安全取 userId，不再使用会 throw 的 currentUserId getter
-          final userId = SupabaseConfig.client.auth.currentUser?.id;
-          if (userId != null && userId.isNotEmpty) {
+          final userId = CloudIdentityGuard.capture();
+          if (userId != null && CloudIdentityGuard.stillCurrent(userId)) {
             await SupabaseConfig.client
                 .from('archives')
                 .delete()

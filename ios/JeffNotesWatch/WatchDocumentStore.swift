@@ -8,12 +8,6 @@ extension Notification.Name {
     static let jeffNotesWatchRecordingStateChanged = Notification.Name(
         "JeffNotesWatchRecordingStateChanged"
     )
-    static let jeffNotesWatchGrammarConfigChanged = Notification.Name(
-        "JeffNotesWatchGrammarConfigChanged"
-    )
-    static let jeffNotesWatchGrammarStateChanged = Notification.Name(
-        "JeffNotesWatchGrammarStateChanged"
-    )
 }
 
 final class WatchConnectivityReceiver: NSObject, WCSessionDelegate {
@@ -34,7 +28,7 @@ final class WatchConnectivityReceiver: NSObject, WCSessionDelegate {
         try await sendMessage(["command": command])
     }
 
-    func sendRecordingCommand(_ command: String) async throws -> GrammarRequestDelivery {
+    func sendRecordingCommand(_ command: String) async throws -> RecordingCommandDelivery {
         let message: [String: Any] = [
             "command": command,
             "commandId": UUID().uuidString,
@@ -60,43 +54,6 @@ final class WatchConnectivityReceiver: NSObject, WCSessionDelegate {
         }
     }
 
-    func requestGrammarWritingConfig() async throws {
-        try await sendMessage(["command": "requestGrammarWritingConfig"])
-    }
-
-    func sendGrammarWritingRequest(
-        topic: String,
-        requestId: String,
-        selectionMode: String,
-        selectedPartIds: Set<String>,
-        selectedUnitIds: Set<String>,
-        contentType: String,
-        requireAllSelectedGrammar: Bool
-    ) async throws -> GrammarRequestDelivery {
-        let normalizedTopic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
-        let message: [String: Any] = [
-            "command": "generateGrammarWriting",
-            "topic": normalizedTopic,
-            "requestId": requestId,
-            "selectionMode": selectionMode,
-            "selectedPartIds": Array(selectedPartIds),
-            "selectedUnitIds": Array(selectedUnitIds),
-            "contentType": contentType,
-            "requireAllSelectedGrammar": requireAllSelectedGrammar,
-        ]
-        let session = WCSession.default
-        if session.activationState != .activated {
-            session.activate()
-            session.transferUserInfo(message)
-            return .queued
-        }
-        if !session.isReachable {
-            session.transferUserInfo(message)
-            return .queued
-        }
-        try await sendMessage(message)
-        return .immediate
-    }
 
     private func sendMessage(_ message: [String: Any]) async throws {
         let session = WCSession.default
@@ -183,26 +140,6 @@ final class WatchConnectivityReceiver: NSObject, WCSessionDelegate {
                 )
             }
         }
-        if let config = envelope["grammarWritingConfig"] as? [String: Any] {
-            UserDefaults.standard.set(config, forKey: "JeffNotesGrammarWritingConfig")
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .jeffNotesWatchGrammarConfigChanged,
-                    object: nil,
-                    userInfo: config
-                )
-            }
-        }
-        if let state = envelope["grammarWritingState"] as? [String: Any] {
-            UserDefaults.standard.set(state, forKey: "JeffNotesGrammarWritingState")
-            DispatchQueue.main.async {
-                NotificationCenter.default.post(
-                    name: .jeffNotesWatchGrammarStateChanged,
-                    object: nil,
-                    userInfo: state
-                )
-            }
-        }
     }
 
     static func libraryURL() throws -> URL {
@@ -251,12 +188,12 @@ enum RemoteCommandError: LocalizedError {
     }
 }
 
-enum GrammarRequestDelivery {
+
+enum RecordingCommandDelivery {
     case immediate
     case queued
 }
 
-@MainActor
 final class WatchDocumentStore: ObservableObject {
     @Published private(set) var documents: [WatchDocument] = []
 
@@ -330,63 +267,6 @@ final class WatchRecordingStore: ObservableObject {
     deinit {
         if let observer {
             NotificationCenter.default.removeObserver(observer)
-        }
-    }
-}
-
-@MainActor
-final class WatchGrammarWritingStore: ObservableObject {
-    @Published private(set) var config: WatchGrammarWritingConfig
-    @Published private(set) var generationState: WatchGrammarWritingState
-    private var configObserver: NSObjectProtocol?
-    private var stateObserver: NSObjectProtocol?
-
-    init() {
-        let defaults = UserDefaults.standard
-        config = WatchGrammarWritingConfig(
-            dictionary: defaults.dictionary(forKey: "JeffNotesGrammarWritingConfig") ?? [:]
-        )
-        generationState = WatchGrammarWritingState(
-            dictionary: defaults.dictionary(forKey: "JeffNotesGrammarWritingState") ?? [:]
-        )
-        configObserver = NotificationCenter.default.addObserver(
-            forName: .jeffNotesWatchGrammarConfigChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let values = Self.stringDictionary(notification.userInfo) else { return }
-            Task { @MainActor in
-                self?.config = WatchGrammarWritingConfig(dictionary: values)
-            }
-        }
-        stateObserver = NotificationCenter.default.addObserver(
-            forName: .jeffNotesWatchGrammarStateChanged,
-            object: nil,
-            queue: .main
-        ) { [weak self] notification in
-            guard let values = Self.stringDictionary(notification.userInfo) else { return }
-            Task { @MainActor in
-                self?.generationState = WatchGrammarWritingState(dictionary: values)
-            }
-        }
-    }
-
-    private nonisolated static func stringDictionary(
-        _ source: [AnyHashable: Any]?
-    ) -> [String: Any]? {
-        guard let source else { return nil }
-        return source.reduce(into: [String: Any]()) { result, entry in
-            guard let key = entry.key as? String else { return }
-            result[key] = entry.value
-        }
-    }
-
-    deinit {
-        if let configObserver {
-            NotificationCenter.default.removeObserver(configObserver)
-        }
-        if let stateObserver {
-            NotificationCenter.default.removeObserver(stateObserver)
         }
     }
 }

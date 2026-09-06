@@ -21,6 +21,10 @@ class HandoverPayload {
   /// Main isolate callbacks
   final void Function(SessionReadyEvent event) onDone;
   final void Function(String statusMsg) onStatus;
+
+  /// Recoverable incompleteness (pending STT, rate limit, or a drain timeout)
+  /// is reported separately from a failed Markdown/export write.
+  final void Function(String deferredMsg)? onDeferred;
   final void Function(String errorMsg)? onError;
 
   HandoverPayload({
@@ -28,6 +32,7 @@ class HandoverPayload {
     required this.enableFinalRecap,
     required this.onDone,
     required this.onStatus,
+    this.onDeferred,
     this.onError,
   });
 }
@@ -55,6 +60,8 @@ class SessionBackgroundProcessor {
   SessionBackgroundProcessor._();
 
   CloudSyncService cloudSyncService = const SupabaseCloudSyncService();
+  final Map<String, Future<void>> _exportWriteQueues = {};
+  int _nextAtomicWriteSequence = 0;
 
   Future<void> submit(HandoverPayload payload) => _process(payload);
 
@@ -97,6 +104,11 @@ class SessionBackgroundProcessor {
       payload.onStatus('Flushing buffer...');
       try {
         if (ctx.orchestrator != null) {
+          // One bounded retry of a restored/failed translation batch. Failed
+          // items remain durable; drain below reports them as deferred.
+          await ctx.orchestrator!.retryPendingTranslations(
+            onStatus: (msg) => payload.onStatus(msg),
+          );
           await ctx.orchestrator!.flush(
             onStatus: (msg) => payload.onStatus(msg),
           );
@@ -134,8 +146,20 @@ class SessionBackgroundProcessor {
         try {
           await _generateFinalReview(ctx);
         } catch (e) {
+          finalizationIncomplete = true;
+          finalizationWarning ??=
+              'Final review is pending; saved available notes and kept the recovery draft.';
           debugPrint('[SessionBGP] Final recap generation error: $e');
         }
+      }
+
+      if (ctx.pendingTranslations.isNotEmpty) {
+        finalizationIncomplete = true;
+        finalizationWarning ??=
+            'Translation is pending; saved available notes and kept the recovery draft.';
+      }
+      if (!await ctx.saveShadowDraft()) {
+        throw StateError('Could not persist final recovery state');
       }
 
       // ─── 5. Write Markdown file ───────────────────────────────
@@ -146,10 +170,18 @@ class SessionBackgroundProcessor {
       // Restore the real-classroom recording that the MD player expects.
       // Audio failure must not destroy otherwise valid notes.
       final wavPath = ctx.exportPath.replaceAll(RegExp(r'\.md$'), '.wav');
-      final audioSaved = await WavStitchService.stitch(
-        inputPaths: ctx.rawAudioPaths,
-        outputPath: wavPath,
-      );
+      var audioSaved = false;
+      try {
+        audioSaved = await WavStitchService.stitch(
+          inputPaths: ctx.rawAudioPaths,
+          outputPath: wavPath,
+        );
+      } catch (error) {
+        // A note export remains usable even when a long recovered recording
+        // cannot be stitched. Never turn that optional audio failure into a
+        // failed lecture session.
+        debugPrint('[SessionBGP] Audio stitch failed: $error');
+      }
       unawaited(
         DiagnosticLogService.instance.record(
           'background',
@@ -190,7 +222,7 @@ class SessionBackgroundProcessor {
           mode: ctx.mode,
           content: eventContent,
           exportPath: ctx.exportPath,
-          isFinal: true,
+          isFinal: !finalizationIncomplete,
           eventSequence: 1,
           recordedAt: ctx.createdAt,
         );
@@ -200,17 +232,20 @@ class SessionBackgroundProcessor {
               ? 'Saved available transcript; recovery draft kept.'
               : 'Saved OK!',
         );
-        payload.onDone(readyEvent);
-
         if (finalizationIncomplete) {
           // The Markdown snapshot is usable, but the draft may contain data
           // needed for recovery after an STT/translation timeout.
-          payload.onError?.call(finalizationWarning!);
+          payload.onDeferred?.call(finalizationWarning!);
+          payload.onDone(readyEvent);
+          // A verified partial snapshot is safe to sync. The next complete
+          // export upserts the same session row with the recovered content.
+          unawaited(_upsertToSupabase(ctx, file));
         } else {
+          payload.onDone(readyEvent);
           // Delete Shadow Draft ONLY after a fully finalized export.
           await ShadowDraftService.instance.deleteDraft(ctx.shadowDraftPath);
 
-          // Cloud sync only the fully finalized document.
+          // Cloud sync the fully finalized document.
           unawaited(_upsertToSupabase(ctx, file));
         }
       } else {
@@ -269,6 +304,8 @@ class SessionBackgroundProcessor {
     );
     if (_isUsableAiContent(finalReview)) {
       ctx.finalReviewContent = finalReview!.trim();
+    } else {
+      throw StateError('Final review is still unavailable');
     }
 
     if (ctx.mode == AppMode.exam) {
@@ -281,6 +318,8 @@ class SessionBackgroundProcessor {
       );
       if (_isUsableAiContent(shorthand)) {
         ctx.shorthandReviewContent = shorthand!.trim();
+      } else {
+        throw StateError('Shorthand review is still unavailable');
       }
     }
   }
@@ -473,7 +512,16 @@ class SessionBackgroundProcessor {
     final isFreeTalk = ctx.mode == AppMode.freeTalk;
 
     if (isFreeTalk) {
-      final content = _formatFreeTalk(ctx.notes);
+      final formatted = _formatFreeTalk(ctx.notes);
+      // A silent or unrecognized FreeTalk slice is still a valid recording.
+      // Write a truthful audio-only marker so export verification succeeds;
+      // never manufacture transcript text or leave the draft in a retry loop.
+      final content = formatted.trim().isEmpty
+          ? '# Free Talk Recording\n\n'
+                'No transcript was produced for this recording. '
+                'Check the original audio on the recording device.\n\n'
+                'Session: ${ctx.sessionId}'
+          : formatted;
       await _writeAtomically(file, content);
       return;
     }
@@ -606,11 +654,40 @@ class SessionBackgroundProcessor {
       .join('\n')
       .trim();
 
-  Future<void> _writeAtomically(File file, String content) async {
-    final tempFile = File('${file.path}.tmp');
-    await tempFile.writeAsString(content, flush: true);
-    if (await file.exists()) await file.delete();
-    await tempFile.rename(file.path);
+  Future<void> _writeAtomically(File file, String content) {
+    // A recovery can be requested again while an earlier recovery is still
+    // finalizing.  Never let those attempts share `<export>.tmp`: the first
+    // rename would otherwise remove the second attempt's temporary file.
+    final outputPath = file.path;
+    final previous = _exportWriteQueues[outputPath] ?? Future<void>.value();
+    final operation = previous.then((_) => _writeAtomicallyOnce(file, content));
+    late final Future<void> queueTail;
+    queueTail = operation.then<void>(
+      (_) {},
+      onError: (Object error, StackTrace stackTrace) {},
+    );
+    _exportWriteQueues[outputPath] = queueTail;
+
+    return operation.whenComplete(() {
+      if (identical(_exportWriteQueues[outputPath], queueTail)) {
+        _exportWriteQueues.remove(outputPath);
+      }
+    });
+  }
+
+  Future<void> _writeAtomicallyOnce(File file, String content) async {
+    final tempFile = File(
+      '${file.path}.${DateTime.now().microsecondsSinceEpoch}_${_nextAtomicWriteSequence++}.tmp',
+    );
+    try {
+      await tempFile.writeAsString(content, flush: true);
+      if (await file.exists()) await file.delete();
+      await tempFile.rename(file.path);
+    } finally {
+      if (await tempFile.exists()) {
+        await tempFile.delete();
+      }
+    }
   }
 
   String _formatFreeTalk(List<InsightNote> notes) {

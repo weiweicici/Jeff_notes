@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 /// Joins mono 16 kHz, 16-bit PCM WAV slices into one playable WAV file.
@@ -9,25 +10,55 @@ class WavStitchService {
     required List<String> inputPaths,
     required String outputPath,
   }) async {
-    final pcm = <int>[];
+    final slices = <_WavSlice>[];
+    var totalPcmLength = 0;
     for (final path in inputPaths) {
       final file = File(path);
       if (!await file.exists()) continue;
-      final bytes = await file.readAsBytes();
-      final offset = dataOffset(bytes);
-      if (bytes.length > offset) pcm.addAll(bytes.sublist(offset));
+      final fileLength = await file.length();
+      final offset = await _dataOffsetForFile(file, fileLength);
+      if (fileLength <= offset) continue;
+      final pcmLength = fileLength - offset;
+      if (totalPcmLength > 0xFFFFFFFF - 36 - pcmLength) return false;
+      totalPcmLength += pcmLength;
+      slices.add(_WavSlice(file, offset));
     }
-    if (pcm.isEmpty) return false;
+    if (slices.isEmpty) return false;
 
     final output = File(outputPath);
-    final temp = File('$outputPath.tmp');
-    await temp.writeAsBytes(<int>[
-      ...wavHeader(pcm.length),
-      ...pcm,
-    ], flush: true);
-    if (await output.exists()) await output.delete();
-    await temp.rename(outputPath);
-    return await output.exists() && await output.length() > 44;
+    final temp = File(
+      '$outputPath.${DateTime.now().microsecondsSinceEpoch}.tmp',
+    );
+    RandomAccessFile? sink;
+    try {
+      sink = await temp.open(mode: FileMode.write);
+      await sink.writeFrom(wavHeader(totalPcmLength));
+      for (final slice in slices) {
+        await for (final chunk in slice.file.openRead(slice.dataOffset)) {
+          await sink.writeFrom(chunk);
+        }
+      }
+      await sink.close();
+      sink = null;
+      if (await output.exists()) await output.delete();
+      await temp.rename(outputPath);
+      return await output.exists() && await output.length() > 44;
+    } finally {
+      if (sink != null) await sink.close();
+      if (await temp.exists()) await temp.delete();
+    }
+  }
+
+  static Future<int> _dataOffsetForFile(File file, int fileLength) async {
+    if (fileLength == 0) return 0;
+    final headerLength = min(fileLength, 64 * 1024);
+    final handle = await file.open(mode: FileMode.read);
+    try {
+      final offset = dataOffset(await handle.read(headerLength));
+      return offset.clamp(0, fileLength) as int;
+    } finally {
+      await handle.close();
+    }
   }
 
   static int dataOffset(Uint8List bytes) {
@@ -88,4 +119,11 @@ class WavStitchService {
       ..setUint8(39, 0x61);
     return header.buffer.asUint8List();
   }
+}
+
+class _WavSlice {
+  const _WavSlice(this.file, this.dataOffset);
+
+  final File file;
+  final int dataOffset;
 }

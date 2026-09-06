@@ -131,6 +131,46 @@ void main() {
     });
 
     test(
+      'stitches multi-megabyte WAV slices without retaining all PCM',
+      () async {
+        final directory = await Directory.systemTemp.createTemp(
+          'final_exam_large_wav_test_',
+        );
+        addTearDown(() => directory.delete(recursive: true));
+        final block = Uint8List.fromList(List<int>.filled(256 * 1024, 0x5a));
+
+        Future<File> makeLargeSlice(String name, int blockCount) async {
+          final file = File('${directory.path}/$name');
+          final sink = await file.open(mode: FileMode.write);
+          try {
+            await sink.writeFrom(
+              WavStitchService.wavHeader(block.length * blockCount),
+            );
+            for (var index = 0; index < blockCount; index++) {
+              await sink.writeFrom(block);
+            }
+          } finally {
+            await sink.close();
+          }
+          return file;
+        }
+
+        final first = await makeLargeSlice('one.wav', 4);
+        final second = await makeLargeSlice('two.wav', 4);
+        final output = File('${directory.path}/combined.wav');
+
+        expect(
+          await WavStitchService.stitch(
+            inputPaths: [first.path, second.path],
+            outputPath: output.path,
+          ),
+          isTrue,
+        );
+        expect(await output.length(), 44 + 2 * 4 * block.length);
+      },
+    );
+
+    test(
       'Gemini summary fallback preserves the shorthand system prompt',
       () async {
         late Map<String, dynamic> requestBody;

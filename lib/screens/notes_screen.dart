@@ -14,6 +14,16 @@ import '../recording_provider.dart'; // 放在其他导入之后，避免冲突
 import '../services/tts_service.dart';
 import '../services/diagnostic_log_service.dart';
 import '../services/note_navigation_service.dart';
+import '../services/file_sync_agent.dart';
+import '../widgets/cloud_account_panel.dart';
+
+void showAppSettingsDialog(BuildContext context) {
+  showDialog(
+    context: context,
+    builder: (context) =>
+        _SettingsDialog(provider: context.read<RecordingProvider>()),
+  );
+}
 
 class NotesScreen extends StatefulWidget {
   const NotesScreen({super.key});
@@ -51,14 +61,6 @@ class _NotesScreenState extends State<NotesScreen> {
   void dispose() {
     _scrollController.dispose();
     super.dispose();
-  }
-
-  void _showSettingsDialog(BuildContext context) {
-    showDialog(
-      context: context,
-      builder: (context) =>
-          _SettingsDialog(provider: context.read<RecordingProvider>()),
-    );
   }
 
   /// 从 MD 全文中提取"中文全文"或"中文翻译"节下的纯文本正文（不含标题和符号）
@@ -584,7 +586,7 @@ class _NotesScreenState extends State<NotesScreen> {
           ],
         ),
         actions: [
-          if (!provider.isRecording && !provider.isProcessingRecording)
+          if (!provider.isRecording)
             Padding(
               padding: const EdgeInsets.only(right: 4),
               child: IconButton.filled(
@@ -632,7 +634,7 @@ class _NotesScreenState extends State<NotesScreen> {
           Padding(
             padding: const EdgeInsets.only(right: 8),
             child: IconButton.filled(
-              onPressed: provider.isProcessingRecording || provider.isPending
+              onPressed: provider.isPending
                   ? null
                   : () async {
                       HapticFeedback.mediumImpact();
@@ -657,10 +659,6 @@ class _NotesScreenState extends State<NotesScreen> {
               ),
             ),
             icon: const Icon(Icons.history_edu),
-          ),
-          IconButton(
-            onPressed: () => _showSettingsDialog(context),
-            icon: const Icon(Icons.settings_outlined),
           ),
           const SizedBox(width: 8),
         ],
@@ -694,7 +692,8 @@ class _NotesScreenState extends State<NotesScreen> {
               ),
             ),
           if (provider.isProcessingRecording ||
-              provider.processingErrorMessage != null)
+              provider.processingErrorMessage != null ||
+              provider.processingDeferredMessage != null)
             Container(
               width: double.infinity,
               margin: const EdgeInsets.fromLTRB(16, 10, 16, 2),
@@ -719,13 +718,15 @@ class _NotesScreenState extends State<NotesScreen> {
                   SizedBox(
                     width: 22,
                     height: 22,
-                    child: provider.processingErrorMessage == null
-                        ? const CircularProgressIndicator(strokeWidth: 2.5)
-                        : const Icon(
+                    child: provider.processingErrorMessage != null
+                        ? const Icon(
                             Icons.error_outline,
                             color: Colors.redAccent,
                             size: 22,
-                          ),
+                          )
+                        : provider.isProcessingRecording
+                        ? const CircularProgressIndicator(strokeWidth: 2.5)
+                        : const Icon(Icons.schedule, color: Colors.blueAccent),
                   ),
                   const SizedBox(width: 12),
                   Expanded(
@@ -733,9 +734,11 @@ class _NotesScreenState extends State<NotesScreen> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Text(
-                          provider.processingErrorMessage == null
-                              ? '讲座处理中 · 第 ${provider.processingStep}/${RecordingProvider.processingStepCount} 步'
-                              : '讲座处理没有完整完成',
+                          provider.processingErrorMessage != null
+                              ? '本机保存未完成，请保留原始录音'
+                              : provider.processingDeferredMessage != null
+                              ? '本机已保存，等待继续处理'
+                              : '讲座处理中 · 第 ${provider.processingStep}/${RecordingProvider.processingStepCount} 步',
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w800,
@@ -744,6 +747,7 @@ class _NotesScreenState extends State<NotesScreen> {
                         const SizedBox(height: 4),
                         Text(
                           provider.processingErrorMessage ??
+                              provider.processingDeferredMessage ??
                               provider.statusMessage ??
                               '正在处理录音内容',
                           style: TextStyle(
@@ -751,7 +755,8 @@ class _NotesScreenState extends State<NotesScreen> {
                             color: isDark ? Colors.white70 : Colors.black54,
                           ),
                         ),
-                        if (provider.processingErrorMessage == null) ...[
+                        if (provider.processingErrorMessage == null &&
+                            provider.isProcessingRecording) ...[
                           const SizedBox(height: 8),
                           ClipRRect(
                             borderRadius: BorderRadius.circular(99),
@@ -981,10 +986,8 @@ class _NotesScreenState extends State<NotesScreen> {
 
           Expanded(
             child: Selector<RecordingProvider, _TranscriptData>(
-              selector: (_, p) => _TranscriptData(
-                p.notes.where((n) => !n.isSummary).toList(),
-                p.isRecording,
-              ),
+              selector: (_, p) =>
+                  _TranscriptData(_visibleTranscripts(p.notes), p.isRecording),
               shouldRebuild: (prev, next) {
                 // 新切片到达：触发重绘 + 滚动到底部
                 if (prev.transcripts.length != next.transcripts.length) {
@@ -992,19 +995,12 @@ class _NotesScreenState extends State<NotesScreen> {
                   return true;
                 }
                 if (prev.isRecording != next.isRecording) return true;
-                // 翻译异步到达（切片数相同但内容有变化）：触发重绘 + 滚动
-                if (next.transcripts.isNotEmpty &&
-                    prev.transcripts.isNotEmpty) {
-                  final prevMap = {
-                    for (final n in prev.transcripts) n.id: n.translatedContent,
-                  };
-                  final hasNewTranslation = next.transcripts.any(
-                    (note) => prevMap[note.id] != note.translatedContent,
-                  );
-                  if (hasNewTranslation) {
-                    _scrollToBottom();
-                    return true;
-                  }
+                // InsightNote is mutable, so comparing the old/new object
+                // references misses in-place STT and translation updates.
+                // Compare the immutable snapshot captured by _TranscriptData.
+                if (prev.contentRevision != next.contentRevision) {
+                  _scrollToBottom();
+                  return true;
                 }
                 return false;
               },
@@ -1132,7 +1128,32 @@ class _NotesScreenState extends State<NotesScreen> {
 class _TranscriptData {
   final List<InsightNote> transcripts;
   final bool isRecording;
-  _TranscriptData(this.transcripts, this.isRecording);
+  final String contentRevision;
+
+  _TranscriptData(List<InsightNote> transcripts, this.isRecording)
+    : transcripts = List<InsightNote>.unmodifiable(transcripts),
+      contentRevision = transcripts
+          .map(
+            (note) =>
+                '${note.id}\u0000${note.transcript}\u0000${note.translatedContent ?? ''}\u0000${note.isProcessing}',
+          )
+          .join('\u0001');
+}
+
+List<InsightNote> _visibleTranscripts(List<InsightNote> notes) {
+  final visible = <InsightNote>[];
+  var hasVisiblePendingPlaceholder = false;
+  for (final note in notes) {
+    if (note.isSummary) continue;
+    final isPendingPlaceholder =
+        note.isProcessing && note.transcript.trim() == '...';
+    if (isPendingPlaceholder) {
+      if (hasVisiblePendingPlaceholder) continue;
+      hasVisiblePendingPlaceholder = true;
+    }
+    visible.add(note);
+  }
+  return visible;
 }
 
 // ─── Settings Dialog ────────────────────────────────────────────────────────
@@ -1154,10 +1175,12 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   late bool _tempEnableFinalRecap;
   late bool _tempEnableLectureDiscovery;
   late TextEditingController _groqController;
+  late TextEditingController _groqTranslationController;
   late TextEditingController _openRouterController;
   late TextEditingController _geminiController;
 
   bool _obscureGroq = true;
+  bool _obscureGroqTranslation = true;
   bool _obscureOpenRouter = true;
   bool _obscureGemini = true;
 
@@ -1172,6 +1195,9 @@ class _SettingsDialogState extends State<_SettingsDialog> {
     _tempEnableFinalRecap = p.enableFinalRecap;
     _tempEnableLectureDiscovery = p.enableLectureDiscovery;
     _groqController = TextEditingController(text: p.groqKey);
+    _groqTranslationController = TextEditingController(
+      text: p.groqTranslationKey,
+    );
     _openRouterController = TextEditingController(text: p.openRouterKey);
     _geminiController = TextEditingController(text: p.geminiKey);
   }
@@ -1179,6 +1205,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   @override
   void dispose() {
     _groqController.dispose();
+    _groqTranslationController.dispose();
     _openRouterController.dispose();
     _geminiController.dispose();
     super.dispose();
@@ -1187,6 +1214,7 @@ class _SettingsDialogState extends State<_SettingsDialog> {
   void _save() {
     widget.provider.updateSettings(
       groqKey: _groqController.text,
+      groqTranslationKey: _groqTranslationController.text,
       openRouterKey: _openRouterController.text,
       geminiKey: _geminiController.text,
       mode: _tempMode,
@@ -1240,6 +1268,8 @@ class _SettingsDialogState extends State<_SettingsDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            CloudAccountPanel(onAuthenticated: FileSyncAgent.instance.syncNow),
+            const SizedBox(height: 16),
             DropdownButtonFormField<int>(
               value: _tempDuration,
               decoration: const InputDecoration(labelText: 'STT Frequency'),
@@ -1338,8 +1368,8 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               controller: _groqController,
               obscureText: _obscureGroq,
               decoration: InputDecoration(
-                labelText: 'Groq API Key',
-                helperText: 'Required: for Whisper speech-to-text (STT)',
+                labelText: 'Groq 英文字幕 API Key',
+                helperText: '用于 Whisper 语音转英文字幕（STT）',
                 helperStyle: TextStyle(
                   fontSize: 10,
                   color: isDark ? Colors.white38 : Colors.black38,
@@ -1355,11 +1385,35 @@ class _SettingsDialogState extends State<_SettingsDialog> {
             ),
             const SizedBox(height: 16),
             TextField(
+              controller: _groqTranslationController,
+              obscureText: _obscureGroqTranslation,
+              decoration: InputDecoration(
+                labelText: 'Groq 中文翻译备用 API Key',
+                helperText: 'Gemini 翻译失败时备用；英文字幕仍使用上面的 Groq Key',
+                helperStyle: TextStyle(
+                  fontSize: 10,
+                  color: isDark ? Colors.white38 : Colors.black38,
+                ),
+                suffixIcon: IconButton(
+                  icon: Icon(
+                    _obscureGroqTranslation
+                        ? Icons.visibility_off
+                        : Icons.visibility,
+                    size: 20,
+                  ),
+                  onPressed: () => setState(
+                    () => _obscureGroqTranslation = !_obscureGroqTranslation,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(height: 16),
+            TextField(
               controller: _openRouterController,
               obscureText: _obscureOpenRouter,
               decoration: InputDecoration(
                 labelText: 'OpenRouter API Key',
-                helperText: 'Required: for Gemini translation & recap',
+                helperText: '用于 OpenRouter/Gemini 翻译备用及复盘功能',
                 helperStyle: TextStyle(
                   fontSize: 10,
                   color: isDark ? Colors.white38 : Colors.black38,
@@ -1381,9 +1435,8 @@ class _SettingsDialogState extends State<_SettingsDialog> {
               controller: _geminiController,
               obscureText: _obscureGemini,
               decoration: InputDecoration(
-                labelText: 'Gemini API Key',
-                helperText:
-                    'Recommended: for Gemini 2.0 Flash HD Speech Synthesis',
+                labelText: 'Gemini 中文翻译 API Key',
+                helperText: '中文翻译主服务；也用于 Gemini 语音识别备用及其他 Gemini 功能',
                 helperStyle: TextStyle(
                   fontSize: 10,
                   color: isDark ? Colors.white38 : Colors.black38,

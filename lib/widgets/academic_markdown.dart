@@ -10,19 +10,39 @@ MarkdownStyleSheet getAcademicMarkdownStyle(BuildContext context) {
   return MarkdownStyleSheet(
     p: TextStyle(fontSize: 20, height: 1.6, color: baseColor),
     h1: TextStyle(fontSize: 30, fontWeight: FontWeight.bold, color: titleColor),
-    h2: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: titleColor, height: 1.4),
-    h3: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: titleColor, height: 1.4),
-    listBullet: TextStyle(fontSize: 20, color: isDark ? Colors.blue[300] : Colors.blueAccent),
-    strong: TextStyle(fontWeight: FontWeight.bold, color: titleColor, fontSize: 20),
-    blockSpacing: 20.0,
-    code: const TextStyle(
-      backgroundColor: Colors.transparent, 
-      fontSize: 18,
+    h2: TextStyle(
+      fontSize: 26,
+      fontWeight: FontWeight.bold,
+      color: titleColor,
+      height: 1.4,
     ),
+    h3: TextStyle(
+      fontSize: 22,
+      fontWeight: FontWeight.bold,
+      color: titleColor,
+      height: 1.4,
+    ),
+    listBullet: TextStyle(
+      fontSize: 20,
+      color: isDark ? Colors.blue[300] : Colors.blueAccent,
+    ),
+    strong: TextStyle(
+      fontWeight: FontWeight.bold,
+      color: titleColor,
+      fontSize: 20,
+    ),
+    blockSpacing: 20.0,
+    code: const TextStyle(backgroundColor: Colors.transparent, fontSize: 18),
     listIndent: 30.0,
-    tableBorder: TableBorder.all(color: isDark ? Colors.white24 : Colors.black12),
+    tableBorder: TableBorder.all(
+      color: isDark ? Colors.white24 : Colors.black12,
+    ),
     tableBody: TextStyle(fontSize: 18, color: baseColor),
-    tableHead: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: titleColor),
+    tableHead: TextStyle(
+      fontSize: 18,
+      fontWeight: FontWeight.bold,
+      color: titleColor,
+    ),
   );
 }
 
@@ -44,7 +64,7 @@ class HighlightBuilder extends MarkdownElementBuilder {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
       decoration: BoxDecoration(
-        color: Colors.orange.withOpacity(isDark ? 0.4 : 0.2),
+        color: Colors.orange.withValues(alpha: isDark ? 0.4 : 0.2),
         borderRadius: BorderRadius.circular(4),
       ),
       child: Text(

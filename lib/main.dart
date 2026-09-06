@@ -6,13 +6,9 @@ import 'package:provider/provider.dart';
 import 'package:audio_service/audio_service.dart';
 import 'recording_provider.dart';
 import 'screens/academic_hub_screen.dart';
-import 'screens/grammar_writing_screen.dart';
 import 'services/supabase_config.dart';
 import 'services/file_sync_agent.dart';
-import 'services/grammar_repository.dart';
-import 'services/grammar_writing_draft_service.dart';
 import 'services/audio_handler.dart';
-import 'data/grammar_content.dart';
 
 import 'services/credential_store.dart';
 import 'services/diagnostic_log_service.dart';
@@ -21,6 +17,7 @@ import 'models/session_ready_event.dart';
 import 'services/note_navigation_service.dart';
 import 'services/foreground_display_service.dart';
 import 'services/watch_sync_service.dart';
+import 'services/local_translation_service.dart';
 
 late MyAudioHandler globalAudioHandler;
 
@@ -30,7 +27,6 @@ void main() async {
   await CredentialStore.instance.migrateFromSharedPreferences();
   await SupabaseConfig.init();
   await SupabaseConfig.signInAnonymously();
-  GrammarRepository.setHardcodedProvider(() => GrammarContent.parts);
 
   globalAudioHandler = await AudioService.init(
     builder: () => MyAudioHandler(),
@@ -49,7 +45,26 @@ void main() async {
       child: const JeffNotesApp(),
     ),
   );
+  unawaited(_prepareLocalTranslationModels());
   FileSyncAgent.instance.start();
+}
+
+Future<void> _prepareLocalTranslationModels() async {
+  try {
+    await LocalTranslationService.instance.prepareModels();
+    await DiagnosticLogService.instance.record(
+      'translation',
+      'local_models_ready',
+    );
+  } catch (error) {
+    // A missing first-use download is retryable when Lecture/Free Talk next
+    // requests translation. Do not send transcript text to a cloud fallback.
+    await DiagnosticLogService.instance.record(
+      'translation',
+      'local_model_prepare_deferred',
+      fields: {'errorType': error.runtimeType},
+    );
+  }
 }
 
 class JeffNotesApp extends StatefulWidget {
@@ -62,7 +77,6 @@ class JeffNotesApp extends StatefulWidget {
 class _JeffNotesAppState extends State<JeffNotesApp>
     with WidgetsBindingObserver {
   StreamSubscription<SessionReadyEvent>? _readySubscription;
-  StreamSubscription<WatchGrammarWritingRequest>? _watchWritingSubscription;
   RecordingProvider? _recordingProvider;
 
   @override
@@ -75,30 +89,12 @@ class _JeffNotesAppState extends State<JeffNotesApp>
     _readySubscription = provider.sessionReadyStream.listen((event) {
       unawaited(_surfaceReadyNote(provider, event));
     });
-    _watchWritingSubscription = WatchSyncService.instance.grammarWritingRequests
-        .listen((request) => unawaited(_openWatchGrammarWriting(request)));
     WatchSyncService.instance.initialize();
     WatchSyncService.instance.setRecordingCommandHandler(
       (command) => _handleWatchRecordingCommand(provider, command),
     );
-    WatchSyncService.instance.setGrammarConfigRequestHandler(
-      _pushWatchGrammarWritingConfig,
-    );
     provider.addListener(_syncWatchRecordingState);
     unawaited(_pushWatchRecordingState(provider));
-    unawaited(_pushWatchGrammarWritingConfig());
-  }
-
-  Future<void> _pushWatchGrammarWritingConfig() async {
-    try {
-      final parts = await GrammarRepository.loadParts();
-      final draft = await GrammarWritingDraftService.instance.load();
-      await WatchSyncService.instance.updateGrammarWritingConfig(
-        draft.toWatchPayload(parts),
-      );
-    } catch (error) {
-      debugPrint('[WatchSync] Grammar config refresh skipped: $error');
-    }
   }
 
   Future<void> _handleWatchRecordingCommand(
@@ -202,61 +198,11 @@ class _JeffNotesAppState extends State<JeffNotesApp>
     );
   }
 
-  Future<void> _openWatchGrammarWriting(
-    WatchGrammarWritingRequest request,
-  ) async {
-    if (request.requestId.isNotEmpty) {
-      await WatchSyncService.instance.updateGrammarWritingState(
-        requestId: request.requestId,
-        state: 'accepted',
-        message: '手机已收到，准备生成',
-      );
-    }
-    // Let the current frame finish so the global Navigator is always ready,
-    // including when WatchConnectivity wakes the app during startup.
-    await Future<void>.delayed(Duration.zero);
-    if (!mounted) return;
-    final navigator = NoteNavigationService.instance.navigatorKey.currentState;
-    if (navigator == null) {
-      if (request.requestId.isNotEmpty) {
-        await WatchSyncService.instance.updateGrammarWritingState(
-          requestId: request.requestId,
-          state: 'error',
-          message: '手机界面尚未准备好，请稍后重试',
-        );
-      }
-      return;
-    }
-    final selectionMode = switch (request.selectionMode) {
-      'automatic' => GrammarWritingSelectionMode.automatic,
-      'custom' => GrammarWritingSelectionMode.custom,
-      _ => GrammarWritingSelectionMode.phone,
-    };
-    await navigator.push<void>(
-      MaterialPageRoute<void>(
-        settings: const RouteSettings(name: '/watch-grammar-writing'),
-        builder: (_) => GrammarWritingScreen(
-          initialTopic: request.topic,
-          autoGenerate: true,
-          launchOptions: GrammarWritingLaunchOptions(
-            selectionMode: selectionMode,
-            selectedPartIds: request.selectedPartIds,
-            selectedUnitIds: request.selectedUnitIds,
-            contentType: request.contentType,
-            requireAllSelectedGrammar: request.requireAllSelectedGrammar,
-            requestId: request.requestId,
-          ),
-        ),
-      ),
-    );
-  }
-
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
     unawaited(ForegroundDisplayService.setActive(false));
     _readySubscription?.cancel();
-    _watchWritingSubscription?.cancel();
     _recordingProvider?.removeListener(_syncWatchRecordingState);
     super.dispose();
   }

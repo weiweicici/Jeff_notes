@@ -34,18 +34,21 @@ class SupabaseCloudSyncService implements CloudSyncService {
         return false;
       }
 
-      if (!SupabaseConfig.isAuthenticated) {
-        unawaited(
-          DiagnosticLogService.instance.record(
-            'cloud',
-            'sync_skipped_unauthenticated',
-            sessionId: context.sessionId,
-          ),
-        );
-        debugPrint(
-          '[SupabaseCloudSyncService] Unauthenticated / Uninitialized, fail-closed skip.',
-        );
-        return false;
+      if (!SupabaseConfig.hasValidSession) {
+        final restored = await SupabaseConfig.ensureAuthenticated();
+        if (!restored || !SupabaseConfig.hasValidSession) {
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'cloud',
+              'sync_skipped_unauthenticated',
+              sessionId: context.sessionId,
+            ),
+          );
+          debugPrint(
+            '[SupabaseCloudSyncService] Unauthenticated / Uninitialized, fail-closed skip.',
+          );
+          return false;
+        }
       }
 
       final userId = SupabaseConfig.currentUserIdOrNull;
@@ -79,12 +82,38 @@ class SupabaseCloudSyncService implements CloudSyncService {
         'updated_at': DateTime.now().toIso8601String(),
       };
 
-      // Upsert by composite key (user_id, session_id)
-      await SupabaseConfig.client
-          .from('archives')
-          .upsert(map, onConflict: 'user_id,session_id');
-
-      await UploadCache.mark(hash);
+      final didUpload = await UploadCache.runSingleFlight(
+        hash,
+        userId: userId,
+        sessionId: context.sessionId,
+        operation: () async {
+          // Upsert by composite key (user_id, session_id)
+          if (!SupabaseConfig.hasValidSession ||
+              SupabaseConfig.currentUserIdOrNull != userId) {
+            throw StateError('Authentication identity changed during sync');
+          }
+          final receipt = await SupabaseConfig.client
+              .from('archives')
+              .upsert(map, onConflict: 'user_id,session_id')
+              .select('user_id,session_id,file_hash')
+              .maybeSingle();
+          if (receipt == null ||
+              receipt['user_id'] != map['user_id'] ||
+              receipt['session_id'] != map['session_id'] ||
+              receipt['file_hash'] != map['file_hash']) {
+            throw StateError('remote_receipt_missing_or_mismatch');
+          }
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'cloud',
+              'remote_confirmed',
+              sessionId: context.sessionId,
+            ),
+          );
+          return true;
+        },
+      );
+      if (!didUpload) return false;
       unawaited(
         DiagnosticLogService.instance.record(
           'cloud',
@@ -106,7 +135,7 @@ class SupabaseCloudSyncService implements CloudSyncService {
         ),
       );
       debugPrint(
-        '[SupabaseCloudSyncService] Exception during sync (fail-closed): $e',
+        '[SupabaseCloudSyncService] Exception during sync (fail-closed): ${e.runtimeType}',
       );
       return false;
     }
@@ -139,8 +168,15 @@ class FakeCloudSyncService implements CloudSyncService {
       'file_size': bytes.length,
     };
 
-    syncedRecords.add(record);
-    await UploadCache.mark(hash);
+    final didUpload = await UploadCache.runSingleFlight(
+      hash,
+      userId: 'fake_user_123',
+      operation: () async {
+        syncedRecords.add(record);
+        return true;
+      },
+    );
+    if (!didUpload) return true;
     return true;
   }
 }

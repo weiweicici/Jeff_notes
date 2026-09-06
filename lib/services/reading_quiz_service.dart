@@ -3,30 +3,44 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:http/http.dart' as http;
 import 'credential_store.dart';
-import '../data/pathways_content.dart';
-import '../models.dart';
 import '../prompt_provider.dart';
 
 class ReadingQuizService {
   static const String _geminiModel = 'gemini-2.5-flash';
 
-  static Future<String> _callAI(String systemPrompt, {String userMessage = '请生成'}) async {
+  static Future<String> _callAI(
+    String systemPrompt, {
+    String userMessage = '请生成',
+  }) async {
     // Try Gemini first
-    final geminiKey = await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
+    final geminiKey =
+        await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
     if (geminiKey.isNotEmpty) {
       try {
         final url = Uri.parse(
           'https://generativelanguage.googleapis.com/v1beta/models/$_geminiModel:generateContent?key=$geminiKey',
         );
-        final response = await http.post(
-          url,
-          headers: {'Content-Type': 'application/json'},
-          body: jsonEncode({
-            'system_instruction': {'parts': [{'text': systemPrompt}]},
-            'contents': [{'parts': [{'text': userMessage}]}],
-            'generationConfig': {'temperature': 0.5},
-          }),
-        ).timeout(const Duration(seconds: 60));
+        final response = await http
+            .post(
+              url,
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({
+                'system_instruction': {
+                  'parts': [
+                    {'text': systemPrompt},
+                  ],
+                },
+                'contents': [
+                  {
+                    'parts': [
+                      {'text': userMessage},
+                    ],
+                  },
+                ],
+                'generationConfig': {'temperature': 0.5},
+              }),
+            )
+            .timeout(const Duration(seconds: 60));
 
         if (response.statusCode == 200) {
           final data = jsonDecode(response.body);
@@ -39,14 +53,19 @@ class ReadingQuizService {
             }
           }
         }
-        debugPrint('[ReadingQuiz] Gemini failed (${response.statusCode}), falling back to Groq...');
+        debugPrint(
+          '[ReadingQuiz] Gemini failed (${response.statusCode}), falling back to Groq...',
+        );
       } catch (e) {
-        debugPrint('[ReadingQuiz] Gemini exception: $e, falling back to Groq...');
+        debugPrint(
+          '[ReadingQuiz] Gemini exception: $e, falling back to Groq...',
+        );
       }
     }
 
     // Fallback: Groq
-    final groqKey = await CredentialStore.instance.readKey(CredentialStore.keyGroq) ?? '';
+    final groqKey =
+        await CredentialStore.instance.readKey(CredentialStore.keyGroq) ?? '';
     if (groqKey.isEmpty) return '[AI 服务未配置，请在设置中填写 API Key]';
 
     try {
@@ -80,25 +99,9 @@ class ReadingQuizService {
     }
   }
 
-  static Future<String> generateQuiz(String text) =>
-      _callAI(PromptProvider.getReadingQuizPrompt(), userMessage: text);
-
-  static Future<String> getSummary(String text) =>
-      _callAI(PromptProvider.getReadingSummaryPrompt(), userMessage: text);
-
   static Future<String> getTranslation(String text) =>
       _callAI(PromptProvider.getReadingTranslationPrompt(), userMessage: text);
 
   static Future<String> getParaphrase(String text) =>
       _callAI(PromptProvider.getReadingParaphrasePrompt(), userMessage: text);
-
-  static Future<String> getVocabulary(String text) =>
-      _callAI(PromptProvider.getReadingVocabularyPrompt(), userMessage: text);
-
-  static Future<String> getPathwaysContent(PathwaysUnit unit) =>
-      _callAI(PromptProvider.getPathwaysUnitPrompt(unit));
-
-  /// 优先返回内置本地数据，无本地数据时返回 null
-  static PathwaysUnitData? getPathwaysLocalContent(PathwaysUnit unit) =>
-      PathwaysContent.units[unit];
 }

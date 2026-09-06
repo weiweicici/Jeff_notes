@@ -1,12 +1,23 @@
 import 'dart:async';
 import 'package:flutter/foundation.dart';
+import 'services/api_rate_limit_service.dart';
 
 class _WaitingTask {
   final Completer<void> completer;
   final int priority;
   final String? sessionId;
-  _WaitingTask(this.completer, this.priority, {this.sessionId});
+  final ApiTaskLane lane;
+  _WaitingTask(
+    this.completer,
+    this.priority, {
+    this.sessionId,
+    this.lane = ApiTaskLane.general,
+  });
 }
+
+/// Independent lanes prevent slow translation work from consuming the
+/// capacity needed by five-second speech-to-text slices.
+enum ApiTaskLane { general, realtime, translation }
 
 /// [Architect: Concurrency & Resilience & Session Isolation]
 /// 高并发调度器：支持 Session 状态机 (active -> sealed -> draining -> completed)
@@ -18,6 +29,16 @@ class ApiScheduler {
   static const int maxConcurrentRequests = 4;
   int _activeRequests = 0;
   final List<_WaitingTask> _waitingQueue = [];
+  final Map<ApiTaskLane, int> _laneActiveRequests = {
+    ApiTaskLane.realtime: 0,
+    ApiTaskLane.translation: 0,
+  };
+  final Map<ApiTaskLane, List<_WaitingTask>> _laneWaitingQueues = {
+    ApiTaskLane.realtime: [],
+    ApiTaskLane.translation: [],
+  };
+  static const int _laneConcurrentRequests = 2;
+  bool _lastGrantedRealtime = false;
 
   Completer<void>? _idleCompleter;
 
@@ -27,6 +48,13 @@ class ApiScheduler {
   final Map<String, Set<Future<void>>> _sessionFutures = {};
   final Map<String, int> _activeCountBySession = {};
   final Map<String, Completer<void>> _sessionIdleCompleters = {};
+
+  @visibleForTesting
+  int get activeRequestCount => _activeRequests;
+
+  @visibleForTesting
+  int activeRequestCountForSession(String sessionId) =>
+      _activeCountBySession[sessionId] ?? 0;
 
   /// 封锁 Session：防止新任务在 handover 后被误注入
   void sealSession(String sessionId) {
@@ -47,6 +75,7 @@ class ApiScheduler {
     Future<T> Function() task, {
     int priority = 1,
     String? sessionId,
+    ApiTaskLane lane = ApiTaskLane.general,
     int maxAttempts = 3,
     Duration retryBaseDelay = const Duration(seconds: 10),
   }) async {
@@ -64,26 +93,32 @@ class ApiScheduler {
     }
 
     bool isExpired = false;
-    if (_activeRequests >= maxConcurrentRequests) {
+    final laneQueue = _laneWaitingQueues[lane];
+    final realtimeActive = _laneActiveRequests[ApiTaskLane.realtime] ?? 0;
+    final nonRealtimeActive = _activeRequests - realtimeActive;
+    final laneIsFull = lane == ApiTaskLane.realtime
+        ? realtimeActive >= _laneConcurrentRequests
+        : nonRealtimeActive >= _laneConcurrentRequests;
+    if (laneIsFull || _activeRequests >= maxConcurrentRequests) {
       final completer = Completer<void>();
-      final insertIndex = _waitingQueue.indexWhere(
-        (t) => t.priority > priority,
-      );
       final waitingTask = _WaitingTask(
         completer,
         priority,
         sessionId: sessionId,
+        lane: lane,
       );
+      final queue = lane == ApiTaskLane.general ? _waitingQueue : laneQueue!;
+      final insertIndex = queue.indexWhere((t) => t.priority > priority);
       if (insertIndex == -1) {
-        _waitingQueue.add(waitingTask);
+        queue.add(waitingTask);
       } else {
-        _waitingQueue.insert(insertIndex, waitingTask);
+        queue.insert(insertIndex, waitingTask);
       }
 
       try {
         await completer.future.timeout(const Duration(seconds: 90));
       } on TimeoutException {
-        _waitingQueue.removeWhere((t) => t.completer == completer);
+        queue.removeWhere((t) => t.completer == completer);
         isExpired = true;
       }
     }
@@ -103,6 +138,10 @@ class ApiScheduler {
     }
 
     _activeRequests++;
+    if (lane != ApiTaskLane.general) {
+      _laneActiveRequests[lane] = (_laneActiveRequests[lane] ?? 0) + 1;
+    }
+    _lastGrantedRealtime = lane == ApiTaskLane.realtime;
     if (sessionId != null) {
       _activeCountBySession[sessionId] =
           (_activeCountBySession[sessionId] ?? 0) + 1;
@@ -125,15 +164,16 @@ class ApiScheduler {
       }
     }
 
-    final rawFuture =
-        _executeWithRetry(
-          task,
-          maxAttempts: maxAttempts,
-          retryBaseDelay: retryBaseDelay,
-        ).timeout(
-          const Duration(seconds: 60),
-          onTimeout: () => throw TimeoutException("Execution Timeout"),
-        );
+    // Do not put a second, detached timeout around [task].  Future.timeout
+    // only stops waiting; it does not cancel the underlying socket request.
+    // Releasing this slot at 60 seconds used to make the counters say idle
+    // while the HTTP request was still in flight.  Network callers own an
+    // abortable timeout, so this future now represents the real request.
+    final rawFuture = _executeWithRetry(
+      task,
+      maxAttempts: maxAttempts,
+      retryBaseDelay: retryBaseDelay,
+    );
 
     trackedFuture = rawFuture.then(
       (v) {
@@ -152,6 +192,9 @@ class ApiScheduler {
       return await innerCompleter.future;
     } finally {
       _activeRequests--;
+      if (lane != ApiTaskLane.general) {
+        _laneActiveRequests[lane] = (_laneActiveRequests[lane] ?? 1) - 1;
+      }
 
       if (sessionId != null) {
         removeTracked();
@@ -166,12 +209,52 @@ class ApiScheduler {
         }
       }
 
-      if (_waitingQueue.isNotEmpty) {
-        _waitingQueue.removeAt(0).completer.complete();
-      } else if (_activeRequests == 0) {
+      _wakeNextWaiting();
+      if (_activeRequests == 0 &&
+          _waitingQueue.isEmpty &&
+          _laneWaitingQueues.values.every((queue) => queue.isEmpty)) {
         _idleCompleter?.complete();
       }
     }
+  }
+
+  void _wakeNextWaiting() {
+    if (_activeRequests >= maxConcurrentRequests) return;
+    final realtimeActive = _laneActiveRequests[ApiTaskLane.realtime] ?? 0;
+    final nonRealtimeActive = _activeRequests - realtimeActive;
+    final realtimeQueue = _laneWaitingQueues[ApiTaskLane.realtime]!;
+    final translationQueue = _laneWaitingQueues[ApiTaskLane.translation]!;
+    final hasRealtime = realtimeQueue.isNotEmpty && realtimeActive < 2;
+    final hasNonRealtime =
+        (translationQueue.isNotEmpty || _waitingQueue.isNotEmpty) &&
+        nonRealtimeActive < 2;
+
+    ApiTaskLane? selected;
+    if (hasRealtime && hasNonRealtime) {
+      selected = _lastGrantedRealtime
+          ? (_waitingQueue.isNotEmpty
+                ? ApiTaskLane.general
+                : ApiTaskLane.translation)
+          : ApiTaskLane.realtime;
+    } else if (hasRealtime) {
+      selected = ApiTaskLane.realtime;
+    } else if (hasNonRealtime) {
+      if (_waitingQueue.isEmpty) {
+        selected = ApiTaskLane.translation;
+      } else if (translationQueue.isEmpty) {
+        selected = ApiTaskLane.general;
+      } else {
+        selected =
+            _waitingQueue.first.priority <= translationQueue.first.priority
+            ? ApiTaskLane.general
+            : ApiTaskLane.translation;
+      }
+    }
+    if (selected == null) return;
+    final queue = selected == ApiTaskLane.general
+        ? _waitingQueue
+        : _laneWaitingQueues[selected]!;
+    queue.removeAt(0).completer.complete();
   }
 
   /// [Phase 3 Fix 8 & 9: Closed-Loop Session Drain]
@@ -255,6 +338,10 @@ class ApiScheduler {
         return await task();
       } catch (e) {
         attempt++;
+        // Provider cooldown is persisted and owned by the provider service.
+        // Release this scheduler slot immediately; retrying here would only
+        // create another request during the shared cooldown window.
+        if (e is ApiRateLimitException) rethrow;
         final errorStr = e.toString().toLowerCase();
         if (errorStr.contains("429") ||
             errorStr.contains("too many requests")) {

@@ -55,14 +55,6 @@ final class WatchTransferService: NSObject, WCSessionDelegate {
         updateApplicationValue(key: "recordingState", arguments: arguments)
     }
 
-    func updateGrammarWritingConfig(arguments: Any?) -> Bool {
-        updateApplicationValue(key: "grammarWritingConfig", arguments: arguments)
-    }
-
-    func updateGrammarWritingState(arguments: Any?) -> Bool {
-        updateApplicationValue(key: "grammarWritingState", arguments: arguments)
-    }
-
     private func updateApplicationValue(key: String, arguments: Any?) -> Bool {
         guard WCSession.isSupported(),
               let values = arguments as? [String: Any] else { return false }

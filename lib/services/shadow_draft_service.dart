@@ -48,6 +48,11 @@ class ShadowDraftService {
     'rawAudioPaths': List<String>.of(context.rawAudioPaths),
     'stitchedAudioPaths': List<String>.of(context.stitchedAudioPaths),
     'pendingAudioNotes': Map<String, String?>.of(context.pendingAudioNotes),
+    'pendingAudioSequences': Map<String, int>.of(context.pendingAudioSequences),
+    'pendingTranslations': Map<String, String>.of(context.pendingTranslations),
+    'translationRepairAttempts': Map<String, int>.of(
+      context.translationRepairAttempts,
+    ),
     'finalReviewContent': context.finalReviewContent,
     'shorthandReviewContent': context.shorthandReviewContent,
     'identifiedLectureContext': context.identifiedLectureContext,
@@ -137,6 +142,39 @@ class ShadowDraftService {
         return false;
       }
 
+      final pendingAudioSequences = data['pendingAudioSequences'];
+      if (pendingAudioSequences != null &&
+          (pendingAudioSequences is! Map ||
+              pendingAudioSequences.entries.any(
+                (entry) =>
+                    entry.key is! String ||
+                    entry.value is! int ||
+                    (entry.value as int) <= 0,
+              ))) {
+        return false;
+      }
+
+      final pendingTranslations = data['pendingTranslations'];
+      if (pendingTranslations != null &&
+          (pendingTranslations is! Map ||
+              pendingTranslations.entries.any(
+                (entry) => entry.key is! String || entry.value is! String,
+              ))) {
+        return false;
+      }
+
+      final repairAttempts = data['translationRepairAttempts'];
+      if (repairAttempts != null &&
+          (repairAttempts is! Map ||
+              repairAttempts.entries.any(
+                (entry) =>
+                    entry.key is! String ||
+                    entry.value is! int ||
+                    (entry.value as int) < 1,
+              ))) {
+        return false;
+      }
+
       if (!_isNullableString(data['finalReviewContent']) ||
           !_isNullableString(data['shorthandReviewContent']) ||
           !_isNullableString(data['identifiedLectureContext']) ||
@@ -221,7 +259,13 @@ class ShadowDraftService {
       final mode = AppMode.values[data['mode'] as int];
       final unit = PathwaysUnit.values[data['unit'] as int];
       final sessionId = data['sessionId'] as String;
-      final exportPath = data['exportPath'] as String;
+      // iOS can preserve Documents files while assigning the app a new
+      // container UUID after a sideloaded update. A recovered draft must not
+      // keep writing to its now-stale absolute container path.
+      final exportPath = _rebaseToDraftDirectory(
+        data['exportPath'] as String,
+        draftPath,
+      );
       final createdAt = DateTime.parse(data['createdAt'] as String);
 
       final context = RecordingSessionContext(
@@ -235,7 +279,32 @@ class ShadowDraftService {
 
       final rawNotes = data['notes'] as List;
       for (final item in rawNotes) {
-        context.addNote(InsightNote.fromJson(item as Map<String, dynamic>));
+        // Hydration must be side-effect free. addNote() intentionally persists
+        // every live recording update, but using it here would enqueue one
+        // full-draft write per note while the draft is being reconstructed.
+        // Besides O(N^2) memory/disk work, those partial snapshots could
+        // overwrite the complete source draft if the app is interrupted.
+        context.notes.add(InsightNote.fromJson(item as Map<String, dynamic>));
+      }
+
+      // Legacy drafts predate pendingTranslations. Recover only notes that
+      // have real English but no usable Chinese result; do not retry silence,
+      // error placeholders, summaries, or notes that already have Chinese.
+      if (!data.containsKey('pendingTranslations')) {
+        for (final note in context.notes) {
+          final english = note.transcript.trim();
+          final chinese = note.translatedContent?.trim();
+          final invalidEnglish =
+              english.isEmpty ||
+              english == '...' ||
+              english == '[Silence]' ||
+              english.startsWith('[Error:');
+          final oldFailedTranslation =
+              chinese == null || chinese == '[Translation unavailable]';
+          if (!note.isSummary && !invalidEnglish && oldFailedTranslation) {
+            context.pendingTranslations[note.id] = english;
+          }
+        }
       }
 
       if (data['segmentSummaries'] != null) {
@@ -245,19 +314,49 @@ class ShadowDraftService {
       }
       if (data['rawAudioPaths'] != null) {
         context.rawAudioPaths.addAll(
-          (data['rawAudioPaths'] as List).cast<String>(),
+          (data['rawAudioPaths'] as List).cast<String>().map(
+            (path) => _rebaseToDraftDirectory(path, draftPath),
+          ),
         );
       }
       if (data['stitchedAudioPaths'] != null) {
         context.stitchedAudioPaths.addAll(
-          (data['stitchedAudioPaths'] as List).cast<String>(),
+          (data['stitchedAudioPaths'] as List).cast<String>().map(
+            (path) => _rebaseToDraftDirectory(path, draftPath),
+          ),
         );
       }
       final pendingAudioNotes = data['pendingAudioNotes'];
       if (pendingAudioNotes is Map) {
         for (final entry in pendingAudioNotes.entries) {
-          context.pendingAudioNotes[entry.key.toString()] = entry.value
-              ?.toString();
+          final rebasedPath = _rebaseToDraftDirectory(
+            entry.key.toString(),
+            draftPath,
+          );
+          context.pendingAudioNotes[rebasedPath] = entry.value?.toString();
+          final rawSequence = data['pendingAudioSequences'] is Map
+              ? (data['pendingAudioSequences'] as Map)[entry.key]
+              : null;
+          context.restorePendingAudioSequence(
+            rebasedPath,
+            rawSequence is int ? rawSequence : null,
+          );
+        }
+      }
+      final pendingTranslations = data['pendingTranslations'];
+      if (pendingTranslations is Map) {
+        for (final entry in pendingTranslations.entries) {
+          context.pendingTranslations[entry.key.toString()] = entry.value
+              .toString();
+        }
+      }
+      final repairAttempts = data['translationRepairAttempts'];
+      if (repairAttempts is Map) {
+        for (final entry in repairAttempts.entries) {
+          final count = entry.value;
+          if (count is int && count > 0) {
+            context.translationRepairAttempts[entry.key.toString()] = count;
+          }
         }
       }
 
@@ -273,5 +372,11 @@ class ShadowDraftService {
       debugPrint('[ShadowDraftService] Error reading draft $draftPath: $e');
       return null;
     }
+  }
+
+  String _rebaseToDraftDirectory(String persistedPath, String draftPath) {
+    final fileName = File(persistedPath).uri.pathSegments.last;
+    if (fileName.isEmpty) return persistedPath;
+    return '${File(draftPath).parent.path}/$fileName';
   }
 }

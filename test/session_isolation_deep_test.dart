@@ -383,13 +383,15 @@ void main() {
 
         SessionReadyEvent? readyEvent;
         String? warning;
+        String? fatal;
         await SessionBackgroundProcessor.instance.submit(
           HandoverPayload(
             context: context,
             enableFinalRecap: false,
             onDone: (event) => readyEvent = event,
             onStatus: (_) {},
-            onError: (message) => warning = message,
+            onDeferred: (message) => warning = message,
+            onError: (message) => fatal = message,
           ),
         );
 
@@ -402,6 +404,7 @@ void main() {
         );
         expect(await File(context.shadowDraftPath).exists(), isTrue);
         expect(warning, contains('recovery draft'));
+        expect(fatal, isNull);
       },
     );
 
@@ -431,13 +434,79 @@ void main() {
             enableFinalRecap: false,
             onDone: (_) {},
             onStatus: (_) {},
-            onError: (message) => warning = message,
+            onDeferred: (message) => warning = message,
           ),
         );
 
         expect(await File(context.exportPath).exists(), isTrue);
         expect(await File(context.shadowDraftPath).exists(), isTrue);
         expect(warning, contains('Speech recognition'));
+      },
+    );
+
+    test(
+      '11. Concurrent recovery exports never share a temporary Markdown file',
+      () async {
+        final exportPath = '${tempDir.path}/concurrent_recovery.md';
+        final contexts = <RecordingSessionContext>[
+          RecordingSessionContext(
+            sessionId: 'concurrent_recovery_a',
+            mode: AppMode.freeTalk,
+            unit: PathwaysUnit.none,
+            exportPath: exportPath,
+            shadowDraftPath: '${tempDir.path}/shadow_draft_concurrent_a.json',
+          ),
+          RecordingSessionContext(
+            sessionId: 'concurrent_recovery_b',
+            mode: AppMode.freeTalk,
+            unit: PathwaysUnit.none,
+            exportPath: exportPath,
+            shadowDraftPath: '${tempDir.path}/shadow_draft_concurrent_b.json',
+          ),
+        ];
+        contexts[0].addNote(
+          InsightNote(
+            summary: '',
+            transcript: 'First recovered transcript.',
+            timestamp: DateTime.now(),
+          ),
+        );
+        contexts[1].addNote(
+          InsightNote(
+            summary: '',
+            transcript: 'Second recovered transcript.',
+            timestamp: DateTime.now(),
+          ),
+        );
+
+        final errors = <String>[];
+        await Future.wait(
+          contexts.map(
+            (context) => SessionBackgroundProcessor.instance.submit(
+              HandoverPayload(
+                context: context,
+                enableFinalRecap: false,
+                onDone: (_) {},
+                onStatus: (_) {},
+                onError: errors.add,
+              ),
+            ),
+          ),
+        );
+
+        final exported = File(exportPath);
+        expect(errors, isEmpty);
+        expect(await exported.exists(), isTrue);
+        expect(
+          await exported.readAsString(),
+          anyOf(contains('First recovered'), contains('Second recovered')),
+        );
+        expect(
+          tempDir.listSync().whereType<File>().where(
+            (file) => file.path.endsWith('.md.tmp'),
+          ),
+          isEmpty,
+        );
       },
     );
   });

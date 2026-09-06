@@ -50,6 +50,7 @@ class CredentialStore {
   }
 
   static const String keyGroq = 'api_key_groq';
+  static const String keyGroqTranslation = 'api_key_groq_translation';
   static const String keyGemini = 'api_key_gemini';
   static const String keyOpenAI = 'api_key_openai';
   static const String keyOpenRouter = 'api_key_openrouter';
@@ -70,6 +71,8 @@ class CredentialStore {
     final migrationMappings = <String, String>{
       'api_key_groq': keyGroq,
       'groq_api_key': keyGroq,
+      'api_key_groq_translation': keyGroqTranslation,
+      'groq_translation_api_key': keyGroqTranslation,
       'api_key_gemini': keyGemini,
       'gemini_api_key': keyGemini,
       'api_key_openai': keyOpenAI,
@@ -160,6 +163,7 @@ class CredentialStore {
 
   String _normalizeKey(String key) {
     if (key == 'groq_api_key') return keyGroq;
+    if (key == 'groq_translation_api_key') return keyGroqTranslation;
     if (key == 'gemini_api_key') return keyGemini;
     if (key == 'openai_api_key') return keyOpenAI;
     if (key == 'openrouter_api_key') return keyOpenRouter;

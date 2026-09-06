@@ -8,6 +8,7 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:jeff_notes/ai_orchestrator_service.dart';
 import 'package:jeff_notes/openai_service.dart';
+import 'package:jeff_notes/services/api_rate_limit_service.dart';
 
 Future<File> _writeWav(
   Directory directory,
@@ -50,17 +51,31 @@ Future<File> _writeWav(
   return file;
 }
 
-AIOrchestratorService _orchestrator(http.Client client, String sessionId) {
+ApiRateLimitService _freshRateLimitService() => ApiRateLimitService.forTesting(
+  prefsLoader: () async => throw StateError('no prefs in unit test'),
+  clock: () => DateTime.utc(2026, 8, 30),
+);
+
+AIOrchestratorService _orchestrator(
+  http.Client client,
+  String sessionId, {
+  String geminiApiKey = '',
+  ApiRateLimitService? rateLimitService,
+}) {
+  final limiter = rateLimitService ?? _freshRateLimitService();
   final service = OpenAIService(
     apiKey: 'test',
     baseUrl: 'https://groq.example',
     defaultModel: 'test',
+    rateLimitService: limiter,
     httpClient: client,
   );
   return AIOrchestratorService(
     sttService: service,
     translationService: service,
     sessionId: sessionId,
+    geminiApiKey: geminiApiKey,
+    rateLimitService: limiter,
     httpClient: client,
   );
 }
@@ -89,17 +104,13 @@ void main() {
     },
   );
 
-  test('transient Groq failure retries and returns transcript', () async {
+  test('Groq 429 is attempted once and propagates typed limit', () async {
     final wav = await _writeWav(tempDirectory, 'retry.wav', tone: true);
     var sttCalls = 0;
     final client = MockClient((request) async {
       if (request.url.path.endsWith('/audio/transcriptions')) {
         sttCalls++;
-        if (sttCalls == 1) return http.Response('rate limited', 429);
-        return http.Response(
-          jsonEncode({'text': 'Clear lecture speech.'}),
-          200,
-        );
+        return http.Response('rate limited', 429);
       }
       if (request.url.path.endsWith('/chat/completions')) {
         return http.Response.bytes(
@@ -120,13 +131,138 @@ void main() {
     });
     final orchestrator = _orchestrator(client, 'stt_retry_test');
     addTearDown(orchestrator.dispose);
-    final result = orchestrator.fastEnglishStream.first;
-
-    await orchestrator.processAudioSegment('note-1', wav.path);
-
-    expect((await result).content, 'Clear lecture speech.');
-    expect(sttCalls, 2);
+    final emitted = <PipelineResult>[];
+    final subscription = orchestrator.fastEnglishStream.listen(emitted.add);
+    addTearDown(subscription.cancel);
+    await expectLater(
+      orchestrator.processAudioSegment('note-1', wav.path),
+      throwsA(isA<ApiRateLimitException>()),
+    );
+    expect(sttCalls, 1);
+    expect(emitted.where((e) => e.content.startsWith('[Error:')), isEmpty);
   });
+
+  test('a second call during cooldown sends no Groq HTTP request', () async {
+    final wav = await _writeWav(tempDirectory, 'cooldown.wav', tone: true);
+    var calls = 0;
+    final client = MockClient((request) async {
+      calls++;
+      return http.Response('rate limited', 429);
+    });
+    final limiter = _freshRateLimitService();
+    final service = OpenAIService(
+      apiKey: 'test',
+      baseUrl: 'https://groq.example',
+      defaultModel: 'test',
+      rateLimitService: limiter,
+      httpClient: client,
+    );
+    addTearDown(service.dispose);
+    await expectLater(
+      service.transcribe(wav.path),
+      throwsA(isA<ApiRateLimitException>()),
+    );
+    await expectLater(
+      service.transcribe(wav.path),
+      throwsA(isA<ApiRateLimitException>()),
+    );
+    expect(calls, 1);
+  });
+
+  test('Groq 429 falls back to Gemini successfully', () async {
+    final wav = await _writeWav(tempDirectory, 'fallback.wav', tone: true);
+    var groqCalls = 0;
+    var geminiCalls = 0;
+    final limiter = _freshRateLimitService();
+    final client = MockClient((request) async {
+      if (request.url.host == 'groq.example') {
+        groqCalls++;
+        return http.Response('rate limited', 429);
+      }
+      if (request.url.host == 'generativelanguage.googleapis.com') {
+        geminiCalls++;
+        return http.Response(
+          jsonEncode({
+            'candidates': [
+              {
+                'content': {
+                  'parts': [
+                    {'text': 'Recovered Gemini speech.'},
+                  ],
+                },
+              },
+            ],
+          }),
+          200,
+        );
+      }
+      return http.Response('unexpected', 404);
+    });
+    final orchestrator = _orchestrator(
+      client,
+      'stt_gemini_fallback_test',
+      geminiApiKey: 'gemini-test-key',
+      rateLimitService: limiter,
+    );
+    addTearDown(orchestrator.dispose);
+    final result = orchestrator.fastEnglishStream.first;
+    await orchestrator.processAudioSegment('note-fallback', wav.path);
+    expect((await result).content, 'Recovered Gemini speech.');
+    expect(groqCalls, 1);
+    expect(geminiCalls, 1);
+  });
+
+  test(
+    'Groq and Gemini 429 both propagate typed limit without error note',
+    () async {
+      final wav = await _writeWav(
+        tempDirectory,
+        'both-limited.wav',
+        tone: true,
+      );
+      final client = MockClient((request) async {
+        if (request.url.host == 'groq.example') {
+          return http.Response('rate limited', 429);
+        }
+        if (request.url.host == 'generativelanguage.googleapis.com') {
+          return http.Response(
+            jsonEncode({
+              'error': {
+                'details': [
+                  {
+                    '@type': 'type.googleapis.com/google.rpc.RetryInfo',
+                    'retryDelay': '2s',
+                  },
+                ],
+              },
+            }),
+            429,
+          );
+        }
+        return http.Response('unexpected', 404);
+      });
+      final orchestrator = _orchestrator(
+        client,
+        'stt_both_limited_test',
+        geminiApiKey: 'gemini-test-key',
+      );
+      addTearDown(orchestrator.dispose);
+      final emitted = <PipelineResult>[];
+      final subscription = orchestrator.fastEnglishStream.listen(emitted.add);
+      addTearDown(subscription.cancel);
+      await expectLater(
+        orchestrator.processAudioSegment('note-both-limited', wav.path),
+        throwsA(
+          isA<ApiRateLimitException>().having(
+            (e) => e.provider,
+            'provider',
+            'gemini',
+          ),
+        ),
+      );
+      expect(emitted.where((e) => e.content.startsWith('[Error:')), isEmpty);
+    },
+  );
 
   test(
     'audible WAV with unavailable STT is retained instead of labeled silence',

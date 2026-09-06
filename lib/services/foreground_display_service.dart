@@ -1,9 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
-/// Keeps Jeff Notes readable while it is the active foreground app.
+/// Keeps the screen awake while Jeff Notes is the active foreground app.
 ///
-/// The native side saves and restores the user's previous screen brightness.
+/// Screen brightness remains fully controlled by iOS and the user.
 class ForegroundDisplayService {
   static const _channel = MethodChannel('com.zhenfeng.jeffnotes/wakelock');
   static bool? _lastRequestedState;
@@ -15,10 +15,9 @@ class ForegroundDisplayService {
     try {
       await _channel.invokeMethod('setForegroundDisplayMode', {
         'enable': active,
-        'brightness': 0.05,
       });
       debugPrint(
-        '[ForegroundDisplayService] ${active ? 'Enabled at 5%' : 'Released'}',
+        '[ForegroundDisplayService] ${active ? 'Enabled' : 'Released'}',
       );
     } catch (error) {
       // Allow the next lifecycle event to retry if the platform call failed.

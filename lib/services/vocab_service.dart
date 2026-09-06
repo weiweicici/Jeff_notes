@@ -4,14 +4,17 @@ import 'package:flutter/foundation.dart';
 import 'package:path_provider/path_provider.dart';
 import '../models/vocab_card.dart';
 import 'supabase_config.dart';
+import 'cloud_identity_guard.dart';
 
 class VocabService extends ChangeNotifier {
   static VocabService? _instance;
   final List<VocabCard> _cards = [];
 
   List<VocabCard> get cards => List.unmodifiable(_cards);
-  List<VocabCard> get unmasteredCards => _cards.where((c) => !c.isMastered).toList();
-  List<VocabCard> get masteredCards => _cards.where((c) => c.isMastered).toList();
+  List<VocabCard> get unmasteredCards =>
+      _cards.where((c) => !c.isMastered).toList();
+  List<VocabCard> get masteredCards =>
+      _cards.where((c) => c.isMastered).toList();
 
   VocabService._();
 
@@ -44,7 +47,11 @@ class VocabService extends ChangeNotifier {
   }
 
   Future<void> saveCard(VocabCard card) async {
-    final existingIdx = _cards.indexWhere((c) => c.id == card.id || c.wordOrPhrase.toLowerCase() == card.wordOrPhrase.toLowerCase());
+    final existingIdx = _cards.indexWhere(
+      (c) =>
+          c.id == card.id ||
+          c.wordOrPhrase.toLowerCase() == card.wordOrPhrase.toLowerCase(),
+    );
     if (existingIdx != -1) {
       _cards[existingIdx] = card;
     } else {
@@ -86,6 +93,8 @@ class VocabService extends ChangeNotifier {
 
   Future<void> _uploadToSupabase(VocabCard card) async {
     try {
+      final userId = CloudIdentityGuard.capture();
+      if (userId == null || !CloudIdentityGuard.stillCurrent(userId)) return;
       // [BUG-05 Fix] 使用 upsert 而非 insert，防止重复行积累（on_conflict: file_hash）
       await SupabaseConfig.client.from('archives').upsert({
         'file_hash': 'vocab_${card.id}',
@@ -93,7 +102,7 @@ class VocabService extends ChangeNotifier {
         'title': 'VocabCard: ${card.wordOrPhrase}',
         'content_md': jsonEncode(card.toJson()),
         'file_size': card.wordOrPhrase.length,
-        'user_id': SupabaseConfig.currentUserId,
+        'user_id': userId,
       }, onConflict: 'file_hash');
       debugPrint('[Vocab Cloud Upsert OK] ${card.wordOrPhrase}');
     } catch (e) {
@@ -104,10 +113,13 @@ class VocabService extends ChangeNotifier {
   /// [BUG-04 Fix] 删除 Supabase 中对应词卡记录
   Future<void> _deleteFromSupabase(String id) async {
     try {
+      final userId = CloudIdentityGuard.capture();
+      if (userId == null || !CloudIdentityGuard.stillCurrent(userId)) return;
       await SupabaseConfig.client
           .from('archives')
           .delete()
-          .eq('file_hash', 'vocab_$id');
+          .eq('file_hash', 'vocab_$id')
+          .eq('user_id', userId);
       debugPrint('[Vocab Cloud Delete OK] vocab_$id');
     } catch (e) {
       debugPrint('[Vocab Cloud Delete Error] $e');
@@ -123,12 +135,18 @@ class VocabService extends ChangeNotifier {
           .select('content_md')
           .eq('module', 'vocab')
           .eq('user_id', userId);
+      if (!CloudIdentityGuard.stillCurrent(userId)) return;
       for (final row in List<Map<String, dynamic>>.from(data as List)) {
         final contentStr = row['content_md'] as String?;
         if (contentStr != null && contentStr.isNotEmpty) {
           try {
             final card = VocabCard.decode(contentStr);
-            if (!_cards.any((c) => c.id == card.id || c.wordOrPhrase.toLowerCase() == card.wordOrPhrase.toLowerCase())) {
+            if (!_cards.any(
+              (c) =>
+                  c.id == card.id ||
+                  c.wordOrPhrase.toLowerCase() ==
+                      card.wordOrPhrase.toLowerCase(),
+            )) {
               _cards.add(card);
             }
           } catch (_) {}

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'services/supabase_config.dart';
+import 'services/cloud_identity_guard.dart';
 import 'services/upload_cache.dart';
 import 'package:record/record.dart';
 import 'package:path_provider/path_provider.dart';
@@ -23,6 +24,10 @@ import 'services/credential_store.dart';
 import 'services/session_background_processor.dart';
 import 'services/shadow_draft_service.dart';
 import 'services/diagnostic_log_service.dart';
+import 'services/api_rate_limit_service.dart';
+import 'services/recovery_pipeline_runner.dart';
+import 'services/recovery_retry_scheduler.dart';
+import 'services/recovery_audio_ownership.dart';
 import 'adapters/audio_recorder_adapter.dart';
 
 import 'models/session_ready_event.dart';
@@ -96,6 +101,129 @@ Future<Map<String, dynamic>> _backgroundStitchTask(StitchData data) async {
   }
 }
 
+/// Serializes ownership changes for the single native recorder used by
+/// foreground recording and discarded background keepalive audio.
+///
+/// A completed session may call back after a newer session has started. The
+/// session id on the keepalive lease ensures that callback can release only
+/// its own capture, never the newer foreground recording or keepalive.
+@visibleForTesting
+class ProcessingAudioLeaseCoordinator {
+  ProcessingAudioLeaseCoordinator(this._recorder);
+
+  final AudioRecorderAdapter _recorder;
+  Future<void> _operationTail = Future<void>.value();
+  bool _foregroundCaptureClaimed = false;
+  String? _keepaliveSessionId;
+  String? _keepalivePath;
+  final Set<String> _releasedSessionIds = <String>{};
+
+  @visibleForTesting
+  String? get keepaliveSessionId => _keepaliveSessionId;
+  bool get hasKeepalive => _keepaliveSessionId != null;
+  bool get hasForegroundCapture => _foregroundCaptureClaimed;
+
+  void beginForegroundCapture() {
+    _foregroundCaptureClaimed = true;
+  }
+
+  void abandonForegroundCapture() {
+    _foregroundCaptureClaimed = false;
+  }
+
+  /// Explicit handoff used only after the foreground recorder has stopped.
+  /// Keeping this separate makes it impossible for a stale background
+  /// recovery completion to steal a newer foreground claim.
+  @visibleForTesting
+  void releaseForegroundForProcessingHandoff() {
+    _foregroundCaptureClaimed = false;
+  }
+
+  Future<T> _serialize<T>(Future<T> Function() operation) {
+    final result = Completer<T>();
+    _operationTail = _operationTail.catchError((_) {}).then((_) async {
+      try {
+        result.complete(await operation());
+      } catch (error, stackTrace) {
+        result.completeError(error, stackTrace);
+      }
+    });
+    return result.future;
+  }
+
+  Future<void> _deleteKeepaliveFiles(Iterable<String?> paths) async {
+    for (final path in paths.whereType<String>().toSet()) {
+      try {
+        final file = File(path);
+        if (await file.exists()) await file.delete();
+      } catch (_) {}
+    }
+  }
+
+  Future<void> _stopKeepaliveLocked() async {
+    if (_keepaliveSessionId == null) return;
+    String? stoppedPath;
+    try {
+      stoppedPath = await _recorder.stop();
+    } catch (error) {
+      debugPrint('[Recording Keepalive] Could not stop cleanly: $error');
+    }
+    final keepalivePath = _keepalivePath;
+    _keepaliveSessionId = null;
+    _keepalivePath = null;
+    await _deleteKeepaliveFiles(<String?>[stoppedPath, keepalivePath]);
+  }
+
+  /// Claims the microphone synchronously, then removes any older keepalive
+  /// before the caller starts the new foreground recording.
+  Future<void> takeOverForForegroundCapture() => _serialize(() async {
+    await _stopKeepaliveLocked();
+  });
+
+  /// Atomically hands the stopped foreground capture to this session's
+  /// keepalive. Only one keepalive can own the native recorder at a time.
+  Future<bool> startKeepalive({
+    required String sessionId,
+    required String path,
+    required RecordConfig config,
+  }) => _serialize(() async {
+    if (_foregroundCaptureClaimed) {
+      debugPrint(
+        '[Recording Keepalive] Skipped stale keepalive for $sessionId while foreground capture is active',
+      );
+      return false;
+    }
+    await _stopKeepaliveLocked();
+    await _recorder.start(config, path: path);
+    _keepaliveSessionId = sessionId;
+    _keepalivePath = path;
+    // Retrying an interrupted session creates a new lease even though its
+    // persistent session ID is unchanged. Its previous release must not
+    // prevent this lease from being stopped.
+    _releasedSessionIds.remove(sessionId);
+    return true;
+  });
+
+  /// Releases only [sessionId]'s keepalive. Duplicate or out-of-order
+  /// completion callbacks are harmless, and playback/session reset occurs
+  /// only when no newer foreground capture or keepalive owns the recorder.
+  Future<void> releaseProcessingSession(
+    String sessionId, {
+    required Future<void> Function() onAudioIdle,
+  }) => _serialize(() async {
+    if (!_releasedSessionIds.add(sessionId)) return;
+    if (_releasedSessionIds.length > 128) {
+      _releasedSessionIds.remove(_releasedSessionIds.first);
+    }
+    if (_keepaliveSessionId == sessionId) {
+      await _stopKeepaliveLocked();
+    }
+    if (!_foregroundCaptureClaimed && _keepaliveSessionId == null) {
+      await onAudioIdle();
+    }
+  });
+}
+
 Uint8List _generateWavHeaderStatic(int pcmLength) {
   final header = ByteData(44);
 
@@ -142,6 +270,7 @@ class RecordingProvider extends ChangeNotifier {
   OpenAIService? _groqService;
   OpenAIService? _fallbackTranslationService;
   String? _configuredGroqKey;
+  String _groqTranslationKey = '';
   AIOrchestratorService? _orchestrator;
   final StreamController<SessionReadyEvent> _sessionReadyController =
       StreamController<SessionReadyEvent>.broadcast();
@@ -166,15 +295,16 @@ class RecordingProvider extends ChangeNotifier {
   };
 
   Timer? _sliceTimer;
+  late final RecoveryRetryScheduler _recoveryRetryScheduler;
+  bool _disposed = false;
   bool _isRotatingSlice = false;
   bool _isRecording = false;
   bool _isPaused = false; // 暂停录音标志（仅在 _isRecording=true 时有意义）
   bool _isPending = false;
   bool _isRecordingStandby = false;
   String? _standbyAudioPath;
-  bool _isProcessingKeepalive = false;
   bool _isRecoveryRunning = false;
-  String? _processingKeepalivePath;
+  late final ProcessingAudioLeaseCoordinator _processingAudioLease;
   DateTime? _recordingStartedAt;
   static const int kTailSize = 25600;
   static const RecordConfig _recordConfig = RecordConfig(
@@ -188,7 +318,12 @@ class RecordingProvider extends ChangeNotifier {
   bool _isProcessingRecording = false;
   int _processingStep = 0;
   String? _processingSessionId;
+  // Every stopped/recovered session remains in this set until its own
+  // background processor finishes.  The UI still exposes only the newest
+  // session through _processingSessionId.
+  final Set<String> _processingSessionIds = <String>{};
   String? _processingErrorMessage;
+  String? _processingDeferredMessage;
 
   String? _finalReviewContent;
   String? _shorthandReviewContent;
@@ -235,6 +370,7 @@ class RecordingProvider extends ChangeNotifier {
   bool get isProcessingRecording => _isProcessingRecording;
   int get processingStep => _processingStep;
   String? get processingErrorMessage => _processingErrorMessage;
+  String? get processingDeferredMessage => _processingDeferredMessage;
   static const int processingStepCount = 4;
   double get processingProgress {
     switch (_processingStep) {
@@ -285,6 +421,7 @@ class RecordingProvider extends ChangeNotifier {
   AppMode get currentSessionMode => currentMode;
 
   String get groqKey => _apiKeys[AIProvider.groq] ?? '';
+  String get groqTranslationKey => _groqTranslationKey;
   String get geminiKey => _apiKeys[AIProvider.gemini] ?? '';
   String get openRouterKey => _openRouterKey;
 
@@ -366,6 +503,21 @@ class RecordingProvider extends ChangeNotifier {
 
   RecordingProvider({AudioRecorderAdapter? audioRecorder})
     : _audioRecorder = audioRecorder ?? RecordAudioRecorderAdapter() {
+    _processingAudioLease = ProcessingAudioLeaseCoordinator(_audioRecorder);
+    _recoveryRetryScheduler = RecoveryRetryScheduler(
+      clock: () => DateTime.now().toUtc(),
+      timerFactory: Timer.new,
+      isBusy: () =>
+          _isRecording ||
+          _isPending ||
+          _isRecordingStandby ||
+          _isProcessingRecording ||
+          _isRecoveryRunning ||
+          _processingAudioLease.hasForegroundCapture,
+      recover: resumeInterruptedSessions,
+      onError: (error, stackTrace) =>
+          debugPrint('[Recording Recovery] Scheduled retry failed: $error'),
+    );
     _init();
   }
 
@@ -380,13 +532,20 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   Future<void> resumeInterruptedSessions() async {
+    if (await _scheduleIfSttCooldownActive()) return;
+    if (_disposed) return;
     if (_isRecoveryRunning ||
         _isProcessingRecording ||
         !_recordingServicesReady ||
+        _isPending ||
         _isRecording ||
         _isRecordingStandby) {
+      _scheduleRecoveryRetry(
+        DateTime.now().toUtc().add(const Duration(seconds: 30)),
+      );
       return;
     }
+    _recoveryRetryScheduler.cancel();
     _isRecoveryRunning = true;
     try {
       await _resumeInterruptedSessionsOnce();
@@ -397,102 +556,423 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> _resumeInterruptedSessionsOnce() async {
     final directory = await getApplicationDocumentsDirectory();
-    final drafts =
-        directory
-            .listSync()
-            .whereType<File>()
-            .where(
-              (file) => RegExp(r'/shadow_draft_.+\.json$').hasMatch(file.path),
-            )
-            .toList()
-          ..sort(
-            (a, b) => b.lastModifiedSync().compareTo(a.lastModifiedSync()),
+    final draftFiles = directory
+        .listSync()
+        .whereType<File>()
+        .where((file) => RegExp(r'/shadow_draft_.+\.json$').hasMatch(file.path))
+        .toList();
+    final allContexts = <RecordingSessionContext>[];
+    for (final draft in draftFiles) {
+      final context = await ShadowDraftService.instance.readDraft(draft.path);
+      if (context != null) allContexts.add(context);
+    }
+    final contexts =
+        allContexts.where((context) => !context.isCompleted).toList()
+          ..sort((a, b) => b.createdAt.compareTo(a.createdAt));
+    final ownershipDrafts = allContexts
+        .map(
+          (context) => RecoveryDraftAudioOwnership(
+            createdAt: context.createdAt,
+            rawAudioPaths: context.rawAudioPaths,
+            pendingAudioPaths: context.pendingAudioNotes.keys,
+            stitchedAudioPaths: context.stitchedAudioPaths,
+          ),
+        )
+        .toList();
+    final exportedPaths = directory
+        .listSync()
+        .whereType<File>()
+        .where((file) => file.path.endsWith('.md'))
+        .map((file) => file.path)
+        .toList();
+    var claimOrphans = true;
+    try {
+      for (final context in contexts) {
+        if (_isRecording || _isPending || _isRecordingStandby) {
+          _scheduleRecoveryRetry(
+            DateTime.now().toUtc().add(const Duration(seconds: 30)),
+          );
+          break;
+        }
+        if (_processingSessionIds.contains(context.sessionId)) continue;
+        var claimed = false;
+        try {
+          if (claimOrphans) {
+            claimOrphans = false;
+            final audioPaths = directory
+                .listSync()
+                .whereType<File>()
+                .where((file) => file.uri.pathSegments.last.endsWith('.wav'))
+                .map((file) => file.path)
+                .toList();
+            final orphanedPaths = RecoveryAudioOwnership.selectCandidates(
+              audioPaths: audioPaths,
+              sessionCreatedAt: context.createdAt,
+              drafts: ownershipDrafts,
+              exportedPaths: exportedPaths,
+            );
+            for (final path in orphanedPaths) {
+              context.pendingAudioNotes.putIfAbsent(path, () => null);
+            }
+            if (orphanedPaths.isNotEmpty && !await context.saveShadowDraft()) {
+              throw StateError('Could not persist recovered audio ownership');
+            }
+          }
+
+          final recoveryPaths = context.pendingAudioNotes.keys.toList();
+          final availableRecoveryPaths = <String>[];
+          for (final path in recoveryPaths) {
+            if (await File(path).exists()) availableRecoveryPaths.add(path);
+          }
+          if (recoveryPaths.isNotEmpty && availableRecoveryPaths.isEmpty) {
+            unawaited(
+              DiagnosticLogService.instance.record(
+                'background',
+                'recovery_audio_missing',
+                sessionId: context.sessionId,
+                fields: {'missingCount': recoveryPaths.length},
+              ),
+            );
+            continue;
+          }
+
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'background',
+              'recovery_started',
+              sessionId: context.sessionId,
+              fields: {
+                'total': recoveryPaths.length,
+                'available': availableRecoveryPaths.length,
+                'missing': recoveryPaths.length - availableRecoveryPaths.length,
+              },
+            ),
           );
 
-    var newestRecoverableDraftCanClaimOrphans = true;
-    for (final draft in drafts) {
-      if (_isRecording || _isRecordingStandby) return;
-      final context = await ShadowDraftService.instance.readDraft(draft.path);
-      if (context == null || context.isCompleted) continue;
-
-      // A process can be terminated before the recorder returns its current
-      // path to Dart. Recover any session WAV created after this draft began.
-      if (newestRecoverableDraftCanClaimOrphans) {
-        newestRecoverableDraftCanClaimOrphans = false;
-        final knownAudio = context.rawAudioPaths.toSet();
-        final orphanedSlices = directory.listSync().whereType<File>().where((
-          file,
-        ) {
-          final name = file.uri.pathSegments.last;
-          if (!name.startsWith('rec_') ||
-              !name.endsWith('.wav') ||
-              name.contains('_stitched')) {
-            return false;
+          // The app may have changed state while drafts/files were read.
+          // Never claim the recorder or publish recovery UI over a newer
+          // foreground capture or an already running processing session.
+          if (_isRecording ||
+              _isPending ||
+              _isRecordingStandby ||
+              _processingAudioLease.hasForegroundCapture ||
+              _processingSessionIds.isNotEmpty) {
+            _scheduleRecoveryRetry(
+              DateTime.now().toUtc().add(const Duration(seconds: 30)),
+            );
+            break;
           }
-          return !knownAudio.contains(file.path) &&
-              !file.lastModifiedSync().isBefore(context.createdAt);
-        });
-        for (final file in orphanedSlices) {
-          context.registerPendingAudio(file.path);
+
+          _configureSessionContext(context);
+          _processingSessionIds.add(context.sessionId);
+          claimed = true;
+          _processingSessionId = context.sessionId;
+          _isProcessingRecording = true;
+          _processingStep = 1;
+          _processingErrorMessage = null;
+          _processingDeferredMessage = null;
+          if (!_isRecording &&
+              !_isRecordingStandby &&
+              !_processingAudioLease.hasForegroundCapture) {
+            _statusMessage =
+                '处理录音切片 0/${availableRecoveryPaths.length} · 失败 0'
+                ' · 缺失 ${recoveryPaths.length - availableRecoveryPaths.length}';
+            notifyListeners();
+          }
+          if (await _audioRecorder.hasPermission()) {
+            await TtsService().releaseForRecording();
+            await _startProcessingKeepalive(context.sessionId);
+          }
+
+          final recoveryResult = await _runRecoveryPipelines(
+            context,
+            availableRecoveryPaths,
+          );
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'background',
+              'recovery_progress',
+              sessionId: context.sessionId,
+              fields: {
+                'processed': recoveryResult.processed,
+                'total': availableRecoveryPaths.length,
+                'failed': recoveryResult.failed,
+              },
+            ),
+          );
+          if (recoveryResult.pausedAfterConsecutiveFailures) {
+            unawaited(
+              DiagnosticLogService.instance.record(
+                'background',
+                'recovery_paused',
+                sessionId: context.sessionId,
+                fields: {'reason': 'consecutive_processing_failures'},
+              ),
+            );
+          }
+          final rateLimit = recoveryResult.rateLimit;
+          final pausedExternally = recoveryResult.pausedExternally;
+          if (rateLimit != null) {
+            await context.saveShadowDraft();
+            _scheduleRecoveryRetry(rateLimit.retryAt);
+            if (_processingSessionId == context.sessionId &&
+                !_isRecording &&
+                !_isRecordingStandby &&
+                !_processingAudioLease.hasForegroundCapture) {
+              _statusMessage = '识别服务限流，已保留录音；将在冷却结束后自动继续';
+              _processingErrorMessage =
+                  '识别服务暂时达到限制，将在 ${_formatRetryAt(rateLimit.retryAt)} 自动继续';
+              notifyListeners();
+            }
+          }
+          if (pausedExternally && rateLimit == null) {
+            // The foreground recorder took priority while an old slice was
+            // waiting for pacing. Keep it pending and retry after the new
+            // session has finished; the normal finalizer below still flushes
+            // any already completed transcript/translation work.
+            await context.saveShadowDraft();
+            _scheduleRecoveryRetry(
+              DateTime.now().toUtc().add(const Duration(seconds: 30)),
+            );
+          }
+          context.sealPipelines();
+          if (!await context.saveShadowDraft()) {
+            throw StateError('Could not persist recovery draft');
+          }
+
+          SessionReadyEvent? readyEvent;
+          String? processingError;
+          String? deferredMessage;
+          await SessionBackgroundProcessor.instance.submit(
+            HandoverPayload(
+              context: context,
+              enableFinalRecap:
+                  _enableFinalRecap ||
+                  context.mode == AppMode.exam ||
+                  context.mode == AppMode.lecture,
+              onDone: (event) => readyEvent = event,
+              onDeferred: (message) {
+                deferredMessage = message;
+                _handleDeferredProcessing(context, message);
+              },
+              onStatus: (message) =>
+                  _updateBackgroundProcessingStatus(context.sessionId, message),
+              onError: (error) => processingError = error,
+            ),
+          );
+          if (readyEvent == null &&
+              processingError == null &&
+              deferredMessage == null) {
+            processingError = '恢复处理未完成，下次启动会继续';
+          }
+          if (readyEvent != null && deferredMessage != null) {
+            processingError = null;
+          } else if (readyEvent != null && rateLimit != null) {
+            processingError =
+                '识别服务暂时达到限制；已保存可用内容，并保留录音草稿，'
+                '将在 ${_formatRetryAt(rateLimit.retryAt)} 自动继续。';
+          } else if (readyEvent != null &&
+              recoveryResult.pausedAfterConsecutiveFailures) {
+            processingError =
+                '连续处理失败，已暂停自动重试；已处理 '
+                '${recoveryResult.processed}/${availableRecoveryPaths.length} 片，'
+                '失败 ${recoveryResult.failed} 片。录音与草稿保留，'
+                '下次回到 App 时会再次尝试。';
+          }
+          if (readyEvent != null) {
+            _lastExportedPath = readyEvent!.exportPath;
+            if (_processingSessionId == context.sessionId &&
+                !_isRecording &&
+                !_isRecordingStandby &&
+                !_processingAudioLease.hasForegroundCapture) {
+              _processingStep = RecordingProvider.processingStepCount;
+              _processingDeferredMessage = !readyEvent!.isFinal
+                  ? '可用内容已保存在本机，剩余处理将自动重试'
+                  : null;
+              _statusMessage = _processingDeferredMessage != null
+                  ? _processingDeferredMessage
+                  : pausedExternally && rateLimit == null
+                  ? '新录音优先，旧录音已保存，稍后自动继续'
+                  : processingError == null
+                  ? _localSaveStatus
+                  : '已保存可用内容，并保留恢复草稿';
+              _processingErrorMessage = pausedExternally && rateLimit == null
+                  ? null
+                  : processingError;
+              _sessionReadyController.add(readyEvent!);
+              notifyListeners();
+            } else {
+              _sessionReadyController.add(readyEvent!);
+            }
+          } else if (_processingSessionId == context.sessionId &&
+              !_isRecording &&
+              !_isRecordingStandby &&
+              !_processingAudioLease.hasForegroundCapture) {
+            _statusMessage = '恢复处理未完成，录音与草稿仍然保留';
+            _processingErrorMessage = processingError;
+            notifyListeners();
+          }
+          if (rateLimit != null ||
+              pausedExternally ||
+              recoveryResult.pausedAfterConsecutiveFailures) {
+            break;
+          }
+        } catch (error, stackTrace) {
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'background',
+              'recovery_failed',
+              sessionId: context.sessionId,
+              fields: {'errorType': error.runtimeType.toString()},
+            ),
+          );
+          debugPrint(
+            '[Recording Recovery] Failed for ${context.sessionId}: $error\n$stackTrace',
+          );
+          try {
+            if (!await context.saveShadowDraft()) {
+              unawaited(
+                DiagnosticLogService.instance.record(
+                  'background',
+                  'recovery_draft_save_failed',
+                  sessionId: context.sessionId,
+                ),
+              );
+            }
+          } catch (saveError, saveStack) {
+            debugPrint(
+              '[Recording Recovery] Draft save failed: $saveError\n$saveStack',
+            );
+          }
+          if (_processingSessionId == context.sessionId &&
+              !_isRecording &&
+              !_isRecordingStandby &&
+              !_processingAudioLease.hasForegroundCapture) {
+            _processingErrorMessage = '恢复处理异常，录音草稿已保留；下次启动会继续';
+            notifyListeners();
+          }
+        } finally {
+          if (claimed) {
+            context.sealPipelines();
+            try {
+              await _releaseProcessingAudio(context.sessionId);
+            } catch (releaseError, releaseStack) {
+              debugPrint(
+                '[Recording Recovery] Audio release failed: $releaseError\n$releaseStack',
+              );
+            }
+            ApiScheduler().cancelSession(context.sessionId);
+            _processingSessionIds.remove(context.sessionId);
+            if (_processingSessionId == context.sessionId) {
+              _processingSessionId = _processingSessionIds.isEmpty
+                  ? null
+                  : _processingSessionIds.last;
+            }
+            _isProcessingRecording = _processingSessionIds.isNotEmpty;
+            notifyListeners();
+            if (!context.isDisposed) context.dispose();
+          }
         }
       }
-
-      _configureSessionContext(context);
-      _activeContext = context;
-      _processingSessionId = context.sessionId;
-      _isProcessingRecording = true;
-      _processingStep = 1;
-      _processingErrorMessage = null;
-      _statusMessage = '发现未完成录音，正在自动继续处理';
-      notifyListeners();
-
-      for (final path in context.pendingAudioNotes.keys.toList()) {
-        if (await File(path).exists()) {
-          context.runPipeline(() => _processAudio(path, context));
-        }
+    } finally {
+      for (final context in allContexts) {
+        if (!context.isDisposed) context.dispose();
       }
-      context.sealPipelines();
-      await context.saveShadowDraft();
-      if (await _audioRecorder.hasPermission()) {
-        await TtsService().releaseForRecording();
-        await _startProcessingKeepalive();
-      }
-
-      SessionReadyEvent? readyEvent;
-      String? processingError;
-      await SessionBackgroundProcessor.instance.submit(
-        HandoverPayload(
-          context: context,
-          enableFinalRecap:
-              _enableFinalRecap ||
-              context.mode == AppMode.exam ||
-              context.mode == AppMode.lecture,
-          onDone: (event) => readyEvent = event,
-          onStatus: (message) =>
-              _updateBackgroundProcessingStatus(context.sessionId, message),
-          onError: (error) => processingError = error,
-        ),
-      );
-      await _releaseProcessingAudio();
-      _activeContext = null;
-      if (readyEvent != null) {
-        _lastExportedPath = readyEvent!.exportPath;
-        _isProcessingRecording = false;
-        _processingStep = RecordingProvider.processingStepCount;
-        _statusMessage = processingError == null
-            ? '中断的录音已经恢复并保存'
-            : '已保存可用内容，并保留恢复草稿';
-        _processingErrorMessage = processingError;
-        _processingSessionId = null;
-        _sessionReadyController.add(readyEvent!);
-      } else {
-        _isProcessingRecording = false;
-        _statusMessage = '恢复处理未完成，草稿和录音仍然保留';
-        _processingErrorMessage = processingError ?? '恢复处理暂未完成，下次启动会再次继续';
-        _processingSessionId = null;
-      }
-      notifyListeners();
     }
+  }
+
+  Future<bool> _scheduleIfSttCooldownActive() async {
+    if (_disposed) return true;
+    final candidates = <({String provider, String model})>[];
+    if ((_apiKeys[AIProvider.groq] ?? '').trim().isNotEmpty) {
+      candidates.add((provider: 'groq', model: 'whisper-large-v3'));
+    }
+    if ((_apiKeys[AIProvider.gemini] ?? '').trim().isNotEmpty) {
+      candidates.add((provider: 'gemini', model: 'gemini-2.5-flash'));
+    }
+    if (candidates.isEmpty) return false;
+    // Recovery waits only when every configured STT candidate is blocked.
+    final retryAt = await ApiRateLimitService.instance.earliestAvailable(
+      candidates,
+    );
+    if (_disposed) return true;
+    if (retryAt == null) return false;
+    _scheduleRecoveryRetry(retryAt);
+    return true;
+  }
+
+  void _scheduleRecoveryRetry(DateTime retryAt) {
+    _recoveryRetryScheduler.schedule(retryAt);
+  }
+
+  String _formatRetryAt(DateTime retryAt) {
+    final local = retryAt.toLocal();
+    final hour = local.hour.toString().padLeft(2, '0');
+    final minute = local.minute.toString().padLeft(2, '0');
+    return '$hour:$minute';
+  }
+
+  /// Runs recovered slices with a small fixed worker pool. The runner awaits
+  /// both workers before handing the session to final background processing.
+  static const int _recoveryPipelineConcurrency = 2;
+
+  Future<RecoveryPipelineResult> _runRecoveryPipelines(
+    RecordingSessionContext context,
+    List<String> paths,
+  ) async {
+    return const RecoveryPipelineRunner(
+      concurrency: _recoveryPipelineConcurrency,
+      maxConsecutiveFailures: 3,
+    ).run(
+      paths,
+      process: (path) async {
+        if (_disposed ||
+            _isRecording ||
+            _isPending ||
+            _isRecordingStandby ||
+            _processingAudioLease.hasForegroundCapture) {
+          throw const RecoveryPausedException();
+        }
+        await ApiRateLimitService.instance.waitForRecoveryRequest(
+          provider: 'groq',
+          model: 'whisper-large-v3',
+        );
+        // A new foreground capture may have started during the pacing wait.
+        // Leave this path pending instead of sending it or marking it failed.
+        if (_disposed ||
+            _isRecording ||
+            _isPending ||
+            _isRecordingStandby ||
+            _processingAudioLease.hasForegroundCapture) {
+          throw const RecoveryPausedException();
+        }
+        await _processAudio(path, context);
+        return !context.pendingAudioNotes.containsKey(path);
+      },
+      onProgress: (processed, total, failed) {
+        unawaited(
+          DiagnosticLogService.instance.record(
+            'background',
+            'recovery_progress',
+            sessionId: context.sessionId,
+            fields: {'processed': processed, 'total': total, 'failed': failed},
+          ),
+        );
+        if (context.sessionId != _processingSessionId ||
+            _isRecording ||
+            _isRecordingStandby ||
+            _processingAudioLease.hasForegroundCapture) {
+          return;
+        }
+        _statusMessage = '处理录音切片 $processed/$total · 失败 $failed';
+        notifyListeners();
+      },
+      shouldPause: () =>
+          _isRecording ||
+          _isPending ||
+          _isRecordingStandby ||
+          _processingAudioLease.hasForegroundCapture,
+    );
   }
 
   /// Returns clean Chinese + English full transcript for TTS playback.
@@ -558,6 +1038,7 @@ class RecordingProvider extends ChangeNotifier {
 
   Future<void> updateSettings({
     String? groqKey,
+    String? groqTranslationKey,
     String? openRouterKey,
     String? geminiKey,
 
@@ -608,6 +1089,17 @@ class RecordingProvider extends ChangeNotifier {
       );
       _apiKeys[AIProvider.groq] = trimmedKey;
       debugPrint("保存 Groq API Key 成功: ${CredentialStore.redact(trimmedKey)}");
+    }
+    if (groqTranslationKey != null) {
+      final trimmedKey = groqTranslationKey.trim();
+      await CredentialStore.instance.writeKey(
+        CredentialStore.keyGroqTranslation,
+        trimmedKey,
+      );
+      _groqTranslationKey = trimmedKey;
+      debugPrint(
+        "保存 Groq 中文翻译 API Key 成功: ${CredentialStore.redact(trimmedKey)}",
+      );
     }
     if (geminiKey != null) {
       final trimmedKey = geminiKey.trim();
@@ -677,6 +1169,11 @@ class RecordingProvider extends ChangeNotifier {
         '';
     _apiKeys[AIProvider.groq] =
         await CredentialStore.instance.readKey(CredentialStore.keyGroq) ?? '';
+    _groqTranslationKey =
+        await CredentialStore.instance.readKey(
+          CredentialStore.keyGroqTranslation,
+        ) ??
+        '';
     _apiKeys[AIProvider.gemini] =
         await CredentialStore.instance.readKey(CredentialStore.keyGemini) ?? '';
 
@@ -774,6 +1271,9 @@ class RecordingProvider extends ChangeNotifier {
 
   void _configureSessionContext(RecordingSessionContext context) {
     final client = context.sessionHttpClient;
+    final translationKey = groqTranslationKey.trim().isNotEmpty
+        ? groqTranslationKey.trim()
+        : groqKey;
     final stt = OpenAIService(
       apiKey: groqKey,
       baseUrl: 'https://api.groq.com/openai/v1',
@@ -782,7 +1282,7 @@ class RecordingProvider extends ChangeNotifier {
       httpClient: client,
     );
     final trans = OpenAIService(
-      apiKey: groqKey,
+      apiKey: translationKey,
       baseUrl: 'https://api.groq.com/openai/v1',
       defaultModel: 'openai/gpt-oss-120b',
       whisperModel: 'whisper-large-v3',
@@ -807,6 +1307,10 @@ class RecordingProvider extends ChangeNotifier {
       sttService: stt,
       translationService: trans,
       translationFallbackService: fallbackTrans,
+      // Cloud translation is intentionally separate from Groq Whisper STT.
+      // Keep the local ML Kit translator out of this path so the configured
+      // translation key is actually used for Lecture and FreeTalk.
+      localTranslator: null,
       sessionId: context.sessionId,
       geminiApiKey: geminiKey,
       httpClient: client,
@@ -816,7 +1320,7 @@ class RecordingProvider extends ChangeNotifier {
   }
 
   Future<void> toggleRecordingStandby() async {
-    if (_isPending || _isRecording || _isProcessingRecording) return;
+    if (_isPending || _isRecording) return;
     _isPending = true;
     notifyListeners();
     try {
@@ -836,17 +1340,22 @@ class RecordingProvider extends ChangeNotifier {
   /// sent to STT and is deleted when the actual session starts or is disarmed.
   Future<bool> enterRecordingStandby() async {
     if (_isRecordingStandby) return true;
-    if (_isRecording || _isProcessingRecording) return false;
-    if (!await _audioRecorder.hasPermission() || !_recordingServicesReady) {
-      return false;
-    }
-    await TtsService().releaseForRecording();
-    await _initializeAudioSession();
-    final path = await _getTempPath(prefix: 'standby');
+    if (_isRecording) return false;
+    _processingAudioLease.beginForegroundCapture();
+    var standbyStarted = false;
     try {
+      if (!await _audioRecorder.hasPermission() || !_recordingServicesReady) {
+        return false;
+      }
+      _processingAudioLease.releaseForegroundForProcessingHandoff();
+      await _processingAudioLease.takeOverForForegroundCapture();
+      await TtsService().releaseForRecording();
+      await _initializeAudioSession();
+      final path = await _getTempPath(prefix: 'standby');
       await _audioRecorder.start(_recordConfig, path: path);
       _standbyAudioPath = path;
       _isRecordingStandby = true;
+      standbyStarted = true;
       _statusMessage = '录音待命已开启，可以锁屏并从手表开始';
       notifyListeners();
       return true;
@@ -855,6 +1364,10 @@ class RecordingProvider extends ChangeNotifier {
       TtsService().allowPlaybackAfterRecording();
       notifyListeners();
       return false;
+    } finally {
+      if (!standbyStarted) {
+        _processingAudioLease.abandonForegroundCapture();
+      }
     }
   }
 
@@ -869,6 +1382,7 @@ class RecordingProvider extends ChangeNotifier {
       final file = File(path);
       if (await file.exists()) await file.delete();
     }
+    _processingAudioLease.abandonForegroundCapture();
     await _resetAudioSessionAfterRecording();
     TtsService().allowPlaybackAfterRecording();
     notifyListeners();
@@ -894,7 +1408,11 @@ class RecordingProvider extends ChangeNotifier {
     unawaited(
       DiagnosticLogService.instance.record('recording', 'start_requested'),
     );
-    if (await _audioRecorder.hasPermission()) {
+    if (_isRecording) return;
+    _processingAudioLease.beginForegroundCapture();
+    var foregroundCaptureStarted = false;
+    try {
+      if (!await _audioRecorder.hasPermission()) return;
       if (!_recordingServicesReady) return;
       if (_isRecordingStandby) {
         final standbyPath = await _audioRecorder.stop();
@@ -906,6 +1424,7 @@ class RecordingProvider extends ChangeNotifier {
           if (await file.exists()) await file.delete();
         }
       }
+      await _processingAudioLease.takeOverForForegroundCapture();
       await TtsService().releaseForRecording();
 
       // [Phase 3 Fix 2, 4, 10] 创建专属 RecordingSessionContext 和底层专有 http.Client
@@ -936,12 +1455,14 @@ class RecordingProvider extends ChangeNotifier {
       _segmentSummaries.clear();
       _finalReviewContent = null;
       _processingErrorMessage = null;
+      _processingDeferredMessage = null;
       _statusMessage = null;
       notifyListeners();
 
       try {
         final path = await _getTempPath();
         await _audioRecorder.start(_recordConfig, path: path);
+        foregroundCaptureStarted = true;
         _startSmartSliceTimer(context);
       } catch (_) {
         _isRecording = false;
@@ -951,6 +1472,10 @@ class RecordingProvider extends ChangeNotifier {
         TtsService().allowPlaybackAfterRecording();
         notifyListeners();
         rethrow;
+      }
+    } finally {
+      if (!foregroundCaptureStarted) {
+        _processingAudioLease.abandonForegroundCapture();
       }
     }
   }
@@ -965,56 +1490,59 @@ class RecordingProvider extends ChangeNotifier {
     context.runPipeline(() => _processAudio(path, context));
   }
 
-  Future<void> _startProcessingKeepalive() async {
-    if (_isProcessingKeepalive) return;
+  Future<void> _startProcessingKeepalive(String sessionId) async {
     try {
       final path = await _getTempPath(prefix: 'processing_keepalive');
-      await _audioRecorder.start(_recordConfig, path: path);
-      _processingKeepalivePath = path;
-      _isProcessingKeepalive = true;
+      await _processingAudioLease.startKeepalive(
+        sessionId: sessionId,
+        path: path,
+        config: _recordConfig,
+      );
     } catch (error) {
       debugPrint('[Recording Keepalive] Could not start: $error');
     }
   }
 
-  Future<void> _stopProcessingKeepalive() async {
-    if (!_isProcessingKeepalive) return;
-    String? stoppedPath;
-    try {
-      stoppedPath = await _audioRecorder.stop();
-    } catch (error) {
-      debugPrint('[Recording Keepalive] Could not stop cleanly: $error');
-    }
-    _isProcessingKeepalive = false;
-    final paths = <String?>[stoppedPath, _processingKeepalivePath];
-    _processingKeepalivePath = null;
-    for (final path in paths.whereType<String>().toSet()) {
-      try {
-        final file = File(path);
-        if (await file.exists()) await file.delete();
-      } catch (_) {}
-    }
-  }
-
-  Future<void> _releaseProcessingAudio() async {
-    await _stopProcessingKeepalive();
-    await _resetAudioSessionAfterRecording();
-    TtsService().allowPlaybackAfterRecording();
+  Future<void> _releaseProcessingAudio(String sessionId) async {
+    await _processingAudioLease.releaseProcessingSession(
+      sessionId,
+      onAudioIdle: () async {
+        if (_isRecording || _isRecordingStandby) return;
+        await _resetAudioSessionAfterRecording();
+        if (!_isRecording && !_isRecordingStandby) {
+          TtsService().allowPlaybackAfterRecording();
+        }
+      },
+    );
   }
 
   void _handleSessionReady(
     RecordingSessionContext context,
     SessionReadyEvent event,
   ) {
-    if (_processingSessionId != context.sessionId) return;
-    _lastExportedPath = event.exportPath;
-    _isProcessingRecording = false;
-    _processingStep = RecordingProvider.processingStepCount;
-    _statusMessage = '总结与录音已保存';
-    _processingSessionId = null;
-    notifyListeners();
+    if (_processingSessionId == context.sessionId) {
+      _lastExportedPath = event.exportPath;
+      _isProcessingRecording = _processingSessionIds.length > 1;
+      _processingStep = RecordingProvider.processingStepCount;
+      if (!_isRecording &&
+          !_isRecordingStandby &&
+          !_processingAudioLease.hasForegroundCapture) {
+        _processingDeferredMessage = event.isFinal
+            ? null
+            : '可用内容已保存在本机，剩余处理将自动重试';
+        _processingErrorMessage = null;
+        _statusMessage = _processingDeferredMessage ?? _localSaveStatus;
+      }
+      _processingSessionIds.remove(context.sessionId);
+      _processingSessionId = _processingSessionIds.isEmpty
+          ? null
+          : _processingSessionIds.last;
+      notifyListeners();
+    } else {
+      _processingSessionIds.remove(context.sessionId);
+    }
     unawaited(
-      _releaseProcessingAudio().then((_) {
+      _releaseProcessingAudio(context.sessionId).then((_) {
         _sessionReadyController.add(event);
         notifyListeners();
       }),
@@ -1025,14 +1553,48 @@ class RecordingProvider extends ChangeNotifier {
     RecordingSessionContext context,
     String error,
   ) {
-    if (_processingSessionId != context.sessionId) return;
-    _isProcessingRecording = false;
-    _statusMessage = '处理未完整完成，已保留可恢复内容';
-    _processingErrorMessage = '处理未完整完成，录音草稿已经保留；下次启动会自动继续';
-    _processingSessionId = null;
-    notifyListeners();
-    unawaited(_releaseProcessingAudio());
+    if (_processingSessionId == context.sessionId) {
+      _isProcessingRecording = _processingSessionIds.length > 1;
+      if (!_isRecording &&
+          !_isRecordingStandby &&
+          !_processingAudioLease.hasForegroundCapture) {
+        _processingDeferredMessage = null;
+        _statusMessage = '本机保存未完成，请保留原始录音';
+        _processingErrorMessage = error;
+      }
+      _processingSessionIds.remove(context.sessionId);
+      _processingSessionId = _processingSessionIds.isEmpty
+          ? null
+          : _processingSessionIds.last;
+      notifyListeners();
+    } else {
+      _processingSessionIds.remove(context.sessionId);
+    }
+    unawaited(_releaseProcessingAudio(context.sessionId));
   }
+
+  void _handleDeferredProcessing(
+    RecordingSessionContext context,
+    String message,
+  ) {
+    if (_disposed) return;
+    _scheduleRecoveryRetry(
+      DateTime.now().toUtc().add(const Duration(seconds: 30)),
+    );
+    if (_processingSessionId != context.sessionId) return;
+    if (!_isRecording &&
+        !_isRecordingStandby &&
+        !_processingAudioLease.hasForegroundCapture) {
+      _processingDeferredMessage = '可用内容已保存在本机，剩余处理将自动重试';
+      _statusMessage = _processingDeferredMessage;
+      _processingErrorMessage = null;
+      notifyListeners();
+    }
+  }
+
+  String get _localSaveStatus => SupabaseConfig.hasValidSession
+      ? '笔记与录音已保存在本机；云同步结果单独确认'
+      : '笔记与录音已保存在本机；云同步暂停：原云账号未恢复';
 
   void _startSmartSliceTimer(RecordingSessionContext context) {
     _sliceTimer?.cancel();
@@ -1074,10 +1636,12 @@ class RecordingProvider extends ChangeNotifier {
       final context = _activeContext;
       stoppedContext = context;
       if (context != null) {
+        _processingSessionIds.add(context.sessionId);
         _processingSessionId = context.sessionId;
         _isProcessingRecording = true;
         _processingStep = 1;
         _processingErrorMessage = null;
+        _processingDeferredMessage = null;
         _statusMessage = '正在整理最后一批录音并完成识别';
         notifyListeners();
       }
@@ -1174,9 +1738,10 @@ class RecordingProvider extends ChangeNotifier {
         // shutdown was uncertain, starting it again could race the late stop.
         if (recorderStopSettled) {
           try {
-            await _startProcessingKeepalive().timeout(
-              const Duration(seconds: 4),
-            );
+            _processingAudioLease.releaseForegroundForProcessingHandoff();
+            await _startProcessingKeepalive(
+              context.sessionId,
+            ).timeout(const Duration(seconds: 4));
           } catch (error) {
             unawaited(
               DiagnosticLogService.instance.record(
@@ -1187,6 +1752,8 @@ class RecordingProvider extends ChangeNotifier {
               ),
             );
           }
+        } else {
+          _processingAudioLease.abandonForegroundCapture();
         }
         final payload = HandoverPayload(
           context: context,
@@ -1206,6 +1773,7 @@ class RecordingProvider extends ChangeNotifier {
             );
             _handleSessionReady(context, event);
           },
+          onDeferred: (message) => _handleDeferredProcessing(context, message),
           onStatus: (msg) {
             _updateBackgroundProcessingStatus(context.sessionId, msg);
           },
@@ -1230,7 +1798,7 @@ class RecordingProvider extends ChangeNotifier {
             'recording',
             'handover_submitted',
             sessionId: context.sessionId,
-            fields: {'keepalive': _isProcessingKeepalive},
+            fields: {'keepalive': _processingAudioLease.hasKeepalive},
           ),
         );
       }
@@ -1238,6 +1806,7 @@ class RecordingProvider extends ChangeNotifier {
       _activeContext = null;
       _resetForNextSession();
       if (stoppedContext == null) {
+        _processingAudioLease.abandonForegroundCapture();
         await _resetAudioSessionAfterRecording();
         TtsService().allowPlaybackAfterRecording();
       }
@@ -1295,7 +1864,11 @@ class RecordingProvider extends ChangeNotifier {
     // Late callbacks from an earlier sub-step must never make progress go back.
     if (nextStep < _processingStep) return;
     if (nextStep > _processingStep) _processingStep = nextStep;
-    _statusMessage = label;
+    if (!_isRecording &&
+        !_isRecordingStandby &&
+        !_processingAudioLease.hasForegroundCapture) {
+      _statusMessage = label;
+    }
     notifyListeners();
   }
 
@@ -1388,8 +1961,8 @@ class RecordingProvider extends ChangeNotifier {
           isProcessing: true,
         );
         noteId = currentNote.id;
-        context.addNote(currentNote);
         context.bindPendingAudioToNote(path, noteId);
+        context.addAudioNote(path, currentNote);
       }
       if (context == _activeContext) {
         notifyListeners();
@@ -1443,7 +2016,10 @@ class RecordingProvider extends ChangeNotifier {
       final index = context.notes.indexWhere((n) => n.id == noteId);
       if (index != -1) {
         context.notes[index].isProcessing = false;
-        context.lastTranscript = context.notes[index].transcript;
+        context.completeTranscriptForAudio(
+          path,
+          context.notes[index].transcript,
+        );
         // 闲谈模式：对每个有效 STT 结果进行实时多平台翻译
         if (context.mode == AppMode.freeTalk &&
             _isValidTranscript(context.notes[index].transcript)) {
@@ -1470,6 +2046,15 @@ class RecordingProvider extends ChangeNotifier {
       context.completePendingAudio(path);
       await context.saveShadowDraft();
     } catch (e) {
+      if (e is ApiRateLimitException) {
+        await context.saveShadowDraft();
+        _scheduleRecoveryRetry(e.retryAt);
+        if (context == _activeContext) {
+          _statusMessage = '识别服务限流，录音已保留；稍后自动继续';
+          notifyListeners();
+        }
+        rethrow;
+      }
       if (e is SttUnavailableException) {
         final pendingNoteId = context.pendingAudioNotes[path];
         final pendingNoteIndex = pendingNoteId == null
@@ -2085,12 +2670,22 @@ class RecordingProvider extends ChangeNotifier {
         'content_md': utf8.decode(bytes),
         'file_size': bytes.length,
       };
-      if (userId.isNotEmpty) {
-        map['user_id'] = userId;
-      }
-      await SupabaseConfig.client.from('archives').insert(map);
-      await UploadCache.mark(hash);
-      debugPrint('[Supabase Upload OK] $title ($module)');
+      // Do not create an unscoped archive row. FileSyncAgent will retry this
+      // file once authentication provides a stable user identity.
+      if (userId.isEmpty) return;
+      map['user_id'] = userId;
+      final uploaded = await UploadCache.runSingleFlight(
+        hash,
+        userId: userId,
+        operation: () async {
+          if (!CloudIdentityGuard.stillCurrent(userId)) {
+            throw StateError('Authentication identity changed during sync');
+          }
+          await SupabaseConfig.client.from('archives').insert(map);
+          return true;
+        },
+      );
+      if (uploaded) debugPrint('[Supabase Upload OK] $title ($module)');
     } catch (e) {
       debugPrint('[Supabase Upload Error] $e');
     }
@@ -2487,6 +3082,7 @@ Part 2: The sentence-by-sentence Chinese translation.""";
 
   @override
   void dispose() {
+    _disposed = true;
     _fastSub?.cancel();
     _accurateSub?.cancel();
     _orchestrator?.dispose();
@@ -2495,6 +3091,7 @@ Part 2: The sentence-by-sentence Chinese translation.""";
       _groqService?.dispose();
     }
     _sliceTimer?.cancel();
+    _recoveryRetryScheduler.dispose();
     _audioRecorder.dispose();
     _sessionReadyController.close();
     super.dispose();

@@ -9,26 +9,6 @@ import 'package:path_provider/path_provider.dart';
 
 import 'diagnostic_log_service.dart';
 
-class WatchGrammarWritingRequest {
-  const WatchGrammarWritingRequest({
-    required this.topic,
-    required this.requestId,
-    required this.selectionMode,
-    required this.selectedPartIds,
-    required this.selectedUnitIds,
-    this.contentType,
-    this.requireAllSelectedGrammar = false,
-  });
-
-  final String topic;
-  final String requestId;
-  final String selectionMode;
-  final Set<String> selectedPartIds;
-  final Set<String> selectedUnitIds;
-  final String? contentType;
-  final bool requireAllSelectedGrammar;
-}
-
 /// Queues text and sentence metadata for the paired Apple Watch remote.
 ///
 /// The Watch never receives API credentials and never performs AI or TTS
@@ -39,19 +19,15 @@ class WatchSyncService {
 
   static final WatchSyncService instance = WatchSyncService._();
   static const _channel = MethodChannel('com.zhenfeng.jeffnotes/watch_sync');
-  final StreamController<WatchGrammarWritingRequest> _grammarWritingRequests =
-      StreamController<WatchGrammarWritingRequest>.broadcast();
   Future<void> Function(String command)? _commandHandler;
   Future<void> Function(String command)? _recordingCommandHandler;
-  Future<void> Function()? _grammarConfigRequestHandler;
-  final Set<String> _handledGrammarRequestIds = <String>{};
-  final List<String> _grammarRequestOrder = <String>[];
   final Set<String> _handledRecordingCommandIds = <String>{};
   final List<String> _recordingCommandOrder = <String>[];
+  // MethodChannel calls can arrive concurrently even though Watch messages
+  // are ordered.  Keep transport acknowledgement independent from the
+  // actual recorder operation, but serialize operations on the Dart side.
+  Future<void> _recordingCommandTail = Future<void>.value();
   bool _initialized = false;
-
-  Stream<WatchGrammarWritingRequest> get grammarWritingRequests =>
-      _grammarWritingRequests.stream;
 
   void initialize() {
     if (_initialized) return;
@@ -78,11 +54,6 @@ class WatchSyncService {
     initialize();
   }
 
-  void setGrammarConfigRequestHandler(Future<void> Function() handler) {
-    _grammarConfigRequestHandler = handler;
-    initialize();
-  }
-
   Future<bool> _handleMethodCall(MethodCall call) async {
     if (call.method != 'watchCommand') return false;
 
@@ -92,52 +63,6 @@ class WatchSyncService {
         : <String, dynamic>{'command': arguments?.toString() ?? ''};
     final command = payload['command']?.toString() ?? '';
     if (command.isEmpty) return false;
-
-    if (command == 'generateGrammarWriting') {
-      final topic = payload['topic']?.toString().trim() ?? '';
-      final requestId = payload['requestId']?.toString().trim() ?? '';
-      if (requestId.isNotEmpty &&
-          _handledGrammarRequestIds.contains(requestId)) {
-        return true;
-      }
-      if (requestId.isNotEmpty) {
-        _handledGrammarRequestIds.add(requestId);
-        _grammarRequestOrder.add(requestId);
-        if (_grammarRequestOrder.length > 100) {
-          _handledGrammarRequestIds.remove(_grammarRequestOrder.removeAt(0));
-        }
-      }
-      Set<String> stringSet(Object? value) => value is List
-          ? value.map((item) => item.toString()).toSet()
-          : const <String>{};
-      final selectionMode = payload['selectionMode']?.toString() ?? 'phone';
-      _grammarWritingRequests.add(
-        WatchGrammarWritingRequest(
-          topic: topic,
-          requestId: requestId,
-          selectionMode:
-              const {'phone', 'automatic', 'custom'}.contains(selectionMode)
-              ? selectionMode
-              : 'phone',
-          selectedPartIds: stringSet(payload['selectedPartIds']),
-          selectedUnitIds: stringSet(payload['selectedUnitIds']),
-          contentType:
-              payload['contentType']?.toString().trim().isNotEmpty == true
-              ? payload['contentType'].toString().trim()
-              : null,
-          requireAllSelectedGrammar:
-              payload['requireAllSelectedGrammar'] == true,
-        ),
-      );
-      return true;
-    }
-
-    if (command == 'requestGrammarWritingConfig') {
-      final handler = _grammarConfigRequestHandler;
-      if (handler == null) return false;
-      await handler();
-      return true;
-    }
 
     if (const {
       'armListeningRecording',
@@ -168,34 +93,42 @@ class WatchSyncService {
           fields: {'command': command, 'commandId': commandId},
         ),
       );
-      try {
-        await handler(command);
-        unawaited(
-          DiagnosticLogService.instance.record(
-            'watch',
-            'recording_command_completed',
-            fields: {'command': command, 'commandId': commandId},
-          ),
-        );
-        return true;
-      } catch (error) {
-        if (commandId.isNotEmpty) {
-          _handledRecordingCommandIds.remove(commandId);
-          _recordingCommandOrder.remove(commandId);
+      // A Watch transport ACK only means the command was accepted.  Do not
+      // hold the MethodChannel reply open while an audio start/stop runs;
+      // queue the real operation and preserve receive order instead.  A
+      // failed command is removed from the idempotency set so Watch can retry.
+      final operation = _recordingCommandTail.then((_) async {
+        try {
+          await handler(command);
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'watch',
+              'recording_command_completed',
+              fields: {'command': command, 'commandId': commandId},
+            ),
+          );
+        } catch (error) {
+          if (commandId.isNotEmpty) {
+            _handledRecordingCommandIds.remove(commandId);
+            _recordingCommandOrder.remove(commandId);
+          }
+          unawaited(
+            DiagnosticLogService.instance.record(
+              'watch',
+              'recording_command_failed',
+              fields: {
+                'command': command,
+                'commandId': commandId,
+                'errorType': error.runtimeType,
+              },
+            ),
+          );
         }
-        unawaited(
-          DiagnosticLogService.instance.record(
-            'watch',
-            'recording_command_failed',
-            fields: {
-              'command': command,
-              'commandId': commandId,
-              'errorType': error.runtimeType,
-            },
-          ),
-        );
-        rethrow;
-      }
+      });
+      // Keep the tail alive after a failed command, allowing later commands
+      // to execute while the failed command remains retryable.
+      _recordingCommandTail = operation.catchError((Object _) {});
+      return true;
     }
 
     final handler = _commandHandler;
@@ -213,44 +146,6 @@ class WatchSyncService {
       return false;
     } catch (error) {
       debugPrint('[WatchSync] Recording state update failed: $error');
-      return false;
-    }
-  }
-
-  Future<bool> updateGrammarWritingConfig(Map<String, Object?> config) async {
-    if (!Platform.isIOS) return false;
-    try {
-      return await _channel.invokeMethod<bool>(
-            'updateGrammarWritingConfig',
-            config,
-          ) ??
-          false;
-    } on MissingPluginException {
-      return false;
-    } catch (error) {
-      debugPrint('[WatchSync] Grammar config update failed: $error');
-      return false;
-    }
-  }
-
-  Future<bool> updateGrammarWritingState({
-    required String requestId,
-    required String state,
-    required String message,
-  }) async {
-    if (!Platform.isIOS || requestId.isEmpty) return false;
-    try {
-      return await _channel.invokeMethod<bool>('updateGrammarWritingState', {
-            'request_id': requestId,
-            'state': state,
-            'message': message,
-            'updated_at_ms': DateTime.now().millisecondsSinceEpoch,
-          }) ??
-          false;
-    } on MissingPluginException {
-      return false;
-    } catch (error) {
-      debugPrint('[WatchSync] Grammar state update failed: $error');
       return false;
     }
   }

@@ -119,42 +119,13 @@ void main() {
       },
     );
 
-    test('watch can submit a grammar topic without any AI client', () {
-      final view = File(
-        'ios/JeffNotesWatch/ContentView.swift',
-      ).readAsStringSync();
-      final receiver = File(
-        'ios/JeffNotesWatch/WatchDocumentStore.swift',
-      ).readAsStringSync();
-      final sync = File(
-        'lib/services/watch_sync_service.dart',
-      ).readAsStringSync();
-
-      expect(view, contains('WatchGrammarWritingView'));
-      expect(view, contains('输入或听写老师给出的题目'));
-      expect(view, contains('生成文章'));
-      expect(view, contains('全部文档'));
-      expect(receiver, contains('sendGrammarWritingRequest'));
-      expect(receiver, contains('"generateGrammarWriting"'));
-      expect(receiver, contains('session.transferUserInfo(message)'));
-      expect(sync, contains("command == 'generateGrammarWriting'"));
-      expect(sync, contains('WatchGrammarWritingRequest('));
-      expect(sync, contains("command == 'requestGrammarWritingConfig'"));
-      expect(view, contains('手机当前选择'));
-      expect(view, contains('AI自动4–6种'));
-      expect(view, contains('手表重新选择'));
-      expect(view, contains('WatchThemeSelectionView'));
-      expect(view, contains('WatchGrammarSelectionView'));
-    });
-
-    test('watch home has three independent module entrances', () {
+    test('watch home retains document and listening entrances', () {
       final view = File(
         'ios/JeffNotesWatch/ContentView.swift',
       ).readAsStringSync();
 
       expect(view, contains('struct WatchHomeView'));
       expect(view, contains('title: "全部文档"'));
-      expect(view, contains('title: "语法写作"'));
       expect(view, contains('title: "听力录音"'));
       expect(view, contains('WatchListeningView'));
       expect(view, contains('停止并生成'));
@@ -202,8 +173,12 @@ void main() {
       expect(bridge, contains('message["commandId"] is String'));
       expect(bridge, contains('pendingCommands.append(message)'));
       expect(sync, contains('_handledRecordingCommandIds'));
+      expect(sync, contains('_recordingCommandTail'));
       expect(sync, contains("'recording_command_completed'"));
-      expect(main, contains('final armed = await provider.enterRecordingStandby()'));
+      expect(
+        main,
+        contains('final armed = await provider.enterRecordingStandby()'),
+      );
       expect(view, contains('手机已收到命令'));
       expect(view, contains('命令已排队，等待手机连接'));
       expect(view, isNot(contains('Button(action: {})')));

@@ -6,33 +6,12 @@ import UIKit
 
     private var playbackWakelockRequested = false
     private var foregroundDisplayRequested = false
-    private var foregroundBrightness: CGFloat = 0.05
-    private var brightnessBeforeForeground: CGFloat?
     private var watchSyncChannel: FlutterMethodChannel?
 
     private func updateIdleTimer() {
         let appIsActive = UIApplication.shared.applicationState == .active
         UIApplication.shared.isIdleTimerDisabled = appIsActive &&
             (playbackWakelockRequested || foregroundDisplayRequested)
-    }
-
-    private func enableForegroundDisplay(brightness: CGFloat) {
-        if brightnessBeforeForeground == nil {
-            brightnessBeforeForeground = UIScreen.main.brightness
-        }
-        foregroundBrightness = min(max(brightness, 0.0), 1.0)
-        foregroundDisplayRequested = true
-        UIScreen.main.brightness = foregroundBrightness
-        updateIdleTimer()
-    }
-
-    private func releaseForegroundDisplay() {
-        foregroundDisplayRequested = false
-        if let previousBrightness = brightnessBeforeForeground {
-            UIScreen.main.brightness = previousBrightness
-            brightnessBeforeForeground = nil
-        }
-        updateIdleTimer()
     }
 
     private func configureWakelockChannel(binaryMessenger: FlutterBinaryMessenger) {
@@ -54,13 +33,9 @@ import UIKit
             } else if call.method == "setForegroundDisplayMode" {
                 if let args = call.arguments as? [String: Any],
                    let enable = args["enable"] as? Bool {
-                    let brightness = (args["brightness"] as? NSNumber)?.doubleValue ?? 0.05
                     DispatchQueue.main.async {
-                        if enable {
-                            self.enableForegroundDisplay(brightness: CGFloat(brightness))
-                        } else {
-                            self.releaseForegroundDisplay()
-                        }
+                        self.foregroundDisplayRequested = enable
+                        self.updateIdleTimer()
                     }
                     result(true)
                 } else {
@@ -98,10 +73,6 @@ import UIKit
                 result(WatchTransferService.shared.queuePackage(arguments: call.arguments))
             } else if call.method == "updateRecordingState" {
                 result(WatchTransferService.shared.updateRecordingState(arguments: call.arguments))
-            } else if call.method == "updateGrammarWritingConfig" {
-                result(WatchTransferService.shared.updateGrammarWritingConfig(arguments: call.arguments))
-            } else if call.method == "updateGrammarWritingState" {
-                result(WatchTransferService.shared.updateGrammarWritingState(arguments: call.arguments))
             } else {
                 result(FlutterMethodNotImplemented)
             }
@@ -116,12 +87,13 @@ import UIKit
     }
 
     override func applicationWillResignActive(_ application: UIApplication) {
-        releaseForegroundDisplay()
+        foregroundDisplayRequested = false
+        updateIdleTimer()
         super.applicationWillResignActive(application)
     }
 
     override func applicationWillTerminate(_ application: UIApplication) {
-        releaseForegroundDisplay()
+        foregroundDisplayRequested = false
         playbackWakelockRequested = false
         updateIdleTimer()
         super.applicationWillTerminate(application)
