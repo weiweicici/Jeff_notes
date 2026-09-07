@@ -1,0 +1,35 @@
+import 'dart:io';
+
+import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
+
+import 'watch_sync_service.dart';
+
+class GrammarExamReferenceService {
+  GrammarExamReferenceService._();
+
+  static const assetPath = 'assets/grammar/ultimate_grammar_quick_reference.md';
+  static const filename = 'Jeff_Reference_终极时态与语法速查表.md';
+
+  static Future<File?> ensureAvailable() async {
+    try {
+      final markdown = await rootBundle.loadString(assetPath);
+      final directory = await getApplicationDocumentsDirectory();
+      final file = File('${directory.path}/$filename');
+
+      if (!await file.exists() || await file.readAsString() != markdown) {
+        await file.writeAsString(markdown, flush: true);
+      }
+
+      await WatchSyncService.instance.queueMarkdownDocument(
+        title: filename,
+        markdown: markdown,
+      );
+      return file;
+    } catch (error) {
+      debugPrint('[Grammar Reference] Install/sync failed: $error');
+      return null;
+    }
+  }
+}

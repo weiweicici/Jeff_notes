@@ -11,6 +11,7 @@ import 'openai_service.dart';
 import 'services/diagnostic_log_service.dart';
 import 'services/api_rate_limit_service.dart';
 import 'services/local_translation_service.dart';
+import 'services/speech_gate_service.dart';
 
 /// [Architect: Pipeline Result Container]
 class PipelineResult {
@@ -100,61 +101,16 @@ class _TranslationRequest {
 }
 
 /// Checks 16-bit PCM WAV signal strength without sending audio anywhere.
-/// A conservative threshold prevents audible lecture speech from being
-/// discarded merely because an STT provider returned an empty response.
+/// Delegates to [SpeechGateService.analyzeWav] so thresholds and logic are centralized.
 Future<bool> wavContainsAudibleSignal(
   String filePath, {
   double rmsThresholdDb = -48.0,
 }) async {
-  try {
-    final bytes = await File(filePath).readAsBytes();
-    if (bytes.length < 46) return false;
-
-    final data = ByteData.sublistView(bytes);
-    int dataStart = 44;
-    int dataLength = bytes.length - dataStart;
-    if (String.fromCharCodes(bytes.take(4)) == 'RIFF' &&
-        String.fromCharCodes(bytes.skip(8).take(4)) == 'WAVE') {
-      var offset = 12;
-      while (offset + 8 <= bytes.length) {
-        final chunkId = String.fromCharCodes(bytes.skip(offset).take(4));
-        final chunkLength = data.getUint32(offset + 4, Endian.little);
-        final chunkStart = offset + 8;
-        if (chunkId == 'data') {
-          dataStart = chunkStart;
-          dataLength = math.min(chunkLength, bytes.length - chunkStart);
-          break;
-        }
-        offset = chunkStart + chunkLength + (chunkLength.isOdd ? 1 : 0);
-      }
-    }
-
-    if (dataLength < 2 || dataStart + dataLength > bytes.length) return false;
-    var sumSquares = 0.0;
-    var peak = 0;
-    var samples = 0;
-    final end = dataStart + dataLength - 1;
-    // Sampling every fourth value is sufficient and keeps long recovery files cheap.
-    for (var offset = dataStart; offset < end; offset += 8) {
-      final value = data.getInt16(offset, Endian.little).abs();
-      peak = math.max(peak, value);
-      final normalized = value / 32768.0;
-      sumSquares += normalized * normalized;
-      samples++;
-    }
-    if (samples == 0 || peak < 80) return false;
-    final rms = math.sqrt(sumSquares / samples);
-    if (rms <= 0) return false;
-    final rmsDb = 20 * math.log(rms) / math.ln10;
-    return rmsDb >= rmsThresholdDb;
-  } catch (_) {
-    // Unknown-but-substantial audio should be retried, never discarded as silence.
-    try {
-      return await File(filePath).length() > 3200;
-    } catch (_) {
-      return false;
-    }
-  }
+  final metrics = await SpeechGateService.analyzeWav(
+    filePath,
+    rmsThresholdDb: rmsThresholdDb,
+  );
+  return metrics.hasAudibleSpeech;
 }
 
 /// [Architect: Pipeline Assembly]
@@ -654,6 +610,32 @@ class AIOrchestratorService {
     if (_isDisposed) return;
     final translationHistorySnapshot = _snapshotHistory(translationHistory);
     try {
+      // Layer A: Pre-STT speech/energy gate
+      final metrics = await SpeechGateService.analyzeWav(filePath);
+      if (!metrics.hasAudibleSpeech) {
+        debugPrint(
+          '[SpeechGate] slice skipped: silence (peak=${metrics.peak}, rmsDb=${metrics.rmsDb.toStringAsFixed(1)} dB)',
+        );
+        unawaited(
+          DiagnosticLogService.instance.record(
+            'stt',
+            'slice_skipped_silence',
+            sessionId: sessionId,
+            fields: {
+              'noteId': noteId,
+              'peak': metrics.peak,
+              'rmsDb': metrics.rmsDb.toStringAsFixed(1),
+            },
+          ),
+        );
+        onStatus?.call("Silence detected");
+        _addFastEnglish(PipelineResult(noteId, "[Silence]"));
+        return;
+      }
+
+      debugPrint(
+        '[SpeechGate] slice submitted: speech detected (peak=${metrics.peak}, rmsDb=${metrics.rmsDb.toStringAsFixed(1)} dB)',
+      );
       onStatus?.call("STT requesting...");
 
       // 1. STT 阶段（快车道）：Groq 主服务 → Gemini 2.5 Flash 自动降级兜底
@@ -716,31 +698,59 @@ class AIOrchestratorService {
         throw groqFailure;
       }
 
-      if (rawEnglish == null || rawEnglish.trim().isEmpty) {
-        final audible = await wavContainsAudibleSignal(filePath);
-        // A clear waveform plus an empty/failed provider response is not silence.
-        // Throwing keeps the original pending slice in the recovery draft.
-        if (audible) {
-          var audioBytes = 0;
-          try {
-            audioBytes = await File(filePath).length();
-          } catch (_) {}
+      // Layer B: STT Hallucination Guard
+      bool isHallucination = false;
+      if (rawEnglish != null && rawEnglish.trim().isNotEmpty) {
+        if (SpeechGateService.isSuspiciousHallucination(rawEnglish, metrics)) {
+          debugPrint(
+            '[SpeechGate] Hallucination suppressed on low-energy slice: "$rawEnglish" '
+            '(peak=${metrics.peak}, rmsDb=${metrics.rmsDb.toStringAsFixed(1)} dB)',
+          );
           unawaited(
             DiagnosticLogService.instance.record(
               'stt',
-              'audible_audio_unrecognized',
+              'hallucination_suppressed',
               sessionId: sessionId,
               fields: {
-                'audioBytes': audioBytes,
-                'approxSeconds': (audioBytes / 32000).toStringAsFixed(1),
-                'geminiConfigured': _geminiApiKey.isNotEmpty,
+                'noteId': noteId,
+                'rawText': rawEnglish,
+                'peak': metrics.peak,
+                'rmsDb': metrics.rmsDb.toStringAsFixed(1),
               },
             ),
           );
-          final providerState = groqFailure != null
-              ? 'Groq failed and fallback produced no transcript'
-              : 'provider returned an empty transcript for audible audio';
-          throw SttUnavailableException(providerState);
+          isHallucination = true;
+          rawEnglish = null;
+        }
+      }
+
+      if (rawEnglish == null || rawEnglish.trim().isEmpty) {
+        if (!isHallucination) {
+          final audible = await wavContainsAudibleSignal(filePath);
+          // A clear waveform plus an empty/failed provider response is not silence.
+          // Throwing keeps the original pending slice in the recovery draft.
+          if (audible) {
+            var audioBytes = 0;
+            try {
+              audioBytes = await File(filePath).length();
+            } catch (_) {}
+            unawaited(
+              DiagnosticLogService.instance.record(
+                'stt',
+                'audible_audio_unrecognized',
+                sessionId: sessionId,
+                fields: {
+                  'audioBytes': audioBytes,
+                  'approxSeconds': (audioBytes / 32000).toStringAsFixed(1),
+                  'geminiConfigured': _geminiApiKey.isNotEmpty,
+                },
+              ),
+            );
+            final providerState = groqFailure != null
+                ? 'Groq failed and fallback produced no transcript'
+                : 'provider returned an empty transcript for audible audio';
+            throw SttUnavailableException(providerState);
+          }
         }
         onStatus?.call("Silence detected");
         _addFastEnglish(PipelineResult(noteId, "[Silence]"));

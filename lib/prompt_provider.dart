@@ -18,6 +18,8 @@ class PromptProvider {
         return getRollingNotesPrompt(mode: mode, unit: unit);
       case PromptStrategy.essay:
         return "You are a professional academic writing assistant. Follow the user's instructions and format constraints exactly. Generate the output exactly as requested, focusing on high-quality English templates and structured vocabulary notes.";
+      case PromptStrategy.naitClassAnalysis:
+        return getNaitClassAnalysisPrompt();
       default:
         return mode == AppMode.discussion
             ? getDiscussionPrompt(unit: unit)
@@ -974,5 +976,91 @@ $unitStrategyBlock
 [中文转述段落]
 
 ---''';
+  }
+
+  static String getNaitClassAnalysisPrompt() {
+    return '''You are analyzing a real NAIT (Northern Alberta Institute of Technology) technical classroom transcript for an adult IT student with strong prior technical/networking background.
+The student's main challenge is authentic North-American spoken classroom English, fast instructor phrasing, and operational instructions—NOT basic IT concepts.
+
+### CORE OBJECTIVES:
+1. OPERATIONAL RETENTION (Highest Priority):
+   Extract all practical requirements: assignments, labs, exercises, downloads, installs, configurations, restarts, renames, deadlines, submissions, screenshots, network setting changes (e.g. VMNet4 -> NAT), backups.
+   Bias toward retention: better to keep an extra actionable instruction than miss a critical deadline or step.
+
+2. TECHNICAL LAB PROCEDURES:
+   Preserve concrete operational sequences step by step. Do not collapse multi-step commands into vague high-level prose.
+
+3. CONCISE TECHNICAL NOTES:
+   Keep conceptual notes brief. Do not explain beginner IT concepts (e.g. what an IP address or DNS is).
+
+4. AUTHENTIC NORTH-AMERICAN CLASSROOM ENGLISH:
+   Extract real transferable classroom English used by the instructor: phrasal verbs, idioms, spoken chunks, informal technical transitions, natural colloquial instructor speech (e.g. "leave it at the default", "your mileage may vary", "play with it", "up and running", "roll back", "good to go").
+   Provide an authentic audio timestamp range for each chunk with approximately 5–25 seconds of surrounding instructor speech context for listening practice.
+
+5. PRACTICE SENTENCES:
+   - "askTeacher": 2-3 realistic questions the student can ask the instructor next class regarding the lab or requirements.
+   - "classmateEnglish": 2-3 natural spoken lines to interact with lab peers.
+   - All questions/dialogue MUST be marked with sourceType: "practice_sentence".
+   - Never present generated practice sentences as teacher originals.
+
+6. TEACHER MODE (Teach-back):
+   One 60-second explanation prompt testing the core technical concept of today's class, with suggested opening sentence and key target chunks.
+
+### OUTPUT FORMAT:
+Output MUST be valid, parseable JSON ONLY with NO markdown formatting, NO markdown code fences (do not wrap in ```json), and NO extra conversational text.
+
+Expected JSON structure:
+{
+  "mustDo": [
+    "Assignment 1 due Friday 11:59 PM via Moodle",
+    "Install Windows Server 2022 on VMNet4"
+  ],
+  "lab": [
+    "Step 1: Set VM network adapter to NAT",
+    "Step 2: Run Windows Update until fully patched",
+    "Step 3: Switch adapter back to VMNet4 and assign static IP 192.168.10.10/24"
+  ],
+  "important": [
+    "Do NOT sysprep the primary domain controller VM",
+    "Always take a snapshot before promoting to DC"
+  ],
+  "nextClass": [
+    "Bring completed DC setup to class on Thursday",
+    "Preview chapter 4 on Active Directory Sites & Services"
+  ],
+  "technicalPoints": [
+    "FSMO role placement guidelines across multiple domain controllers",
+    "DNS reverse lookup zone requirement for Kerberos ticket resolution"
+  ],
+  "classroomEnglish": [
+    {
+      "phrase": "leave it at the default",
+      "chineseMeaning": "保持默认设置，不要改动",
+      "context": "When installing IIS, you can just leave it at the default.",
+      "priority": 5,
+      "sourceType": "teacher_original",
+      "sourceTimestamp": "00:23:10",
+      "audioStart": "00:23:04",
+      "audioEnd": "00:23:22"
+    }
+  ],
+  "askTeacher": [
+    {
+      "text": "Just to make sure, are we supposed to keep the default subnet mask for this lab?",
+      "sourceType": "practice_sentence"
+    }
+  ],
+  "classmateEnglish": [
+    {
+      "text": "Did you get the second network adapter showing up in your VM?",
+      "sourceType": "practice_sentence"
+    }
+  ],
+  "teacherMode": {
+    "prompt": "Explain the difference between Workgroup and Active Directory Domain to a peer.",
+    "suggestedOpening": "So the fundamental difference comes down to centralized authentication versus local SAM database...",
+    "targetChunks": ["centralized management", "single point of failure", "out of the box"]
+  }
+}''';
   }
 }

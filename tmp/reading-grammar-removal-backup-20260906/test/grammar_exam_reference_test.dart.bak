@@ -1,0 +1,70 @@
+import 'dart:io';
+
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  const assetPath = 'assets/grammar/ultimate_grammar_quick_reference.md';
+
+  test('ultimate grammar reference is one complete ordered markdown file', () {
+    final markdown = File(assetPath).readAsStringSync();
+
+    final headings = [
+      'Unit 2',
+      'Unit 3',
+      'Unit 4',
+      'Unit 5',
+      'Unit 7',
+      'Unit 8',
+      'Unit 17',
+      'Unit 18',
+      'Unit 19',
+      'Unit 20 & 21',
+      'Unit 22',
+      'Unit 24 & 25',
+    ];
+    final positions = headings.map(markdown.indexOf).toList();
+    expect(positions, everyElement(greaterThanOrEqualTo(0)));
+    expect(List<int>.from(positions)..sort(), positions);
+    expect(markdown, startsWith('═══════════════════════════════════'));
+    expect(markdown, contains('◆ Simple Past'));
+    expect(markdown, contains('  标志：yesterday / ago / last... / in 2010'));
+    expect(markdown, contains('  陷阱：'));
+    expect(markdown, contains('考前三必看'));
+  });
+
+  test('reference is bundled, seeded locally, and queued to Watch', () {
+    final pubspec = File('pubspec.yaml').readAsStringSync();
+    final main = File('lib/main.dart').readAsStringSync();
+    final service = File(
+      'lib/services/grammar_exam_reference_service.dart',
+    ).readAsStringSync();
+
+    expect(pubspec, contains(assetPath));
+    expect(main, contains('GrammarExamReferenceService.ensureAvailable()'));
+    expect(service, contains('getApplicationDocumentsDirectory'));
+    expect(service, contains('Jeff_Reference_终极时态与语法速查表.md'));
+    expect(service, contains('queueMarkdownDocument'));
+  });
+
+  test('reference avoids dictation autoplay filename conventions', () {
+    final service = File(
+      'lib/services/grammar_exam_reference_service.dart',
+    ).readAsStringSync();
+
+    expect(service, isNot(contains("filename = 'Jeff_Grammar_")));
+    expect(service, isNot(contains("filename = 'Jeff_速记_")));
+  });
+
+  test('reference uses a dedicated iPhone portrait reading style', () {
+    final detail = File(
+      'lib/screens/note_detail_screen.dart',
+    ).readAsStringSync();
+    final style = File('lib/widgets/academic_markdown.dart').readAsStringSync();
+
+    expect(detail, contains('isGrammarExamReferenceDocument'));
+    expect(detail, contains('getGrammarExamReferenceStyle(context)'));
+    expect(style, contains("fontFamily: 'Menlo'"));
+    expect(style, contains('fontSize: 15'));
+    expect(style, contains('height: 1.48'));
+  });
+}

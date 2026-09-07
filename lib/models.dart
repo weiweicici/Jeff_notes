@@ -15,6 +15,7 @@ enum PromptStrategy {
   discussion,
   essay,
   grammar,
+  naitClassAnalysis,
 }
 
 enum PathwaysUnit {

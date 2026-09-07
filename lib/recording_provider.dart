@@ -22,6 +22,7 @@ import 'models/recording_session_context.dart';
 import 'services/tts_service.dart';
 import 'services/credential_store.dart';
 import 'services/session_background_processor.dart';
+import 'services/transcript_assembler.dart';
 import 'services/shadow_draft_service.dart';
 import 'services/diagnostic_log_service.dart';
 import 'services/api_rate_limit_service.dart';
@@ -1914,10 +1915,11 @@ class RecordingProvider extends ChangeNotifier {
     return '${directory.path}/${prefix}_${DateTime.now().millisecondsSinceEpoch}.wav';
   }
 
-  /// 有效性判断：过滤静音/填充词
+  /// 有效性判断：过滤静音/填充词/占位标签
   bool _isValidTranscript(String text) {
     final t = text.trim().toLowerCase();
     if (t.isEmpty || t == '...') return false;
+    if (t.startsWith('[') && t.endsWith(']')) return false;
     final fillerWords = ['嗯', '呃', '那个', 'um', 'uh', 'like', 'so'];
     if (fillerWords.contains(t)) return false;
     return true;
@@ -2246,10 +2248,7 @@ class RecordingProvider extends ChangeNotifier {
           "[Final Academic Review] _aiService is null, skipping recap.",
         );
       } else {
-        final material = _allNotes
-            .where((n) => !n.isSummary)
-            .map((n) => n.transcript)
-            .join(" ");
+        final material = TranscriptAssembler.english(_allNotes);
         if (material.isEmpty) {
           _finalReviewContent = "Not enough material.";
           _shorthandReviewContent = null;

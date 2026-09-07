@@ -18,6 +18,7 @@ import 'services/note_navigation_service.dart';
 import 'services/foreground_display_service.dart';
 import 'services/watch_sync_service.dart';
 import 'services/local_translation_service.dart';
+import 'nait_learning/nait_learning_provider.dart';
 
 late MyAudioHandler globalAudioHandler;
 
@@ -40,8 +41,11 @@ void main() async {
   );
 
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => RecordingProvider(),
+    MultiProvider(
+      providers: [
+        ChangeNotifierProvider(create: (_) => RecordingProvider()),
+        ChangeNotifierProvider(create: (_) => NaitLearningProvider()),
+      ],
       child: const JeffNotesApp(),
     ),
   );

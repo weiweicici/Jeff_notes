@@ -82,17 +82,23 @@ void main() {
             transcript: '[Silence]',
             timestamp: start.add(const Duration(seconds: 18)),
           ),
+          InsightNote(
+            summary: '',
+            transcript: '[Figure 1] shows the topology.',
+            timestamp: start.add(const Duration(seconds: 24)),
+          ),
         ];
 
         expect(
           TranscriptAssembler.english(notes),
-          'Consumer behavior includes external factors influence decisions.',
+          'Consumer behavior includes external factors influence decisions. [Figure 1] shows the topology.',
         );
         expect(
           TranscriptAssembler.timestampedEnglish(notes, sessionStart: start),
           startsWith('[00:06] Consumer behavior'),
         );
         expect(TranscriptAssembler.chinese(notes), contains('外部因素影响决定'));
+        expect(TranscriptAssembler.english(notes), isNot(contains('[Silence]')));
       },
     );
 

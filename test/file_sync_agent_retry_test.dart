@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/services/diagnostic_log_service.dart';
 import 'package:jeff_notes/services/file_sync_agent.dart';
+import 'package:jeff_notes/services/note_library_service.dart';
+import 'package:jeff_notes/services/note_deletion_store.dart';
 import 'package:jeff_notes/services/upload_cache.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -19,6 +21,63 @@ void main() {
   tearDown(() async {
     if (await directory.exists()) await directory.delete(recursive: true);
   });
+
+  test(
+    'persistent pending and completed deletions never re-upload under any account',
+    () async {
+      final file = File(
+        '${directory.path}/Jeff_Notes_20260827_130412_468_468744.md',
+      );
+      await file.writeAsString('retained original');
+      const session = '20260827_130412_468_468744';
+      NoteDeletionStore(directory).begin('A', session);
+      var uploads = 0;
+      for (final state in ['pending', 'completed']) {
+        if (state == 'completed')
+          NoteDeletionStore(directory).complete('A', session);
+        for (final owner in ['A', 'B']) {
+          await FileSyncAgent.forTesting(
+            authenticatedUser: () async => owner,
+            archiveUpload: (payload) async {
+              uploads++;
+              return payload;
+            },
+            documentsDirectory: () async => directory,
+          ).syncNow();
+        }
+      }
+      expect(uploads, 0);
+      expect(file.readAsStringSync(), 'retained original');
+    },
+  );
+
+  test(
+    'deletion marker created during sync auth check rejects queued upload',
+    () async {
+      final file = File(
+        '${directory.path}/Jeff_Notes_20260827_130412_468_468744.md',
+      );
+      await file.writeAsString('retained original');
+      var captures = 0;
+      var uploads = 0;
+      await FileSyncAgent.forTesting(
+        authenticatedUser: () async {
+          if (++captures == 2) {
+            NoteDeletionStore(
+              directory,
+            ).begin('A', '20260827_130412_468_468744');
+          }
+          return 'A';
+        },
+        archiveUpload: (payload) async {
+          uploads++;
+          return payload;
+        },
+        documentsDirectory: () async => directory,
+      ).syncNow();
+      expect(uploads, 0);
+    },
+  );
 
   test(
     'unauthenticated scan leaves file pending, later restored user uploads once',
@@ -132,6 +191,38 @@ void main() {
     expect(payloads[0]['session_id'], payloads[1]['session_id']);
     expect(payloads[0]['file_hash'], isNot(payloads[1]['file_hash']));
   });
+
+  test(
+    'renaming display title resyncs same session without content change',
+    () async {
+      final file = File(
+        '${directory.path}/Jeff_Notes_20260827_130412_468_468744.md',
+      );
+      await file.writeAsString('unchanged content');
+      final payloads = <Map<String, dynamic>>[];
+      final agent = FileSyncAgent.forTesting(
+        authenticatedUser: () async => 'original-user',
+        archiveUpload: (payload) async {
+          payloads.add(payload);
+          return payload;
+        },
+        documentsDirectory: () async => directory,
+      );
+      await agent.syncNow();
+      final library = NoteLibraryService(
+        documentsDirectory: () async => directory,
+      );
+      await library.renameNoteDisplayTitle(
+        (await library.listNotes('')).single,
+        'Human title',
+      );
+      await agent.syncNow();
+      expect(payloads, hasLength(2));
+      expect(payloads[0]['file_hash'], payloads[1]['file_hash']);
+      expect(payloads[0]['session_id'], payloads[1]['session_id']);
+      expect(payloads[1]['title'], 'Human title');
+    },
+  );
 
   test('mismatched remote receipt stays pending and is retried', () async {
     final file = File(

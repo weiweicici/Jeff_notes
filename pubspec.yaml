@@ -59,6 +59,9 @@ dependencies:
   just_audio: ^0.9.39
   audio_service: ^0.18.15
   flutter_secure_storage: ^9.2.2
+  ffmpeg_kit_flutter_new_audio: ^2.5.2   # audio normalization: MP4/M4A/MP3→WAV
+  uuid: ^4.5.1                          # NAIT session/entity IDs
+  path: ^1.9.1
 
 dependency_overrides:
   record_platform_interface: 1.1.0

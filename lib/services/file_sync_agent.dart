@@ -7,7 +7,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'supabase_config.dart';
 import 'upload_cache.dart';
+import 'note_deletion_store.dart';
 import 'diagnostic_log_service.dart';
+import 'note_library_service.dart';
 
 typedef ArchiveUpload =
     Future<Map<String, dynamic>?> Function(Map<String, dynamic> payload);
@@ -110,24 +112,31 @@ class FileSyncAgent {
       final dir =
           await (_documentsDirectory?.call() ??
               getApplicationDocumentsDirectory());
-      final files = await dir
-          .list()
-          .where((e) => e is File && e.path.endsWith('.md'))
-          .toList();
+      // The library replays any interrupted note/audio/metadata move before it
+      // returns files, so sync never uploads a transient half-moved note.
+      final library = NoteLibraryService(documentsDirectory: () async => dir);
+      final files = await library.searchAllNotes('');
+      final deletions = NoteDeletionStore(dir);
 
       final uploaded = await UploadCache.load(userId: userId);
 
-      for (final entity in files) {
+      for (final item in files) {
         try {
-          final file = entity as File;
+          if (deletions.blocksUpload(item.stableSessionId)) continue;
+          final file = item.markdownFile;
           final bytes = await file.readAsBytes();
           final hash = md5.convert(bytes).toString();
+          // A title is cloud metadata, not Markdown content.  Include it in
+          // the local completion key so a rename upserts the same archive row
+          // even though file_hash is unchanged.
+          final cacheFingerprint =
+              '$hash::${item.stableSessionId}::${item.displayTitle}';
 
-          if (uploaded.contains(hash)) continue;
+          if (uploaded.contains(cacheFingerprint)) continue;
 
           final module = _inferModule(file.path);
-          final title = file.path.split('/').last;
-          final sessionId = _sessionIdForFile(file.path) ?? 'file_$hash';
+          final title = item.displayTitle;
+          final sessionId = item.stableSessionId;
 
           final payload = <String, dynamic>{
             'session_id': sessionId,
@@ -139,7 +148,7 @@ class FileSyncAgent {
             'file_size': bytes.length,
           };
           final didUpload = await UploadCache.runSingleFlight(
-            hash,
+            cacheFingerprint,
             userId: userId,
             sessionId: sessionId,
             operation: () async {
@@ -147,6 +156,7 @@ class FileSyncAgent {
               if (currentUserId != userId) {
                 throw StateError('Authentication identity changed during sync');
               }
+              if (deletions.blocksUpload(sessionId)) return false;
               if (_archiveUpload != null) {
                 final receipt = await _archiveUpload(payload);
                 _requireMatchingReceipt(receipt, payload);
@@ -169,7 +179,7 @@ class FileSyncAgent {
             },
           );
           if (didUpload) {
-            uploaded.add(hash);
+            uploaded.add(cacheFingerprint);
             unawaited(
               DiagnosticLogService.instance.record(
                 'cloud',
@@ -188,7 +198,7 @@ class FileSyncAgent {
             ),
           );
           debugPrint(
-            '[SyncAgent] Error syncing ${entity.path}: ${e.runtimeType}',
+            '[SyncAgent] Error syncing ${item.markdownFile.path}: ${e.runtimeType}',
           );
         }
       }
@@ -244,11 +254,6 @@ class FileSyncAgent {
   static String? sessionIdForFileName(String path) => _sessionIdForFile(path);
 
   static String? _sessionIdForFile(String path) {
-    final name = path.split('/').last;
-    final match = RegExp(
-      r'^Jeff_(?:Notes|Exam|FreeTalk|Discussion)_(\d{8}_\d{6}_\d+_\d+)\.md$',
-      caseSensitive: false,
-    ).firstMatch(name);
-    return match?.group(1);
+    return NoteLibraryService.sessionIdFromFileName(path);
   }
 }

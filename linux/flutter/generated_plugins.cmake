@@ -3,6 +3,7 @@
 #
 
 list(APPEND FLUTTER_PLUGIN_LIST
+  ffmpeg_kit_flutter_new_audio
   file_selector_linux
   flutter_secure_storage_linux
   gtk

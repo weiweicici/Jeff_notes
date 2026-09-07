@@ -5,6 +5,7 @@ import 'notes_screen.dart';
 import 'essay_config_screen.dart';
 import 'history_screen.dart';
 import 'smart_vocab_screen.dart';
+import '../nait_learning/screens/nait_home_screen.dart';
 
 class AcademicHubScreen extends StatelessWidget {
   const AcademicHubScreen({super.key});
@@ -182,6 +183,28 @@ class AcademicHubScreen extends StatelessWidget {
                           context,
                           MaterialPageRoute(
                             builder: (context) => const SmartVocabScreen(),
+                          ),
+                        );
+                      },
+                    ),
+                    const SizedBox(height: 16),
+
+                    // 4. NAIT Learning
+                    _buildHubCard(
+                      context: context,
+                      title: "🎓 NAIT Learning",
+                      subtitle: "课堂精听 × 实用英语 × Weekly Listening",
+                      icon: Icons.school_rounded,
+                      isActive: true,
+                      tagText: "专业",
+                      gradientColors: isDark
+                          ? [const Color(0xFF1B3B36), const Color(0xFF16A085)]
+                          : [const Color(0xFFE0F2F1), const Color(0xFFB2DFDB)],
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) => const NaitHomeScreen(),
                           ),
                         );
                       },

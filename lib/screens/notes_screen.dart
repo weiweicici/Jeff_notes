@@ -1145,6 +1145,10 @@ List<InsightNote> _visibleTranscripts(List<InsightNote> notes) {
   var hasVisiblePendingPlaceholder = false;
   for (final note in notes) {
     if (note.isSummary) continue;
+    // Silence markers remain in the session for audio/recovery bookkeeping,
+    // but are not user-visible transcript content. Keep bracketed spoken
+    // references such as [Figure 1] intact.
+    if (note.transcript.trim() == '[Silence]') continue;
     final isPendingPlaceholder =
         note.isProcessing && note.transcript.trim() == '...';
     if (isPendingPlaceholder) {
