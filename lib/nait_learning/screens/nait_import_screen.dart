@@ -60,7 +60,7 @@ class _NaitImportScreenState extends State<NaitImportScreen> {
     try {
       final result = await FilePicker.platform.pickFiles(
         type: FileType.custom,
-        allowedExtensions: ['txt', 'md'],
+        allowedExtensions: ['txt', 'md', 'json'],
       );
       if (result != null && result.files.single.path != null) {
         setState(() {
@@ -169,7 +169,7 @@ class _NaitImportScreenState extends State<NaitImportScreen> {
                   elevation: 0,
                   shape: RoundedRectangleBorder(
                     borderRadius: BorderRadius.circular(14),
-                    side: BorderSide(color: colorScheme.outlineVariant.withOpacity(0.4)),
+                    side: BorderSide(color: colorScheme.outlineVariant.withValues(alpha: 0.4)),
                   ),
                   child: ListTile(
                     leading: const Icon(Icons.calendar_today),
@@ -189,7 +189,7 @@ class _NaitImportScreenState extends State<NaitImportScreen> {
                     side: BorderSide(
                       color: _selectedAudioFile != null
                           ? colorScheme.primary
-                          : colorScheme.outlineVariant.withOpacity(0.4),
+                          : colorScheme.outlineVariant.withValues(alpha: 0.4),
                     ),
                   ),
                   child: Padding(
@@ -212,7 +212,7 @@ class _NaitImportScreenState extends State<NaitImportScreen> {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
-                                color: colorScheme.surfaceVariant,
+                                color: colorScheme.surfaceContainerHighest,
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
@@ -262,7 +262,7 @@ class _NaitImportScreenState extends State<NaitImportScreen> {
                     side: BorderSide(
                       color: _selectedTranscriptFile != null
                           ? colorScheme.primary
-                          : colorScheme.outlineVariant.withOpacity(0.4),
+                          : colorScheme.outlineVariant.withValues(alpha: 0.4),
                     ),
                   ),
                   child: Padding(
@@ -285,11 +285,11 @@ class _NaitImportScreenState extends State<NaitImportScreen> {
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                               decoration: BoxDecoration(
-                                color: colorScheme.surfaceVariant,
+                                color: colorScheme.surfaceContainerHighest,
                                 borderRadius: BorderRadius.circular(4),
                               ),
                               child: Text(
-                                'TXT · MD',
+                                'TXT · MD · JSON',
                                 style: theme.textTheme.labelSmall?.copyWith(fontSize: 10),
                               ),
                             ),
@@ -333,7 +333,7 @@ class _NaitImportScreenState extends State<NaitImportScreen> {
                   Container(
                     padding: const EdgeInsets.all(12),
                     decoration: BoxDecoration(
-                      color: colorScheme.errorContainer.withOpacity(0.5),
+                      color: colorScheme.errorContainer.withValues(alpha: 0.5),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: Text(

@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import '../models/nait_transcript_entry.dart';
 
 class NaitTranscriptParser {
@@ -83,7 +84,33 @@ class NaitTranscriptParser {
   static Future<List<NaitTranscriptEntry>> parseFile(File file) async {
     if (!await file.exists()) return [];
     final content = await file.readAsString();
+    if (file.path.toLowerCase().endsWith('.json')) {
+      return parseMeetilyJson(content);
+    }
     return parse(content);
+  }
+
+  /// Parses Meetily's timestamped export format.
+  static List<NaitTranscriptEntry> parseMeetilyJson(String content) {
+    final decoded = jsonDecode(content);
+    if (decoded is! Map || decoded['segments'] is! List) {
+      throw const FormatException('Unsupported Meetily transcript JSON');
+    }
+    return (decoded['segments'] as List).map((rawSegment) {
+      if (rawSegment is! Map) {
+        throw const FormatException('Invalid Meetily transcript segment');
+      }
+      final segment = rawSegment;
+      final start = segment['audio_start_time'];
+      final text = segment['text'];
+      if (start is! num || !start.isFinite || start < 0 || text is! String) {
+        throw const FormatException('Invalid Meetily transcript segment');
+      }
+      return NaitTranscriptEntry(
+        timestamp: Duration(milliseconds: (start * 1000).round()),
+        text: text.trim(),
+      );
+    }).where((entry) => entry.text.isNotEmpty).toList();
   }
 
   /// Rebuilds clean, formatted transcript text suitable for LLM input.

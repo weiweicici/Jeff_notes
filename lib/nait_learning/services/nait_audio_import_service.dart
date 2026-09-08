@@ -36,7 +36,7 @@ class NaitAudioImportService {
 
     // Strategy 1: Attempt native FFmpegKit plugin execution
     try {
-      final session = await FFmpegKit.executeAsync(cmd);
+      final session = await FFmpegKit.execute(cmd);
       final returnCode = await session.getReturnCode();
       if (ReturnCode.isSuccess(returnCode)) {
         if (await outputWavFile.exists() && await outputWavFile.length() > 44) {
@@ -65,11 +65,12 @@ class NaitAudioImportService {
         if (result.exitCode == 0 && await outputWavFile.exists() && await outputWavFile.length() > 44) {
           converted = true;
         } else {
-          errorDetail = (errorDetail != null ? '$errorDetail; ' : '') +
-              'System ffmpeg exited with ${result.exitCode}: ${result.stderr}';
+          final prefix = errorDetail != null ? '$errorDetail; ' : '';
+          errorDetail = '${prefix}System ffmpeg exited with ${result.exitCode}: ${result.stderr}';
         }
       } catch (e) {
-        errorDetail = (errorDetail != null ? '$errorDetail; ' : '') + 'System ffmpeg not found: $e';
+        final prefix = errorDetail != null ? '$errorDetail; ' : '';
+        errorDetail = '${prefix}System ffmpeg not found: $e';
       }
     }
 
@@ -108,7 +109,8 @@ class NaitAudioImportService {
     required File sourceTranscript,
     required Directory sessionDir,
   }) async {
-    final targetFile = File(p.join(sessionDir.path, 'transcript.txt'));
+    final targetFile = File(p.join(sessionDir.path,
+        'transcript${p.extension(sourceTranscript.path).toLowerCase() == '.json' ? '.json' : '.txt'}'));
     if (await targetFile.exists()) {
       await targetFile.delete();
     }
