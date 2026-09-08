@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import '../models/nait_transcript_entry.dart';
 
 class NaitAudioExtractService {
   static const int sampleRate = 16000;
@@ -7,6 +8,43 @@ class NaitAudioExtractService {
   static const int bitsPerSample = 16;
   static const int bytesPerSample = (bitsPerSample ~/ 8) * channels; // 2 bytes
   static const int bytesPerSecond = sampleRate * bytesPerSample;      // 32000 bytes/s
+  static const Duration clipPreRoll = Duration(milliseconds: 400);
+  static const Duration clipPostRoll = Duration(milliseconds: 1600);
+  static const Duration nextEntryGuard = Duration(milliseconds: 100);
+
+  /// Adds room around AI timestamps without cutting past a known Meetily
+  /// segment end or drifting into a following unrelated segment.
+  static ({Duration start, Duration end}) resolveConservativeClipBounds({
+    required Duration audioStart,
+    required Duration audioEnd,
+    required List<NaitTranscriptEntry> transcriptEntries,
+  }) {
+    if (audioEnd <= audioStart) {
+      throw ArgumentError('Audio end must be after audio start');
+    }
+    final sorted = List<NaitTranscriptEntry>.from(transcriptEntries)
+      ..sort((a, b) => a.timestamp.compareTo(b.timestamp));
+    final start = audioStart > clipPreRoll ? audioStart - clipPreRoll : Duration.zero;
+    var end = audioEnd + clipPostRoll;
+    var requiredEnd = audioEnd;
+
+    for (final entry in sorted) {
+      final entryEnd = entry.endTimestamp;
+      if (entryEnd != null && entry.timestamp <= audioEnd && entryEnd >= audioEnd) {
+        if (entryEnd > requiredEnd) requiredEnd = entryEnd;
+        if (entryEnd > end) end = entryEnd;
+      }
+    }
+    for (final entry in sorted) {
+      if (entry.timestamp <= requiredEnd) continue;
+      final cap = entry.timestamp > nextEntryGuard
+          ? entry.timestamp - nextEntryGuard
+          : entry.timestamp;
+      if (end > cap) end = cap >= requiredEnd ? cap : requiredEnd;
+      break;
+    }
+    return (start: start, end: end > start ? end : audioEnd);
+  }
 
   /// Builds a standard 44-byte WAV header for PCM 16kHz 16-bit mono audio.
   static Uint8List buildWavHeader(int dataLength) {
@@ -81,6 +119,7 @@ class NaitAudioExtractService {
 
     try {
       final dataOffset = await findDataChunkOffset(rafIn);
+      final sourceAudioBytes = await normalizedWavFile.length() - dataOffset;
 
       final startMs = start.inMilliseconds;
       final endMs = end.inMilliseconds;
@@ -91,6 +130,13 @@ class NaitAudioExtractService {
 
       int endByteOffset = (endMs * bytesPerSecond ~/ 1000);
       endByteOffset -= (endByteOffset % bytesPerSample);
+
+      if (startByteOffset >= sourceAudioBytes) {
+        throw ArgumentError('Clip start is beyond source WAV duration');
+      }
+      if (endByteOffset > sourceAudioBytes) {
+        endByteOffset = sourceAudioBytes - (sourceAudioBytes % bytesPerSample);
+      }
 
       final totalAudioBytes = endByteOffset - startByteOffset;
       if (totalAudioBytes <= 0) {

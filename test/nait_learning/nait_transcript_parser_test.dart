@@ -24,6 +24,7 @@ void main() {
       );
       expect(result.file.path, endsWith('transcript.json'));
       expect(result.entries.single.timestamp, const Duration(milliseconds: 1250));
+      expect(result.entries.single.endTimestamp, const Duration(milliseconds: 2500));
       expect(result.entries.single.text, 'Click Next.');
     });
     test('1. Parses MM:SS timestamp format [23:10]', () {

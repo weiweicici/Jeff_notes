@@ -635,12 +635,19 @@ class NaitProcessingService {
             final chunk = consolidatedAnalysis.classroomEnglish[i];
             if (chunk.audioStart != null && chunk.audioEnd != null) {
               try {
+                final bounds = NaitAudioExtractService.resolveConservativeClipBounds(
+                  audioStart: chunk.audioStart!,
+                  audioEnd: chunk.audioEnd!,
+                  transcriptEntries: entries,
+                );
+                chunk.audioStart = bounds.start;
+                chunk.audioEnd = bounds.end;
                 final clipId = 'clip_${(i + 1).toString().padLeft(3, '0')}';
                 final clipFile = File(p.join(clipsDir.path, '$clipId.wav'));
                 await NaitAudioExtractService.extractClip(
                   normalizedWavFile: normWav,
-                  start: chunk.audioStart!,
-                  end: chunk.audioEnd!,
+                  start: bounds.start,
+                  end: bounds.end,
                   outputClipFile: clipFile,
                 );
 
@@ -651,10 +658,10 @@ class NaitProcessingService {
                   weekNumber: session.weekNumber,
                   label: chunk.phrase,
                   phrase: chunk.phrase,
-                  start: chunk.audioStart!,
-                  end: chunk.audioEnd!,
+                  start: bounds.start,
+                  end: bounds.end,
                   filePath: clipFile.path,
-                  durationMs: (chunk.audioEnd! - chunk.audioStart!).inMilliseconds,
+                  durationMs: (bounds.end - bounds.start).inMilliseconds,
                 );
                 clips.add(clip);
                 chunk.audioClipId = clipId;

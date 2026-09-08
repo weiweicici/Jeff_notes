@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/nait_learning/services/nait_audio_extract_service.dart';
+import 'package:jeff_notes/nait_learning/models/nait_transcript_entry.dart';
 import 'package:jeff_notes/services/wav_stitch_service.dart';
 
 void main() {
@@ -128,5 +129,42 @@ void main() {
 
     // Total PCM duration: 2s (64000) + 0.8s (25600) + 3s (96000) = 185600 bytes + 44 = 185644
     expect(await packFile.length(), 185644);
+  });
+
+  test('5. Conservative bounds retain a phrase tail without entering next segment', () async {
+    const entries = [
+      NaitTranscriptEntry(
+        timestamp: Duration(seconds: 4),
+        endTimestamp: Duration(milliseconds: 6200),
+        text: 'Complete phrase including final teacher words.',
+      ),
+      NaitTranscriptEntry(
+        timestamp: Duration(milliseconds: 6300),
+        endTimestamp: Duration(seconds: 7),
+        text: 'Unrelated next utterance.',
+      ),
+    ];
+    final bounds = NaitAudioExtractService.resolveConservativeClipBounds(
+      audioStart: const Duration(seconds: 3),
+      audioEnd: const Duration(seconds: 5),
+      transcriptEntries: entries,
+    );
+    expect(bounds.start, const Duration(milliseconds: 2600));
+    expect(bounds.end, const Duration(milliseconds: 6200));
+
+    final source = await createTestPcmWav('tail_source.wav', const Duration(seconds: 10));
+    final clip = File('${tempDir.path}/tail_clip.wav');
+    await NaitAudioExtractService.extractClip(
+      normalizedWavFile: source,
+      start: bounds.start,
+      end: bounds.end,
+      outputClipFile: clip,
+    );
+    // 3.6 seconds at 32,000 bytes/s plus the 44-byte WAV header.
+    expect(await clip.length(), 115244);
+
+    final pack = File('${tempDir.path}/tail_pack.wav');
+    expect(await WavStitchService.stitch(inputPaths: [clip.path], outputPath: pack.path), isTrue);
+    expect(await pack.length(), await clip.length());
   });
 }

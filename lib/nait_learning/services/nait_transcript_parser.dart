@@ -102,12 +102,18 @@ class NaitTranscriptParser {
       }
       final segment = rawSegment;
       final start = segment['audio_start_time'];
+      final end = segment['audio_end_time'];
       final text = segment['text'];
-      if (start is! num || !start.isFinite || start < 0 || text is! String) {
+      if (start is! num || !start.isFinite || start < 0 ||
+          (end != null && (end is! num || !end.isFinite || end < start)) ||
+          text is! String) {
         throw const FormatException('Invalid Meetily transcript segment');
       }
       return NaitTranscriptEntry(
         timestamp: Duration(milliseconds: (start * 1000).round()),
+        endTimestamp: end is num
+            ? Duration(milliseconds: (end * 1000).round())
+            : null,
         text: text.trim(),
       );
     }).where((entry) => entry.text.isNotEmpty).toList();
