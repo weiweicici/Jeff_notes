@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/nait_learning/services/nait_audio_extract_service.dart';
+import 'package:jeff_notes/nait_learning/services/nait_audio_playback_service.dart';
 import 'package:jeff_notes/nait_learning/models/nait_transcript_entry.dart';
 import 'package:jeff_notes/services/wav_stitch_service.dart';
 
@@ -166,5 +167,21 @@ void main() {
     final pack = File('${tempDir.path}/tail_pack.wav');
     expect(await WavStitchService.stitch(inputPaths: [clip.path], outputPath: pack.path), isTrue);
     expect(await pack.length(), await clip.length());
+  });
+
+  test('6. Playback path rebases across an iOS Documents container change', () async {
+    final currentDocuments = Directory('${tempDir.path}/current/Documents')
+      ..createSync(recursive: true);
+    final clip = File('${currentDocuments.path}/nait/course/week_01/class_a/clips/clip_001.wav')
+      ..createSync(recursive: true)
+      ..writeAsBytesSync([1, 2, 3]);
+    const stalePath = '/var/mobile/Containers/Data/Application/OLD/Documents/'
+        'nait/course/week_01/class_a/clips/clip_001.wav';
+
+    final resolved = await NaitAudioPlaybackService.resolvePersistedWavPath(
+      stalePath,
+      currentDocuments,
+    );
+    expect(resolved, clip.path);
   });
 }

@@ -5,6 +5,7 @@ import 'package:jeff_notes/nait_learning/models/nait_week.dart';
 import 'package:jeff_notes/nait_learning/models/nait_class_session.dart';
 import 'package:jeff_notes/nait_learning/models/nait_class_analysis.dart';
 import 'package:jeff_notes/nait_learning/models/nait_english_chunk.dart';
+import 'package:jeff_notes/nait_learning/models/nait_audio_clip.dart';
 import 'package:jeff_notes/nait_learning/services/nait_storage_service.dart';
 
 void main() {
@@ -143,5 +144,74 @@ void main() {
         expect(e.path.endsWith('.md'), isFalse, reason: 'NAIT must never create top-level .md files');
       }
     }
+  });
+
+  test('7. Cleanup preserves study audio and rebases stale iOS paths', () async {
+    final session = NaitClassSession(
+      id: 'cleanup', courseId: 'SYSA1010', weekNumber: 1,
+      classDate: DateTime(2026, 9, 6), status: NaitSessionStatus.processed,
+      analysis: NaitClassAnalysis(mustDo: ['Keep this analysis']),
+      createdAt: DateTime.now(), updatedAt: DateTime.now(),
+    );
+    await storage.saveSession(session);
+    final dir = await storage.getSessionDir('SYSA1010', 1, 'cleanup');
+    final original = File('${dir.path}/original_audio.mp4')..writeAsBytesSync(List.filled(100, 1));
+    final normalized = File('${dir.path}/normalized.wav')..writeAsBytesSync(List.filled(200, 1));
+    final temporary = File('${dir.path}/processing.tmp')..writeAsBytesSync(List.filled(50, 1));
+    final transcript = File('${dir.path}/transcript.json')..writeAsStringSync('{}');
+    final chunks = Directory('${dir.path}/chunks')..createSync();
+    final manifest = File('${chunks.path}/chunk_manifest.json')..writeAsStringSync('{}');
+    final clipDir = Directory('${dir.path}/clips')..createSync();
+    final clip = File('${clipDir.path}/clip_001.wav')..writeAsBytesSync(List.filled(80, 1));
+    final weekDir = await storage.getWeekDir('SYSA1010', 1);
+    final weekPack = File('${weekDir.path}/listening_pack.wav')..writeAsBytesSync(List.filled(90, 1));
+    await storage.saveWeek(NaitWeek(
+      courseId: 'SYSA1010', weekNumber: 1,
+      packAudioPath: '/old/ios/container/Documents/nait/SYSA1010/week_01/listening_pack.wav',
+    ));
+    session.clips = [NaitAudioClip(
+      id: 'clip_001', classSessionId: session.id, courseId: session.courseId,
+      weekNumber: session.weekNumber, label: 'Keep clip', phrase: 'Keep clip',
+      start: Duration.zero, end: const Duration(seconds: 1),
+      filePath: '/old/ios/container/Documents/nait/SYSA1010/week_01/class_cleanup/clips/clip_001.wav',
+      durationMs: 1000,
+    )];
+    await storage.saveSession(session);
+
+    final listed = await storage.loadSessionsForWeek('SYSA1010', 1);
+    expect(listed.single.clips.single.filePath, clip.path);
+    final preview = await storage.previewProcessedClassCleanup(
+      courseId: 'SYSA1010', weekNumber: 1, sessionId: 'cleanup');
+    expect(preview.files, containsAll([original.path, normalized.path, temporary.path]));
+    expect(preview.bytes, 350);
+    final result = await storage.cleanupProcessedClass(
+      courseId: 'SYSA1010', weekNumber: 1, sessionId: 'cleanup');
+    expect(result.bytes, 350);
+    expect(await original.exists(), isFalse);
+    expect(await normalized.exists(), isFalse);
+    expect(await temporary.exists(), isFalse);
+    expect(await transcript.exists(), isTrue);
+    expect(await manifest.exists(), isTrue);
+    expect(await clip.exists(), isTrue);
+    expect(await weekPack.exists(), isTrue);
+    final loaded = await storage.loadSession('SYSA1010', 1, 'cleanup');
+    expect(loaded!.sourceAudioCleanedUp, isTrue);
+    expect(loaded.originalAudioPath, isNull);
+    expect(loaded.normalizedAudioPath, isNull);
+    expect(await File(loaded.clips.single.filePath).exists(), isTrue);
+    final loadedWeek = await storage.loadWeek('SYSA1010', 1);
+    expect(loadedWeek!.packAudioPath, weekPack.path);
+    expect(await File(loadedWeek.packAudioPath!).exists(), isTrue);
+  });
+
+  test('8. Cleanup refuses unprocessed classes', () async {
+    final session = NaitClassSession(
+      id: 'not_ready', courseId: 'SYSA1010', weekNumber: 1,
+      classDate: DateTime(2026, 9, 7), createdAt: DateTime.now(), updatedAt: DateTime.now());
+    await storage.saveSession(session);
+    expect(
+      () => storage.cleanupProcessedClass(courseId: 'SYSA1010', weekNumber: 1, sessionId: 'not_ready'),
+      throwsStateError,
+    );
   });
 }

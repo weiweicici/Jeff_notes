@@ -4,7 +4,6 @@ import 'package:uuid/uuid.dart';
 import 'models/nait_course.dart';
 import 'models/nait_week.dart';
 import 'models/nait_class_session.dart';
-import 'models/nait_english_chunk.dart';
 import 'models/nait_review_progress.dart';
 import 'services/nait_storage_service.dart';
 import 'services/nait_audio_import_service.dart';
@@ -307,6 +306,33 @@ class NaitLearningProvider extends ChangeNotifier {
       _selectedSession = null;
     }
     await loadSessionsForSelectedWeek();
+  }
+
+  Future<NaitClassStorageCleanup> previewClassStorageCleanup(String sessionId) async {
+    if (_selectedCourse == null || _selectedWeekNumber == null) {
+      throw StateError('No class is selected');
+    }
+    return _storageService.previewProcessedClassCleanup(
+      courseId: _selectedCourse!.id,
+      weekNumber: _selectedWeekNumber!,
+      sessionId: sessionId,
+    );
+  }
+
+  Future<NaitClassStorageCleanup> cleanupClassStorage(String sessionId) async {
+    if (_selectedCourse == null || _selectedWeekNumber == null) {
+      throw StateError('No class is selected');
+    }
+    final result = await _storageService.cleanupProcessedClass(
+      courseId: _selectedCourse!.id,
+      weekNumber: _selectedWeekNumber!,
+      sessionId: sessionId,
+    );
+    _selectedSession = await _storageService.loadSession(
+      _selectedCourse!.id, _selectedWeekNumber!, sessionId,
+    );
+    await loadSessionsForSelectedWeek();
+    return result;
   }
 
   // ---------------------------------------------------------------------------

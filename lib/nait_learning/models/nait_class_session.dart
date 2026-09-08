@@ -31,6 +31,8 @@ class NaitClassSession {
   List<NaitAudioClip> clips;
 
   NaitSessionStatus status;
+  /// True after the user explicitly removes source/intermediate audio.
+  bool sourceAudioCleanedUp;
   String? errorMessage;
 
   DateTime createdAt;
@@ -47,6 +49,7 @@ class NaitClassSession {
     this.analysis,
     List<NaitAudioClip>? clips,
     this.status = NaitSessionStatus.readyToProcess,
+    this.sourceAudioCleanedUp = false,
     this.errorMessage,
     required this.createdAt,
     required this.updatedAt,
@@ -76,6 +79,7 @@ class NaitClassSession {
     if (analysis != null) 'analysis': analysis!.toJson(),
     'clips': clips.map((c) => c.toJson()).toList(),
     'status': status.name,
+    if (sourceAudioCleanedUp) 'sourceAudioCleanedUp': true,
     if (errorMessage != null) 'errorMessage': errorMessage,
     'createdAt': createdAt.toIso8601String(),
     'updatedAt': updatedAt.toIso8601String(),
@@ -105,6 +109,7 @@ class NaitClassSession {
           .map((c) => NaitAudioClip.fromJson(Map<String, dynamic>.from(c as Map)))
           .toList(),
       status: parseStatus(json['status'] as String?),
+      sourceAudioCleanedUp: json['sourceAudioCleanedUp'] as bool? ?? false,
       errorMessage: json['errorMessage'] as String?,
       createdAt: DateTime.parse(json['createdAt'] as String),
       updatedAt: DateTime.parse(json['updatedAt'] as String),

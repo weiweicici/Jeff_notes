@@ -1,4 +1,3 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../models/nait_course.dart';
@@ -24,6 +23,53 @@ class NaitClassScreen extends StatefulWidget {
 }
 
 class _NaitClassScreenState extends State<NaitClassScreen> {
+  String _formatBytes(int bytes) {
+    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
+    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  }
+
+  Future<void> _confirmCleanup(NaitClassSession session) async {
+    final provider = context.read<NaitLearningProvider>();
+    try {
+      final preview = await provider.previewClassStorageCleanup(session.id);
+      if (!mounted) return;
+      if (!preview.hasFiles) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No removable source or temporary files found.')),
+        );
+        return;
+      }
+      final confirmed = await showDialog<bool>(
+        context: context,
+        builder: (context) => AlertDialog(
+          title: const Text('Clean Up Class Storage'),
+          content: Text(
+            'Delete original_audio.*, normalized.wav, and leftover temporary files?\n\n'
+            'Approximate space freed: ${_formatBytes(preview.bytes)}\n\n'
+            'Transcript, analysis, chunks, teacher clips, and listening pack will remain. '
+            'Audio clip regeneration will require re-importing the original recording.',
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
+            FilledButton(
+              onPressed: () => Navigator.pop(context, true),
+              child: const Text('Delete Source Files'),
+            ),
+          ],
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+      final result = await provider.cleanupClassStorage(session.id);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Removed ${result.files.length} source file(s), freed ${_formatBytes(result.bytes)}.')),
+      );
+      setState(() {});
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Cleanup failed: $e')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -48,6 +94,12 @@ class _NaitClassScreenState extends State<NaitClassScreen> {
       appBar: AppBar(
         title: Text('${widget.course.courseCode} · ${session.displayDate}'),
         actions: [
+          if (session.isProcessed && !session.sourceAudioCleanedUp)
+            IconButton(
+              icon: const Icon(Icons.cleaning_services_outlined),
+              tooltip: 'Clean Up Class Storage',
+              onPressed: () => _confirmCleanup(session),
+            ),
           if (session.status == NaitSessionStatus.failed)
             IconButton(
               icon: const Icon(Icons.refresh),
@@ -71,6 +123,16 @@ class _NaitClassScreenState extends State<NaitClassScreen> {
             ),
 
           if (analysis != null) ...[
+            if (session.sourceAudioCleanedUp)
+              Container(
+                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                padding: const EdgeInsets.all(12),
+                color: colorScheme.secondaryContainer,
+                child: const Text(
+                  'Source audio cleaned up. Saved clips and listening pack remain available; '
+                  're-import the original recording to regenerate them.',
+                ),
+              ),
             // 1. MUST DO (Highest Priority)
             if (analysis.mustDo.isNotEmpty)
               NaitSectionCard(

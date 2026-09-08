@@ -2145,8 +2145,6 @@ class TtsService extends ChangeNotifier {
     _ensurePlaybackAllowed();
     await ensurePlaybackSession();
     await Future.delayed(const Duration(milliseconds: 300));
-    if (!(await isHeadphonesConnected()))
-      throw Exception("NoHeadphones | ${lastRouteDebug}");
 
     WakelockService.enable();
 

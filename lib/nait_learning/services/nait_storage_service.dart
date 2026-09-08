@@ -5,7 +5,17 @@ import 'package:path_provider/path_provider.dart';
 import '../models/nait_course.dart';
 import '../models/nait_week.dart';
 import '../models/nait_class_session.dart';
+import '../models/nait_audio_clip.dart';
 import '../models/nait_review_progress.dart';
+
+class NaitClassStorageCleanup {
+  final List<String> files;
+  final int bytes;
+
+  const NaitClassStorageCleanup({required this.files, required this.bytes});
+
+  bool get hasFiles => files.isNotEmpty;
+}
 
 class NaitStorageService {
   Directory? _baseDir;
@@ -150,7 +160,9 @@ class NaitStorageService {
     }
     try {
       final str = await file.readAsString();
-      return NaitWeek.fromJson(jsonDecode(str) as Map<String, dynamic>);
+      final week = NaitWeek.fromJson(jsonDecode(str) as Map<String, dynamic>);
+      await _rebaseWeekAudioPath(week, dir);
+      return week;
     } catch (_) {
       return NaitWeek(courseId: courseId, weekNumber: weekNumber);
     }
@@ -167,7 +179,9 @@ class NaitStorageService {
         if (await wFile.exists()) {
           try {
             final str = await wFile.readAsString();
-            weeks.add(NaitWeek.fromJson(jsonDecode(str) as Map<String, dynamic>));
+            final week = NaitWeek.fromJson(jsonDecode(str) as Map<String, dynamic>);
+            await _rebaseWeekAudioPath(week, e);
+            weeks.add(week);
           } catch (_) {}
         } else {
           final parts = p.basename(e.path).split('_');
@@ -213,7 +227,9 @@ class NaitStorageService {
     if (!await file.exists()) return null;
     try {
       final str = await file.readAsString();
-      return NaitClassSession.fromJson(jsonDecode(str) as Map<String, dynamic>);
+      final session = NaitClassSession.fromJson(jsonDecode(str) as Map<String, dynamic>);
+      await _rebaseSessionPaths(session, dir);
+      return session;
     } catch (_) {
       return null;
     }
@@ -230,7 +246,9 @@ class NaitStorageService {
         if (await sFile.exists()) {
           try {
             final str = await sFile.readAsString();
-            sessions.add(NaitClassSession.fromJson(jsonDecode(str) as Map<String, dynamic>));
+            final session = NaitClassSession.fromJson(jsonDecode(str) as Map<String, dynamic>);
+            await _rebaseSessionPaths(session, e);
+            sessions.add(session);
           } catch (_) {}
         }
       }
@@ -239,11 +257,110 @@ class NaitStorageService {
     return sessions;
   }
 
+  Future<String?> _rebaseExistingFile(
+    String? storedPath,
+    Directory parent, {
+    String? subdirectory,
+  }) async {
+    if (storedPath == null || storedPath.isEmpty) return storedPath;
+    if (await File(storedPath).exists()) return storedPath;
+    final pathParts = <String>[parent.path];
+    if (subdirectory != null) pathParts.add(subdirectory);
+    pathParts.add(p.basename(storedPath));
+    final candidate = File(p.joinAll(pathParts));
+    return await candidate.exists() ? candidate.path : storedPath;
+  }
+
+  Future<void> _rebaseWeekAudioPath(NaitWeek week, Directory weekDir) async {
+    week.packAudioPath = await _rebaseExistingFile(week.packAudioPath, weekDir);
+  }
+
+  /// Sideloaded iOS updates can preserve Documents while assigning the app a
+  /// new data-container UUID. Rebase stale absolute paths to canonical local
+  /// files without changing the stored study data.
+  Future<void> _rebaseSessionPaths(
+    NaitClassSession session,
+    Directory sessionDir,
+  ) async {
+    session.originalAudioPath = await _rebaseExistingFile(session.originalAudioPath, sessionDir);
+    session.normalizedAudioPath = await _rebaseExistingFile(session.normalizedAudioPath, sessionDir);
+    session.transcriptPath = await _rebaseExistingFile(session.transcriptPath, sessionDir);
+    session.clips = [
+      for (final clip in session.clips)
+        NaitAudioClip.fromJson({
+          ...clip.toJson(),
+          'filePath': await _rebaseExistingFile(
+            clip.filePath,
+            sessionDir,
+            subdirectory: 'clips',
+          ),
+        }),
+    ];
+  }
+
   Future<void> deleteSession(String courseId, int weekNumber, String sessionId) async {
     final dir = await getSessionDir(courseId, weekNumber, sessionId);
     if (await dir.exists()) {
       await dir.delete(recursive: true);
     }
+  }
+
+  /// Returns only source/intermediate files eligible for explicit cleanup.
+  /// Study outputs (chunks, clips, transcripts, analysis, and the week-level
+  /// listening pack) are never candidates.
+  Future<NaitClassStorageCleanup> previewProcessedClassCleanup({
+    required String courseId,
+    required int weekNumber,
+    required String sessionId,
+  }) async {
+    final session = await loadSession(courseId, weekNumber, sessionId);
+    if (session == null || !session.isProcessed) {
+      throw StateError('Only successfully processed classes can be cleaned up');
+    }
+    final dir = await getSessionDir(courseId, weekNumber, sessionId);
+    final files = <String>[];
+    var bytes = 0;
+    await for (final entity in dir.list(recursive: true, followLinks: false)) {
+      if (entity is! File) continue;
+      final name = p.basename(entity.path);
+      // Never treat permanent study-audio locations as cleanup targets,
+      // even if a future writer happens to use a temporary-looking name.
+      final relative = p.relative(entity.path, from: dir.path);
+      final firstComponent = relative.split(p.separator).first;
+      if (firstComponent == 'clips' || name == 'listening_pack.wav') continue;
+      final isSource = name == 'normalized.wav' || name.startsWith('original_audio.');
+      final isTemp = name.endsWith('.tmp') || name.contains('.tmp_');
+      if (!isSource && !isTemp) continue;
+      files.add(entity.path);
+      bytes += await entity.length();
+    }
+    files.sort();
+    return NaitClassStorageCleanup(files: files, bytes: bytes);
+  }
+
+  /// Deletes source/intermediate files and records that source audio is gone.
+  Future<NaitClassStorageCleanup> cleanupProcessedClass({
+    required String courseId,
+    required int weekNumber,
+    required String sessionId,
+  }) async {
+    final session = await loadSession(courseId, weekNumber, sessionId);
+    if (session == null || !session.isProcessed) {
+      throw StateError('Only successfully processed classes can be cleaned up');
+    }
+    final cleanup = await previewProcessedClassCleanup(
+      courseId: courseId, weekNumber: weekNumber, sessionId: sessionId,
+    );
+    for (final path in cleanup.files) {
+      final file = File(path);
+      if (await file.exists()) await file.delete();
+    }
+    session.originalAudioPath = null;
+    session.normalizedAudioPath = null;
+    session.sourceAudioCleanedUp = true;
+    session.updatedAt = DateTime.now();
+    await saveSession(session);
+    return cleanup;
   }
 
   // ---------------------------------------------------------------------------
