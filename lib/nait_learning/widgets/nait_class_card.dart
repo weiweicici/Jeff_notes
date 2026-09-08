@@ -36,6 +36,11 @@ class NaitClassCard extends StatelessWidget {
         statusLabel = 'Processing...';
         statusIcon = Icons.hourglass_top;
         break;
+      case NaitSessionStatus.partial:
+        statusColor = Colors.amber.shade700;
+        statusLabel = 'Partial';
+        statusIcon = Icons.warning_amber_rounded;
+        break;
       case NaitSessionStatus.failed:
         statusColor = Colors.red;
         statusLabel = 'Failed';
@@ -58,7 +63,7 @@ class NaitClassCard extends StatelessWidget {
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(14),
         side: BorderSide(
-          color: colorScheme.outlineVariant.withOpacity(0.4),
+          color: colorScheme.outlineVariant.withValues(alpha: 0.4),
         ),
       ),
       child: InkWell(
@@ -74,7 +79,7 @@ class NaitClassCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer.withOpacity(0.7),
+                      color: colorScheme.primaryContainer.withValues(alpha: 0.7),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
@@ -89,7 +94,7 @@ class NaitClassCard extends StatelessWidget {
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                     decoration: BoxDecoration(
-                      color: statusColor.withOpacity(0.12),
+                      color: statusColor.withValues(alpha: 0.12),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Row(
@@ -178,7 +183,7 @@ class NaitClassCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-        color: color.withOpacity(0.08),
+        color: color.withValues(alpha: 0.08),
         borderRadius: BorderRadius.circular(6),
       ),
       child: Row(

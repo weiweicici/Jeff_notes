@@ -1063,4 +1063,76 @@ Expected JSON structure:
   }
 }''';
   }
+
+  static String getNaitChunkAnalysisPrompt() {
+    return '''You are analyzing a ~15–20 minute segment of a real NAIT (Northern Alberta Institute of Technology) technical classroom transcript for an adult IT student with strong prior technical/networking background.
+The student's main challenge is authentic North-American spoken classroom English, fast instructor phrasing, and operational instructions—NOT basic IT concepts.
+
+### CORE OBJECTIVES:
+1. OPERATIONAL RETENTION (Highest Priority):
+   Extract all practical requirements from this segment: assignments, labs, exercises, downloads, installs, configurations, restarts, renames, deadlines, submissions, screenshots, network setting changes (e.g. VMNet4 -> NAT), backups.
+   Bias toward retention: keep actionable instructions rather than missing a deadline or step. If none occur in this segment, leave array empty [].
+
+2. TECHNICAL LAB PROCEDURES:
+   Preserve concrete operational sequences step by step. Do not collapse multi-step commands into vague high-level prose.
+
+3. CONCISE TECHNICAL NOTES:
+   Keep conceptual notes brief. Do not explain beginner IT concepts (e.g. what an IP address or DNS is).
+
+4. AUTHENTIC NORTH-AMERICAN CLASSROOM ENGLISH:
+   Extract real transferable classroom English used by the instructor in this segment: phrasal verbs, idioms, spoken chunks, informal technical transitions, natural colloquial instructor speech (e.g. "leave it at the default", "your mileage may vary", "play with it", "up and running", "roll back", "good to go").
+   Provide an authentic audio timestamp range for each chunk with approximately 5–25 seconds of surrounding instructor speech context for listening practice.
+   CRITICAL: All timestamps ('sourceTimestamp', 'audioStart', 'audioEnd') MUST use the absolute transcript timestamps shown in the input (e.g. [00:18:25] -> "00:18:25"), NEVER relative offsets from chunk start.
+
+5. PRACTICE SENTENCES:
+   - "askTeacher": 1-2 realistic questions the student could ask the instructor regarding this segment's topic.
+   - "classmateEnglish": 1-2 natural spoken lines to interact with lab peers.
+   - All questions/dialogue MUST be marked with sourceType: "practice_sentence".
+   - Never present generated practice sentences as teacher originals.
+
+### OUTPUT FORMAT:
+Output MUST be valid, parseable JSON ONLY with NO markdown formatting, NO markdown code fences (do not wrap in ```json), and NO extra conversational text.
+
+Expected JSON structure:
+{
+  "mustDo": [
+    "Assignment 1 due Friday 11:59 PM via Moodle"
+  ],
+  "lab": [
+    "Step 1: Set VM network adapter to NAT",
+    "Step 2: Run Windows Update until fully patched"
+  ],
+  "important": [
+    "Always take a snapshot before promoting to DC"
+  ],
+  "nextClass": [],
+  "technicalPoints": [
+    "DNS reverse lookup zone requirement for Kerberos ticket resolution"
+  ],
+  "classroomEnglish": [
+    {
+      "phrase": "leave it at the default",
+      "chineseMeaning": "保持默认设置，不要改动",
+      "context": "When installing IIS, you can just leave it at the default.",
+      "priority": 5,
+      "sourceType": "teacher_original",
+      "sourceTimestamp": "00:23:10",
+      "audioStart": "00:23:04",
+      "audioEnd": "00:23:22"
+    }
+  ],
+  "askTeacher": [
+    {
+      "text": "Just to make sure, are we supposed to keep the default subnet mask for this lab?",
+      "sourceType": "practice_sentence"
+    }
+  ],
+  "classmateEnglish": [
+    {
+      "text": "Did you get the second network adapter showing up in your VM?",
+      "sourceType": "practice_sentence"
+    }
+  ]
+}''';
+  }
 }

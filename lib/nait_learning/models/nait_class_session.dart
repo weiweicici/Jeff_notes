@@ -6,6 +6,7 @@ enum NaitSessionStatus {
   importing,
   readyToProcess,
   processing,
+  partial,
   processed,
   failed,
 }
@@ -53,6 +54,7 @@ class NaitClassSession {
 
   bool get isProcessed => status == NaitSessionStatus.processed;
   bool get isProcessing => status == NaitSessionStatus.processing;
+  bool get isPartial => status == NaitSessionStatus.partial;
   bool get hasFailed => status == NaitSessionStatus.failed;
 
   String get displayDate {
