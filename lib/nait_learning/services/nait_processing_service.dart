@@ -10,17 +10,21 @@ import '../models/nait_class_analysis.dart';
 import '../models/nait_class_session.dart';
 import '../models/nait_english_chunk.dart';
 import '../models/nait_teacher_mode_task.dart';
-import '../models/nait_audio_clip.dart';
 import 'nait_audio_extract_service.dart';
 import 'nait_chunking_service.dart';
 import 'nait_consolidation_service.dart';
 import 'nait_storage_service.dart';
 import 'nait_transcript_parser.dart';
+import 'nait_summary_formatter.dart';
+import 'nait_shadowing_selection_service.dart';
+import 'nait_shadowing_export_service.dart';
 
 class NaitProcessingService {
   final NaitStorageService _storageService;
   final NaitChunkingService _chunkingService;
   final NaitConsolidationService _consolidationService;
+  final NaitShadowingSelectionService _shadowingSelectionService;
+  final NaitShadowingExportService _shadowingExportService;
   final http.Client? _httpClient;
 
   static const String _geminiModel = 'gemini-2.5-flash';
@@ -30,10 +34,14 @@ class NaitProcessingService {
     NaitStorageService? storageService,
     NaitChunkingService? chunkingService,
     NaitConsolidationService? consolidationService,
+    NaitShadowingSelectionService? shadowingSelectionService,
+    NaitShadowingExportService? shadowingExportService,
     http.Client? httpClient,
   })  : _storageService = storageService ?? NaitStorageService(),
         _chunkingService = chunkingService ?? const NaitChunkingService(),
         _consolidationService = consolidationService ?? const NaitConsolidationService(),
+        _shadowingSelectionService = shadowingSelectionService ?? const NaitShadowingSelectionService(),
+        _shadowingExportService = shadowingExportService ?? const NaitShadowingExportService(),
         _httpClient = httpClient;
 
   /// Robust JSON cleanup: strips markdown ```json ... ``` codeblocks, handles leading/trailing whitespace.
@@ -449,6 +457,7 @@ class NaitProcessingService {
     void Function(String statusMessage)? onProgress,
     int? maxGeminiRetries,
     Duration? initialBackoff,
+    bool cleanIntermediate = true,
   }) async {
     session.status = NaitSessionStatus.processing;
     session.errorMessage = null;
@@ -620,61 +629,56 @@ class NaitProcessingService {
         weekNumber: session.weekNumber,
       );
 
-      // 5. Extract clips from full normalized WAV only if normalized audio exists
-      final List<NaitAudioClip> clips = [];
+      session.analysis = consolidatedAnalysis;
+
+      // 5. Final Deliverable #1: Generate summary.md
+      onProgress?.call('Generating summary.md...');
+      final summaryFile = File(p.join(sessionDir.path, 'summary.md'));
+      await NaitSummaryFormatter.writeSummaryFile(
+        analysis: consolidatedAnalysis,
+        courseCode: session.courseId,
+        weekNumber: session.weekNumber,
+        classDate: session.classDate,
+        outputFile: summaryFile,
+      );
+      session.summaryPath = summaryFile.path;
+
+      // 6. Final Deliverable #2: Generate Balanced 8–10 minute Shadowing MP3
       if (session.normalizedAudioPath != null) {
         final normWav = File(session.normalizedAudioPath!);
         if (await normWav.exists()) {
-          onProgress?.call('Creating listening clips...');
-          final clipsDir = Directory(p.join(sessionDir.path, 'clips'));
-          if (!await clipsDir.exists()) {
-            await clipsDir.create(recursive: true);
-          }
+          onProgress?.call('Selecting balanced classroom expressions...');
+          final selectedChunks = _shadowingSelectionService.selectBalancedChunks(
+            consolidatedAnalysis.classroomEnglish,
+          );
 
-          for (int i = 0; i < consolidatedAnalysis.classroomEnglish.length; i++) {
-            final chunk = consolidatedAnalysis.classroomEnglish[i];
-            if (chunk.audioStart != null && chunk.audioEnd != null) {
-              try {
-                final bounds = NaitAudioExtractService.resolveConservativeClipBounds(
-                  audioStart: chunk.audioStart!,
-                  audioEnd: chunk.audioEnd!,
-                  transcriptEntries: entries,
-                );
-                chunk.audioStart = bounds.start;
-                chunk.audioEnd = bounds.end;
-                final clipId = 'clip_${(i + 1).toString().padLeft(3, '0')}';
-                final clipFile = File(p.join(clipsDir.path, '$clipId.wav'));
-                await NaitAudioExtractService.extractClip(
-                  normalizedWavFile: normWav,
-                  start: bounds.start,
-                  end: bounds.end,
-                  outputClipFile: clipFile,
-                );
-
-                final clip = NaitAudioClip(
-                  id: clipId,
-                  classSessionId: session.id,
-                  courseId: session.courseId,
-                  weekNumber: session.weekNumber,
-                  label: chunk.phrase,
-                  phrase: chunk.phrase,
-                  start: bounds.start,
-                  end: bounds.end,
-                  filePath: clipFile.path,
-                  durationMs: (bounds.end - bounds.start).inMilliseconds,
-                );
-                clips.add(clip);
-                chunk.audioClipId = clipId;
-              } catch (clipErr) {
-                debugPrint('[NaitProcessing] Error extracting clip for "${chunk.phrase}": $clipErr');
-              }
-            }
+          if (selectedChunks.isNotEmpty) {
+            onProgress?.call('Stitching and encoding Shadowing MP3 (teacher authentic voice)...');
+            final exportResult = await _shadowingExportService.exportShadowingMp3(
+              selectedChunks: selectedChunks,
+              normalizedWavFile: normWav,
+              sessionDir: sessionDir,
+            );
+            session.shadowingAudioPath = exportResult.mp3File.path;
+            session.shadowingDurationMs = exportResult.totalDurationMs;
+            session.shadowingSegments = exportResult.segments;
           }
         }
       }
 
-      session.analysis = consolidatedAnalysis;
-      session.clips = clips;
+      // 7. Output Validation Gate
+      final bool isSummaryValid = await summaryFile.exists() && (await summaryFile.length()) > 50;
+      final bool isShadowingValid = session.shadowingAudioPath == null ||
+          (await File(session.shadowingAudioPath!).exists() && (await File(session.shadowingAudioPath!).length()) > 1000);
+
+      if (!isSummaryValid) {
+        throw StateError('Output validation failed: summary.md is missing or empty');
+      }
+      if (!isShadowingValid) {
+        throw StateError('Output validation failed: shadowing.mp3 is missing or corrupt');
+      }
+
+      session.clips = [];
       session.updatedAt = DateTime.now();
 
       if (isFullyCompleted) {
@@ -688,7 +692,53 @@ class NaitProcessingService {
         onProgress?.call('Completed with partial analysis (${completedAnalyses.length}/${chunks.length} chunks)');
       }
 
+      // Persist session before cleanup
       await _storageService.saveSession(session);
+
+      // 8. Safe Transaction Cleanup (ONLY executed when validation passes and fully/partially processed)
+      if (cleanIntermediate) {
+        try {
+          final tempClipsDir = Directory(p.join(sessionDir.path, 'temp_clips'));
+          if (await tempClipsDir.exists()) await tempClipsDir.delete(recursive: true);
+
+          final oldClipsDir = Directory(p.join(sessionDir.path, 'clips'));
+          if (await oldClipsDir.exists()) await oldClipsDir.delete(recursive: true);
+
+          final tempStitchedWav = File(p.join(sessionDir.path, 'temp_stitched.wav'));
+          if (await tempStitchedWav.exists()) await tempStitchedWav.delete();
+
+          final silenceFile = File(p.join(sessionDir.path, 'silence_gap.wav'));
+          if (await silenceFile.exists()) await silenceFile.delete();
+
+          if (session.normalizedAudioPath != null) {
+            final normWav = File(session.normalizedAudioPath!);
+            if (await normWav.exists()) await normWav.delete();
+            session.normalizedAudioPath = null;
+          }
+
+          // Delete internal copies of raw recording & transcript if contained in sessionDir
+          if (session.originalAudioPath != null && session.originalAudioPath!.startsWith(sessionDir.path)) {
+            final origAudio = File(session.originalAudioPath!);
+            if (await origAudio.exists()) await origAudio.delete();
+            session.originalAudioPath = null;
+          }
+          if (session.transcriptPath != null && session.transcriptPath!.startsWith(sessionDir.path)) {
+            final transFile = File(session.transcriptPath!);
+            if (await transFile.exists()) await transFile.delete();
+            session.transcriptPath = null;
+          }
+
+          if (isFullyCompleted && await chunksDir.exists()) {
+            await chunksDir.delete(recursive: true);
+          }
+
+          // Re-save session with cleaned internal path references
+          await _storageService.saveSession(session);
+        } catch (cleanupErr) {
+          debugPrint('[NaitProcessing] Non-fatal cleanup warning: $cleanupErr');
+        }
+      }
+
       return session;
     } catch (e, stack) {
       debugPrint('[NaitProcessing] Processing error: $e\n$stack');

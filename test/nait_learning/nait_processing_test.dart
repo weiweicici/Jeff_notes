@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:jeff_notes/nait_learning/models/nait_class_session.dart';
 import 'package:jeff_notes/nait_learning/services/nait_processing_service.dart';
 
 void main() {

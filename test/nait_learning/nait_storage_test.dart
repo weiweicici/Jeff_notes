@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'package:path/path.dart' as p;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/nait_learning/models/nait_course.dart';
 import 'package:jeff_notes/nait_learning/models/nait_week.dart';
@@ -179,10 +180,10 @@ void main() {
     await storage.saveSession(session);
 
     final listed = await storage.loadSessionsForWeek('SYSA1010', 1);
-    expect(listed.single.clips.single.filePath, clip.path);
+    expect(p.normalize(listed.single.clips.single.filePath), p.normalize(clip.path));
     final preview = await storage.previewProcessedClassCleanup(
       courseId: 'SYSA1010', weekNumber: 1, sessionId: 'cleanup');
-    expect(preview.files, containsAll([original.path, normalized.path, temporary.path]));
+    expect(preview.files.map(p.normalize), containsAll([p.normalize(original.path), p.normalize(normalized.path), p.normalize(temporary.path)]));
     expect(preview.bytes, 350);
     final result = await storage.cleanupProcessedClass(
       courseId: 'SYSA1010', weekNumber: 1, sessionId: 'cleanup');
@@ -200,7 +201,7 @@ void main() {
     expect(loaded.normalizedAudioPath, isNull);
     expect(await File(loaded.clips.single.filePath).exists(), isTrue);
     final loadedWeek = await storage.loadWeek('SYSA1010', 1);
-    expect(loadedWeek!.packAudioPath, weekPack.path);
+    expect(p.normalize(loadedWeek!.packAudioPath!), p.normalize(weekPack.path));
     expect(await File(loadedWeek.packAudioPath!).exists(), isTrue);
   });
 

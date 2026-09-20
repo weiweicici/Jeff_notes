@@ -1,11 +1,13 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_markdown/flutter_markdown.dart';
 import 'package:provider/provider.dart';
 import '../models/nait_course.dart';
 import '../models/nait_class_session.dart';
 import '../nait_learning_provider.dart';
 import '../widgets/nait_section_card.dart';
 import '../widgets/nait_english_chunk_card.dart';
-import '../widgets/nait_clip_player.dart';
 import '../widgets/nait_processing_status.dart';
 
 class NaitClassScreen extends StatefulWidget {
@@ -23,51 +25,81 @@ class NaitClassScreen extends StatefulWidget {
 }
 
 class _NaitClassScreenState extends State<NaitClassScreen> {
-  String _formatBytes(int bytes) {
-    if (bytes < 1024 * 1024) return '${(bytes / 1024).toStringAsFixed(1)} KB';
-    return '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
+  String _formatDuration(int? ms) {
+    if (ms == null || ms <= 0) return '8–10 min';
+    final totalSec = (ms / 1000).round();
+    final m = (totalSec ~/ 60).toString().padLeft(2, '0');
+    final s = (totalSec % 60).toString().padLeft(2, '0');
+    return '$m:$s';
   }
 
-  Future<void> _confirmCleanup(NaitClassSession session) async {
-    final provider = context.read<NaitLearningProvider>();
-    try {
-      final preview = await provider.previewClassStorageCleanup(session.id);
+  void _showSummaryModal(BuildContext context, String summaryPath) async {
+    final file = File(summaryPath);
+    if (!await file.exists()) {
       if (!mounted) return;
-      if (!preview.hasFiles) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('No removable source or temporary files found.')),
-        );
-        return;
-      }
-      final confirmed = await showDialog<bool>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('Clean Up Class Storage'),
-          content: Text(
-            'Delete original_audio.*, normalized.wav, and leftover temporary files?\n\n'
-            'Approximate space freed: ${_formatBytes(preview.bytes)}\n\n'
-            'Transcript, analysis, chunks, teacher clips, and listening pack will remain. '
-            'Audio clip regeneration will require re-importing the original recording.',
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-            FilledButton(
-              onPressed: () => Navigator.pop(context, true),
-              child: const Text('Delete Source Files'),
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('summary.md not found on disk')),
+      );
+      return;
+    }
+    final content = await file.readAsString();
+    if (!mounted) return;
+
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => DraggableScrollableSheet(
+        initialChildSize: 0.85,
+        minChildSize: 0.5,
+        maxChildSize: 0.95,
+        expand: false,
+        builder: (ctx, scrollController) => Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+              child: Row(
+                children: [
+                  const Icon(Icons.description, color: Colors.blue),
+                  const SizedBox(width: 8),
+                  Text(
+                    'Classroom Summary',
+                    style: Theme.of(ctx).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold),
+                  ),
+                  const Spacer(),
+                  IconButton(
+                    icon: const Icon(Icons.copy),
+                    tooltip: 'Copy Summary',
+                    onPressed: () {
+                      Clipboard.setData(ClipboardData(text: content));
+                      ScaffoldMessenger.of(ctx).showSnackBar(
+                        const SnackBar(content: Text('Summary copied to clipboard')),
+                      );
+                    },
+                  ),
+                  IconButton(
+                    icon: const Icon(Icons.close),
+                    onPressed: () => Navigator.pop(ctx),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: Markdown(
+                controller: scrollController,
+                data: content,
+                selectable: true,
+                padding: const EdgeInsets.all(20),
+              ),
             ),
           ],
         ),
-      );
-      if (confirmed != true || !mounted) return;
-      final result = await provider.cleanupClassStorage(session.id);
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Removed ${result.files.length} source file(s), freed ${_formatBytes(result.bytes)}.')),
-      );
-      setState(() {});
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Cleanup failed: $e')));
-    }
+      ),
+    );
   }
 
   @override
@@ -82,23 +114,18 @@ class _NaitClassScreenState extends State<NaitClassScreen> {
     );
 
     final analysis = session.analysis;
-    final clips = session.clips;
-
-    // Build clip path map for quick chunk playback lookup
-    final Map<String, String> clipPathMap = {};
-    for (final clip in clips) {
-      clipPathMap[clip.id] = clip.filePath;
-    }
+    final isShadowingPlaying = session.shadowingAudioPath != null &&
+        provider.currentlyPlayingPath == session.shadowingAudioPath;
 
     return Scaffold(
       appBar: AppBar(
         title: Text('${widget.course.courseCode} · ${session.displayDate}'),
         actions: [
-          if (session.isProcessed && !session.sourceAudioCleanedUp)
+          if (session.summaryPath != null)
             IconButton(
-              icon: const Icon(Icons.cleaning_services_outlined),
-              tooltip: 'Clean Up Class Storage',
-              onPressed: () => _confirmCleanup(session),
+              icon: const Icon(Icons.article_outlined),
+              tooltip: 'View summary.md',
+              onPressed: () => _showSummaryModal(context, session.summaryPath!),
             ),
           if (session.status == NaitSessionStatus.failed)
             IconButton(
@@ -123,16 +150,114 @@ class _NaitClassScreenState extends State<NaitClassScreen> {
             ),
 
           if (analysis != null) ...[
-            if (session.sourceAudioCleanedUp)
-              Container(
-                margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                padding: const EdgeInsets.all(12),
-                color: colorScheme.secondaryContainer,
-                child: const Text(
-                  'Source audio cleaned up. Saved clips and listening pack remain available; '
-                  're-import the original recording to regenerate them.',
+            // =================================================================
+            // HERO SECTION: THE TWO FINAL LEARNING DELIVERABLES
+            // =================================================================
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+              child: Card(
+                elevation: 0,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16),
+                  side: BorderSide(color: colorScheme.primary.withOpacity(0.3)),
+                ),
+                color: colorScheme.primaryContainer.withOpacity(0.2),
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(Icons.stars, color: colorScheme.primary, size: 20),
+                          const SizedBox(width: 8),
+                          Text(
+                            'Final Learning Outputs',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.bold,
+                              color: colorScheme.primary,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+
+                      // Deliverable 1: summary.md
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.blue.withOpacity(0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.assignment, color: Colors.blue, size: 22),
+                        ),
+                        title: const Text('Classroom Summary', style: TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: const Text('Must-Do, Lab steps, warnings, and authentic English'),
+                        trailing: FilledButton.tonalIcon(
+                          icon: const Icon(Icons.visibility, size: 16),
+                          label: const Text('View'),
+                          onPressed: session.summaryPath != null
+                              ? () => _showSummaryModal(context, session.summaryPath!)
+                              : null,
+                        ),
+                      ),
+                      const Divider(height: 16),
+
+                      // Deliverable 2: shadowing.mp3
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: Colors.deepPurple.withOpacity(0.12),
+                            shape: BoxShape.circle,
+                          ),
+                          child: const Icon(Icons.headphones, color: Colors.deepPurple, size: 22),
+                        ),
+                        title: Row(
+                          children: [
+                            const Text('Shadowing Audio', style: TextStyle(fontWeight: FontWeight.bold)),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: Colors.green.withOpacity(0.15),
+                                borderRadius: BorderRadius.circular(4),
+                              ),
+                              child: Text(
+                                'Teacher Voice',
+                                style: TextStyle(color: Colors.green.shade800, fontSize: 10, fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ],
+                        ),
+                        subtitle: Text('Target 8–10 min · Duration: ${_formatDuration(session.shadowingDurationMs)}'),
+                        trailing: FilledButton.icon(
+                          style: FilledButton.styleFrom(
+                            backgroundColor: isShadowingPlaying ? Colors.amber.shade900 : Colors.deepPurple,
+                          ),
+                          icon: Icon(isShadowingPlaying ? Icons.stop : Icons.play_arrow, size: 18),
+                          label: Text(isShadowingPlaying ? 'Stop' : 'Play'),
+                          onPressed: session.shadowingAudioPath != null
+                              ? () {
+                                  if (isShadowingPlaying) {
+                                    provider.stopAudio();
+                                  } else {
+                                    provider.playAudio(session.shadowingAudioPath!);
+                                  }
+                                }
+                              : null,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
+            ),
+            const SizedBox(height: 8),
+
             // 1. MUST DO (Highest Priority)
             if (analysis.mustDo.isNotEmpty)
               NaitSectionCard(
@@ -244,7 +369,7 @@ class _NaitClassScreenState extends State<NaitClassScreen> {
                 ),
               ),
 
-            // 5. CLASSROOM ENGLISH (Primary Learning Output)
+            // 5. CLASSROOM ENGLISH (Expressions)
             if (analysis.classroomEnglish.isNotEmpty)
               NaitSectionCard(
                 title: 'Classroom English',
@@ -253,22 +378,11 @@ class _NaitClassScreenState extends State<NaitClassScreen> {
                 badgeCount: analysis.classroomEnglish.length,
                 child: Column(
                   children: analysis.classroomEnglish.map((chunk) {
-                    final clipPath = chunk.audioClipId != null ? clipPathMap[chunk.audioClipId] : null;
-                    final isPlaying = provider.currentlyPlayingPath == clipPath && clipPath != null;
-
                     return NaitEnglishChunkCard(
                       chunk: chunk,
-                      clipAudioPath: clipPath,
-                      isPlaying: isPlaying,
-                      onPlay: clipPath != null
-                          ? () {
-                              if (isPlaying) {
-                                provider.stopAudio();
-                              } else {
-                                provider.playAudio(clipPath);
-                              }
-                            }
-                          : null,
+                      clipAudioPath: null,
+                      isPlaying: false,
+                      onPlay: null,
                       onSpeakTts: () => provider.playbackService.speakText(chunk.phrase),
                       onToggleLearned: () => provider.toggleChunkLearned(widget.course.id, chunk.id),
                       onToggleStarred: () => provider.toggleChunkStarred(widget.course.id, chunk.id),
@@ -457,27 +571,6 @@ class _NaitClassScreenState extends State<NaitClassScreen> {
                   ),
                 ),
               ),
-
-            // 10. ORIGINAL AUDIO CLIPS SECTION
-            if (clips.isNotEmpty)
-              NaitSectionCard(
-                title: 'Extracted Audio Clips',
-                icon: Icons.audiotrack,
-                accentColor: Colors.green.shade800,
-                badgeCount: clips.length,
-                initiallyExpanded: false,
-                child: Column(
-                  children: clips.map((clip) {
-                    final isPlaying = provider.currentlyPlayingPath == clip.filePath;
-                    return NaitClipPlayer(
-                      clip: clip,
-                      isPlaying: isPlaying,
-                      onPlay: () => provider.playAudio(clip.filePath),
-                      onStop: () => provider.stopAudio(),
-                    );
-                  }).toList(),
-                ),
-              ),
           ] else if (!session.isProcessing) ...[
             Padding(
               padding: const EdgeInsets.all(32),
@@ -502,3 +595,4 @@ class _NaitClassScreenState extends State<NaitClassScreen> {
     );
   }
 }
+

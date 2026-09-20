@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'dart:typed_data';
+import 'package:path/path.dart' as p;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:jeff_notes/nait_learning/services/nait_audio_extract_service.dart';
 import 'package:jeff_notes/nait_learning/services/nait_audio_playback_service.dart';
@@ -172,7 +173,7 @@ void main() {
   test('6. Playback path rebases across an iOS Documents container change', () async {
     final currentDocuments = Directory('${tempDir.path}/current/Documents')
       ..createSync(recursive: true);
-    final clip = File('${currentDocuments.path}/nait/course/week_01/class_a/clips/clip_001.wav')
+    final clip = File(p.join(currentDocuments.path, 'nait', 'course', 'week_01', 'class_a', 'clips', 'clip_001.wav'))
       ..createSync(recursive: true)
       ..writeAsBytesSync([1, 2, 3]);
     const stalePath = '/var/mobile/Containers/Data/Application/OLD/Documents/'
@@ -182,6 +183,6 @@ void main() {
       stalePath,
       currentDocuments,
     );
-    expect(resolved, clip.path);
+    expect(p.normalize(resolved!), p.normalize(clip.path));
   });
 }

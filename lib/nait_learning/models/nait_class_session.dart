@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'nait_class_analysis.dart';
 import 'nait_audio_clip.dart';
+import 'nait_shadowing_segment.dart';
 
 enum NaitSessionStatus {
   importing,
@@ -18,14 +19,26 @@ class NaitClassSession {
   final DateTime classDate;
 
   /// Absolute path to the original imported audio (MP4/M4A/MP3/WAV).
-  /// Never overwritten — user source is preserved.
+  /// Kept during processing; internal temp copies may be cleaned post-verification.
   String? originalAudioPath;
 
   /// Path to the FFmpeg-normalized mono 16kHz 16-bit PCM WAV.
   String? normalizedAudioPath;
 
-  /// Path to the imported Meetily TXT file.
+  /// Path to the imported Meetily TXT/JSON file.
   String? transcriptPath;
+
+  /// Final Deliverable #1: Standalone Markdown summary path.
+  String? summaryPath;
+
+  /// Final Deliverable #2: Single 8–10 minute Shadowing MP3 path.
+  String? shadowingAudioPath;
+
+  /// Duration of shadowing.mp3 in milliseconds.
+  int? shadowingDurationMs;
+
+  /// Lightweight SonicShadow aligned segment metadata.
+  List<NaitShadowingSegment> shadowingSegments;
 
   NaitClassAnalysis? analysis;
   List<NaitAudioClip> clips;
@@ -46,6 +59,10 @@ class NaitClassSession {
     this.originalAudioPath,
     this.normalizedAudioPath,
     this.transcriptPath,
+    this.summaryPath,
+    this.shadowingAudioPath,
+    this.shadowingDurationMs,
+    List<NaitShadowingSegment>? shadowingSegments,
     this.analysis,
     List<NaitAudioClip>? clips,
     this.status = NaitSessionStatus.readyToProcess,
@@ -53,7 +70,8 @@ class NaitClassSession {
     this.errorMessage,
     required this.createdAt,
     required this.updatedAt,
-  }) : clips = clips ?? [];
+  })  : clips = clips ?? [],
+        shadowingSegments = shadowingSegments ?? [];
 
   bool get isProcessed => status == NaitSessionStatus.processed;
   bool get isProcessing => status == NaitSessionStatus.processing;
@@ -76,6 +94,11 @@ class NaitClassSession {
     if (originalAudioPath != null) 'originalAudioPath': originalAudioPath,
     if (normalizedAudioPath != null) 'normalizedAudioPath': normalizedAudioPath,
     if (transcriptPath != null) 'transcriptPath': transcriptPath,
+    if (summaryPath != null) 'summaryPath': summaryPath,
+    if (shadowingAudioPath != null) 'shadowingAudioPath': shadowingAudioPath,
+    if (shadowingDurationMs != null) 'shadowingDurationMs': shadowingDurationMs,
+    if (shadowingSegments.isNotEmpty)
+      'shadowingSegments': shadowingSegments.map((s) => s.toJson()).toList(),
     if (analysis != null) 'analysis': analysis!.toJson(),
     'clips': clips.map((c) => c.toJson()).toList(),
     'status': status.name,
@@ -100,6 +123,12 @@ class NaitClassSession {
       originalAudioPath: json['originalAudioPath'] as String?,
       normalizedAudioPath: json['normalizedAudioPath'] as String?,
       transcriptPath: json['transcriptPath'] as String?,
+      summaryPath: json['summaryPath'] as String?,
+      shadowingAudioPath: json['shadowingAudioPath'] as String?,
+      shadowingDurationMs: (json['shadowingDurationMs'] as num?)?.toInt(),
+      shadowingSegments: (json['shadowingSegments'] as List? ?? [])
+          .map((s) => NaitShadowingSegment.fromJson(Map<String, dynamic>.from(s as Map)))
+          .toList(),
       analysis: json['analysis'] != null
           ? NaitClassAnalysis.fromJson(
               Map<String, dynamic>.from(json['analysis'] as Map),

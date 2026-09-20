@@ -262,6 +262,7 @@ void main() {
         session: session,
         maxGeminiRetries: 1,
         initialBackoff: const Duration(milliseconds: 5),
+        cleanIntermediate: false,
       );
 
       // Chunk 0 was loaded from disk, so network was called ONLY for Chunk 1!
